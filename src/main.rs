@@ -14,6 +14,7 @@ mod export;
 mod fontutil;
 mod formatting;
 mod importer;
+mod linkpicker;
 mod llm;
 mod mdpango;
 mod media;

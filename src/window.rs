@@ -7,7 +7,10 @@ use adw::prelude::*;
 use gtk4::{gio, glib};
 
 use crate::document::{Document, Frontmatter};
-use crate::{aimenu, chat, codeview, document, editor, export, formatting, importer, mediapanel, preview, properties, settings, stats, statusbar, termcache};
+use crate::{
+    aimenu, chat, codeview, document, editor, export, formatting, importer, linkpicker, mediapanel, preview, properties, settings, stats,
+    statusbar, termcache,
+};
 
 const DEBOUNCE_MS: u64 = 250;
 
@@ -160,11 +163,12 @@ pub fn build(app: &adw::Application) -> adw::ApplicationWindow {
     wire_open_action(&window, &buffer, &current_path, &frontmatter, &title, &toast_overlay);
     wire_open_from_wordpress_action(&window, &buffer, &current_path, &frontmatter, &title);
     wire_save_action(&window, &buffer, &current_path, &frontmatter, &title, &toast_overlay);
-    wire_properties_action(&window, &frontmatter, &category_terms, &tag_terms);
+    wire_properties_action(&window, &frontmatter, &category_terms, &tag_terms, &current_path);
     wire_settings_action(&window, &buffer, ai_menu_handles, &preview_pane);
     wire_publish_action(&window, &buffer, &current_path, &frontmatter);
     wire_media_action(&window, &buffer, &current_path, &frontmatter);
     wire_insert_image_action(&window, &buffer, &current_path);
+    wire_insert_post_link_action(&window, &buffer);
 
     window
 }
@@ -509,15 +513,18 @@ fn wire_properties_action(
     frontmatter: &Rc<RefCell<Frontmatter>>,
     category_terms: &Rc<RefCell<Vec<String>>>,
     tag_terms: &Rc<RefCell<Vec<String>>>,
+    current_path: &Rc<RefCell<Option<PathBuf>>>,
 ) {
     let action = gio::SimpleAction::new("properties", None);
     let frontmatter = frontmatter.clone();
     let category_terms = category_terms.clone();
     let tag_terms = tag_terms.clone();
+    let current_path = current_path.clone();
     let window_weak = window.downgrade();
     action.connect_activate(move |_, _| {
         if let Some(window) = window_weak.upgrade() {
-            properties::open(&window, frontmatter.clone(), category_terms.clone(), tag_terms.clone());
+            let doc_dir = current_path.borrow().as_ref().and_then(|p| p.parent().map(Path::to_path_buf));
+            properties::open(&window, frontmatter.clone(), category_terms.clone(), tag_terms.clone(), doc_dir);
         }
     });
     window.add_action(&action);
@@ -586,25 +593,23 @@ fn wire_insert_image_action(window: &adw::ApplicationWindow, buffer: &sourceview
         dialog.open(Some(&window), gio::Cancellable::NONE, move |result| {
             let Ok(file) = result else { return };
             let Some(path) = file.path() else { return };
-            let reference = image_reference(&path, doc_dir.as_deref());
+            let reference = document::image_reference(&path, doc_dir.as_deref());
             formatting::insert_image(&buffer, &reference);
         });
     });
     window.add_action(&action);
 }
 
-/// Prefers a path relative to the document's own directory (matching how
-/// `export.rs`/`mediapanel.rs` already resolve local image sources against
-/// `doc_dir`) so the article stays portable if the folder is moved as a
-/// whole; falls back to the absolute path if the picked image lives
-/// somewhere else entirely, or if the document hasn't been saved yet.
-fn image_reference(path: &Path, doc_dir: Option<&Path>) -> String {
-    if let Some(dir) = doc_dir {
-        if let Ok(relative) = path.strip_prefix(dir) {
-            return relative.to_string_lossy().replace('\\', "/");
+fn wire_insert_post_link_action(window: &adw::ApplicationWindow, buffer: &sourceview5::Buffer) {
+    let action = gio::SimpleAction::new("insert-post-link", None);
+    let buffer = buffer.clone();
+    let window_weak = window.downgrade();
+    action.connect_activate(move |_, _| {
+        if let Some(window) = window_weak.upgrade() {
+            linkpicker::open(&window, &buffer);
         }
-    }
-    path.to_string_lossy().to_string()
+    });
+    window.add_action(&action);
 }
 
 fn wire_media_action(
@@ -655,23 +660,5 @@ mod tests {
     #[test]
     fn estimate_visible_line_handles_short_document_without_dividing_by_zero() {
         assert_eq!(estimate_visible_line(0.0, 0.0, 0.0, 1), 1);
-    }
-
-    #[test]
-    fn image_reference_prefers_a_path_relative_to_the_document_directory() {
-        let reference = image_reference(Path::new("/home/toff/artikel/bilder/foto.png"), Some(Path::new("/home/toff/artikel")));
-        assert_eq!(reference, "bilder/foto.png");
-    }
-
-    #[test]
-    fn image_reference_falls_back_to_absolute_when_outside_the_document_directory() {
-        let reference = image_reference(Path::new("/home/toff/anderswo/foto.png"), Some(Path::new("/home/toff/artikel")));
-        assert_eq!(reference, "/home/toff/anderswo/foto.png");
-    }
-
-    #[test]
-    fn image_reference_falls_back_to_absolute_when_the_document_has_no_directory_yet() {
-        let reference = image_reference(Path::new("/home/toff/artikel/foto.png"), None);
-        assert_eq!(reference, "/home/toff/artikel/foto.png");
     }
 }

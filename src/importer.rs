@@ -412,5 +412,10 @@ mod tests {
 
         let posts = client.list_posts().expect("list_posts failed");
         assert!(!posts.is_empty(), "expected at least one existing post on the real site");
+        assert!(
+            posts.iter().any(|p| p.link.starts_with("http")),
+            "expected at least one post to carry a real permalink, got {:?}",
+            posts.iter().map(|p| &p.link).collect::<Vec<_>>()
+        );
     }
 }

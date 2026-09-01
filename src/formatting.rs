@@ -67,10 +67,12 @@ pub fn build(view: &sourceview5::View, buffer: &sourceview5::Buffer) -> gtk4::Bo
     toolbar.append(&group(&[
         label_button("•", "Liste", buffer, |b| insert_line_prefix(b, "- ")),
         label_button("1.", "Nummerierte Liste", buffer, |b| insert_line_prefix(b, "1. ")),
+        label_button("▦", "Tabelle einfügen", buffer, |b| insert_table(b)),
     ]));
 
     toolbar.append(&group(&[
         icon_button("insert-link-symbolic", "Link einfügen (Strg+K)", buffer, |b| insert_link(b)),
+        action_button("document-open-recent-symbolic", "Bestehenden Artikel verlinken…", "win.insert-post-link"),
         action_button("insert-image-symbolic", "Bild einfügen…", "win.insert-image"),
     ]));
 
@@ -160,6 +162,17 @@ fn insert_code_block(buffer: &sourceview5::Buffer) {
     }
 }
 
+/// Inserts a minimal 2x2 Markdown table template at the cursor, with the
+/// first header cell pre-selected so the user can start typing over it
+/// immediately - more rows/columns are just more `| ... |` text, no special
+/// UI needed for that.
+fn insert_table(buffer: &sourceview5::Buffer) {
+    let mut iter = buffer.iter_at_mark(&buffer.get_insert());
+    let pos = iter.offset();
+    buffer.insert(&mut iter, "| Spalte 1 | Spalte 2 |\n| --- | --- |\n| Zelle 1 | Zelle 2 |\n");
+    select(buffer, pos + 2, pos + 10); // "Spalte 1"
+}
+
 /// Inserts a Markdown link, selecting the placeholder text (existing
 /// selection becomes the link text, or "text"/"url" placeholders otherwise)
 /// so the user can immediately type to replace it.
@@ -176,6 +189,21 @@ fn insert_link(buffer: &sourceview5::Buffer) {
         let pos = iter.offset();
         buffer.insert(&mut iter, "[text](url)");
         select(buffer, pos + 1, pos + 5);
+    }
+}
+
+/// Inserts a Markdown link to an already-known `(text, url)` pair - e.g. an
+/// existing WordPress post picked via `linkpicker.rs`. Unlike `insert_link`,
+/// no placeholder/selection dance is needed since both pieces are already
+/// resolved; an existing selection is simply replaced.
+pub fn insert_existing_link(buffer: &sourceview5::Buffer, text: &str, url: &str) {
+    let destination = markdown_destination(url);
+    if let Some((mut start, mut end)) = buffer.selection_bounds() {
+        buffer.delete(&mut start, &mut end);
+        buffer.insert(&mut start, &format!("[{text}]({destination})"));
+    } else {
+        let mut iter = buffer.iter_at_mark(&buffer.get_insert());
+        buffer.insert(&mut iter, &format!("[{text}]({destination})"));
     }
 }
 

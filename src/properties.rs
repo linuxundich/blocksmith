@@ -4,11 +4,13 @@
 //! how GNOME preferences dialogs apply immediately without an OK button.
 
 use std::cell::RefCell;
+use std::path::PathBuf;
 use std::rc::Rc;
 
 use adw::prelude::*;
+use gtk4::gio;
 
-use crate::document::{parse_list, Frontmatter, PostStatus};
+use crate::document::{self, parse_list, Frontmatter, PostStatus};
 use crate::{autocomplete, termcache};
 
 pub fn open(
@@ -16,6 +18,7 @@ pub fn open(
     frontmatter: Rc<RefCell<Frontmatter>>,
     category_terms: Rc<RefCell<Vec<String>>>,
     tag_terms: Rc<RefCell<Vec<String>>>,
+    doc_dir: Option<PathBuf>,
 ) {
     let current = frontmatter.borrow().clone();
 
@@ -33,6 +36,11 @@ pub fn open(
         .title("Featured Image (Pfad)")
         .text(current.featured_image.clone().unwrap_or_default().as_str())
         .build();
+    let featured_image_picker_button = gtk4::Button::from_icon_name("insert-image-symbolic");
+    featured_image_picker_button.set_tooltip_text(Some("Bild auswählen…"));
+    featured_image_picker_button.set_valign(gtk4::Align::Center);
+    featured_image_picker_button.add_css_class("flat");
+    featured_image_row.add_suffix(&featured_image_picker_button);
 
     let status_labels: Vec<&str> = PostStatus::ALL.iter().map(|s| s.label()).collect();
     let status_model = gtk4::StringList::new(&status_labels);
@@ -110,6 +118,29 @@ pub fn open(
         featured_image_row.connect_changed(move |row| {
             let text = row.text().to_string();
             frontmatter.borrow_mut().featured_image = (!text.is_empty()).then_some(text);
+        });
+    }
+    {
+        let parent = parent.clone();
+        let featured_image_row = featured_image_row.clone();
+        featured_image_picker_button.connect_clicked(move |_| {
+            let filter = gtk4::FileFilter::new();
+            filter.add_mime_type("image/*");
+            filter.set_name(Some("Bilder"));
+            let filters = gio::ListStore::new::<gtk4::FileFilter>();
+            filters.append(&filter);
+
+            let file_dialog = gtk4::FileDialog::builder().title("Featured Image auswählen").filters(&filters).build();
+
+            let featured_image_row = featured_image_row.clone();
+            let doc_dir = doc_dir.clone();
+            file_dialog.open(Some(&parent), gio::Cancellable::NONE, move |result| {
+                let Ok(file) = result else { return };
+                let Some(path) = file.path() else { return };
+                let reference = document::image_reference(&path, doc_dir.as_deref());
+                // Triggers the `connect_changed` handler above, which persists it.
+                featured_image_row.set_text(&reference);
+            });
         });
     }
     {

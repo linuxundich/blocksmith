@@ -226,9 +226,43 @@ fn render_list(items: &[String]) -> String {
     format!("[{}]", rendered.join(", "))
 }
 
+/// Prefers a path relative to the document's own directory (so the article
+/// stays portable if the folder is moved as a whole) for a locally-picked
+/// file `path` - falls back to the absolute path if it lives somewhere else
+/// entirely, or the document hasn't been saved yet. Shared by every place
+/// that turns a `Gtk.FileDialog` result into a Markdown/frontmatter
+/// reference: the editor's "Bild einfügen" and the properties dialog's
+/// featured-image picker.
+pub fn image_reference(path: &Path, doc_dir: Option<&Path>) -> String {
+    if let Some(dir) = doc_dir {
+        if let Ok(relative) = path.strip_prefix(dir) {
+            return relative.to_string_lossy().replace('\\', "/");
+        }
+    }
+    path.to_string_lossy().to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn image_reference_prefers_a_path_relative_to_the_document_directory() {
+        let reference = image_reference(Path::new("/home/toff/artikel/bilder/foto.png"), Some(Path::new("/home/toff/artikel")));
+        assert_eq!(reference, "bilder/foto.png");
+    }
+
+    #[test]
+    fn image_reference_falls_back_to_absolute_when_outside_the_document_directory() {
+        let reference = image_reference(Path::new("/home/toff/anderswo/foto.png"), Some(Path::new("/home/toff/artikel")));
+        assert_eq!(reference, "/home/toff/anderswo/foto.png");
+    }
+
+    #[test]
+    fn image_reference_falls_back_to_absolute_when_the_document_has_no_directory_yet() {
+        let reference = image_reference(Path::new("/home/toff/artikel/foto.png"), None);
+        assert_eq!(reference, "/home/toff/artikel/foto.png");
+    }
 
     #[test]
     fn plain_markdown_without_frontmatter_round_trips() {

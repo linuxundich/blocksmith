@@ -67,6 +67,9 @@ pub struct PostSummary {
     pub title: String,
     pub status: String,
     pub date: String,
+    /// The post's public permalink - used e.g. by `linkpicker.rs` to insert
+    /// a real, clickable link to it, not just its id/title.
+    pub link: String,
 }
 
 #[derive(Debug, Clone)]
@@ -295,7 +298,7 @@ impl Client {
     /// the first 50 - fine for finding a recent article to edit.
     pub fn list_posts(&self) -> Result<Vec<PostSummary>> {
         let url = format!(
-            "{}?per_page=50&orderby=date&order=desc&context=edit&status=publish,future,draft,pending,private&_fields=id,title,status,date",
+            "{}?per_page=50&orderby=date&order=desc&context=edit&status=publish,future,draft,pending,private&_fields=id,title,status,date,link",
             self.endpoint("posts")
         );
         let value = self.get_json(&url)?;
@@ -310,6 +313,7 @@ impl Client {
                             title: post_title(item),
                             status: item.get("status").and_then(Value::as_str).unwrap_or_default().to_string(),
                             date: item.get("date").and_then(Value::as_str).unwrap_or_default().to_string(),
+                            link: item.get("link").and_then(Value::as_str).unwrap_or_default().to_string(),
                         })
                     })
                     .collect()

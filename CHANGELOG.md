@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-09-01
+
+### Added
+
+- Featured-image picker in "Artikel-Eigenschaften" - a file-picker button
+  next to the field, matching the editor body's "Bild einfügen", instead
+  of only being able to type a path by hand.
+- Table-insert toolbar button - inserts a minimal 2x2 Markdown table
+  template with the first header cell pre-selected. The Gutenberg engine
+  already fully supported tables both directions; there was just no
+  toolbar shortcut for writing one.
+- "Bestehenden Artikel verlinken…" toolbar button - a searchable picker
+  listing the site's existing posts by title; picking one inserts a real
+  Markdown link (`[title](permalink)`) at the cursor, so cross-linking
+  your own articles no longer means copying a URL by hand first.
+
 ## [0.13.2] - 2026-09-01
 
 ### Fixed
