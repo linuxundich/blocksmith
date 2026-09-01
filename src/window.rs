@@ -656,4 +656,22 @@ mod tests {
     fn estimate_visible_line_handles_short_document_without_dividing_by_zero() {
         assert_eq!(estimate_visible_line(0.0, 0.0, 0.0, 1), 1);
     }
+
+    #[test]
+    fn image_reference_prefers_a_path_relative_to_the_document_directory() {
+        let reference = image_reference(Path::new("/home/toff/artikel/bilder/foto.png"), Some(Path::new("/home/toff/artikel")));
+        assert_eq!(reference, "bilder/foto.png");
+    }
+
+    #[test]
+    fn image_reference_falls_back_to_absolute_when_outside_the_document_directory() {
+        let reference = image_reference(Path::new("/home/toff/anderswo/foto.png"), Some(Path::new("/home/toff/artikel")));
+        assert_eq!(reference, "/home/toff/anderswo/foto.png");
+    }
+
+    #[test]
+    fn image_reference_falls_back_to_absolute_when_the_document_has_no_directory_yet() {
+        let reference = image_reference(Path::new("/home/toff/artikel/foto.png"), None);
+        assert_eq!(reference, "/home/toff/artikel/foto.png");
+    }
 }
