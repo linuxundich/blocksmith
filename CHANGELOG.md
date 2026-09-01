@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-09-01
+
+### Fixed
+
+- The "Erscheinungsbild" page's theme picker didn't actually look like GNOME
+  Builder's - it used plain text toggle buttons instead of Builder's mini
+  window-mockup preview cards, and the color-scheme swatch grid had no live
+  code sample above it the way Builder's does. Rebuilt to match: each of
+  "Dem System folgen"/"Hell"/"Dunkel" is now a card with a small mockup
+  window (header strip, a couple of text-line bars, one accent-colored) -
+  "Dem System folgen" shows a light/dark split - with the selected card
+  getting an accent-colored border, and a live syntax-highlighted Rust
+  sample now sits above the scheme swatch grid, updating immediately as a
+  different scheme is picked.
+
 ## [0.9.0] - 2026-09-01
 
 ### Added
