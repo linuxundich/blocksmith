@@ -69,9 +69,26 @@ pub fn build(view: &sourceview5::View, buffer: &sourceview5::Buffer) -> gtk4::Bo
         label_button("1.", "Nummerierte Liste", buffer, |b| insert_line_prefix(b, "1. ")),
     ]));
 
-    toolbar.append(&group(&[icon_button("insert-link-symbolic", "Link einfügen (Strg+K)", buffer, |b| insert_link(b))]));
+    toolbar.append(&group(&[
+        icon_button("insert-link-symbolic", "Link einfügen (Strg+K)", buffer, |b| insert_link(b)),
+        action_button("insert-image-symbolic", "Bild einfügen…", "win.insert-image"),
+    ]));
 
     toolbar
+}
+
+/// Unlike the other toolbar buttons, inserting an image needs a file picker
+/// with the main window as its parent - which doesn't exist yet at the point
+/// this toolbar is built (`window.rs` constructs the window itself only
+/// after the editor pane it lives in). So this button doesn't carry a direct
+/// closure like its siblings; it just names a `win.insert-image` action,
+/// wired up in `window.rs` once the window exists, the same way the
+/// header-bar buttons (new/open/save/…) already work.
+fn action_button(icon_name: &str, tooltip: &str, action_name: &str) -> gtk4::Button {
+    let button = gtk4::Button::from_icon_name(icon_name);
+    button.set_tooltip_text(Some(tooltip));
+    button.set_action_name(Some(action_name));
+    button
 }
 
 /// Visually joins a cluster of related buttons into one segmented control
@@ -159,6 +176,29 @@ fn insert_link(buffer: &sourceview5::Buffer) {
         let pos = iter.offset();
         buffer.insert(&mut iter, "[text](url)");
         select(buffer, pos + 1, pos + 5);
+    }
+}
+
+/// Inserts a Markdown image reference for an already-picked file `path`
+/// (relative to the document if possible - see `window.rs`'s
+/// `wire_insert_image_action`). An existing selection becomes the alt text,
+/// mirroring `insert_link`; otherwise the cursor lands right between `![`
+/// and `]` so the user can type the alt text immediately (left empty is
+/// also valid - Markdown alone can't yet express "deliberately no alt text",
+/// see `media.rs`, but leaving it blank here is a fine starting point).
+pub fn insert_image(buffer: &sourceview5::Buffer, path: &str) {
+    if let Some((mut start, mut end)) = buffer.selection_bounds() {
+        let selected = buffer.text(&start, &end, false).to_string();
+        buffer.delete(&mut start, &mut end);
+        let pos = start.offset();
+        buffer.insert(&mut start, &format!("![{selected}]({path})"));
+        let cursor = pos + 2 + selected.chars().count() as i32 + 2 + path.chars().count() as i32;
+        buffer.place_cursor(&buffer.iter_at_offset(cursor));
+    } else {
+        let mut iter = buffer.iter_at_mark(&buffer.get_insert());
+        let pos = iter.offset();
+        buffer.insert(&mut iter, &format!("![]({path})"));
+        buffer.place_cursor(&buffer.iter_at_offset(pos + 2));
     }
 }
 

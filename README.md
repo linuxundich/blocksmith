@@ -67,10 +67,16 @@ blocks. Implemented so far:
   than a plain on/off: not yet defined (flagged by a non-blocking "N von M
   Bildern haben noch keinen Alternativtext" hint), deliberately left empty
   for decorative images (not treated as an error), or defined text; the
-  caption is a separate field, never derived from the alt text. A "Zu
-  WordPress hochladen" button per image uploads it via the real REST API
-  and stores the resulting media id/URL so re-opening the article
-  recognizes it as already uploaded rather than re-uploading it.
+  caption is a separate field, never derived from the alt text, though it
+  is seeded from the Markdown image's optional `"title"` the first time an
+  image is seen (`![alt](src "title")`). A "Zu WordPress hochladen" button
+  per image uploads it via the real REST API and stores the resulting
+  media id/URL so re-opening the article recognizes it as already
+  uploaded rather than re-uploading it. A "Bild einfügen…" button in the
+  editor toolbar opens a native image file picker and inserts a real
+  Markdown image reference at the cursor (relative to the document's own
+  folder when possible) - previously the only way to add an image
+  reference was to type its filename by hand.
 - **Einstellungen dialog** (`Adw.PreferencesDialog`, Ctrl+,) — an
   "Erscheinungsbild" page adopted directly from GNOME Builder's own
   implementation (light/dark/follow-system cards using Builder's bundled

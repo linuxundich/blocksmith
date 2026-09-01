@@ -164,6 +164,7 @@ pub fn build(app: &adw::Application) -> adw::ApplicationWindow {
     wire_settings_action(&window, &buffer, ai_menu_handles, &preview_pane);
     wire_publish_action(&window, &buffer, &current_path, &frontmatter);
     wire_media_action(&window, &buffer, &current_path, &frontmatter);
+    wire_insert_image_action(&window, &buffer, &current_path);
 
     window
 }
@@ -560,6 +561,50 @@ fn wire_publish_action(
         export::open(&window, body, frontmatter.clone(), doc_dir);
     });
     window.add_action(&action);
+}
+
+fn wire_insert_image_action(window: &adw::ApplicationWindow, buffer: &sourceview5::Buffer, current_path: &Rc<RefCell<Option<PathBuf>>>) {
+    let action = gio::SimpleAction::new("insert-image", None);
+    let buffer = buffer.clone();
+    let current_path = current_path.clone();
+    let window_weak = window.downgrade();
+    action.connect_activate(move |_, _| {
+        let Some(window) = window_weak.upgrade() else {
+            return;
+        };
+
+        let filter = gtk4::FileFilter::new();
+        filter.add_mime_type("image/*");
+        filter.set_name(Some("Bilder"));
+        let filters = gio::ListStore::new::<gtk4::FileFilter>();
+        filters.append(&filter);
+
+        let dialog = gtk4::FileDialog::builder().title("Bild einfügen").filters(&filters).build();
+
+        let buffer = buffer.clone();
+        let doc_dir = current_path.borrow().as_ref().and_then(|p| p.parent().map(Path::to_path_buf));
+        dialog.open(Some(&window), gio::Cancellable::NONE, move |result| {
+            let Ok(file) = result else { return };
+            let Some(path) = file.path() else { return };
+            let reference = image_reference(&path, doc_dir.as_deref());
+            formatting::insert_image(&buffer, &reference);
+        });
+    });
+    window.add_action(&action);
+}
+
+/// Prefers a path relative to the document's own directory (matching how
+/// `export.rs`/`mediapanel.rs` already resolve local image sources against
+/// `doc_dir`) so the article stays portable if the folder is moved as a
+/// whole; falls back to the absolute path if the picked image lives
+/// somewhere else entirely, or if the document hasn't been saved yet.
+fn image_reference(path: &Path, doc_dir: Option<&Path>) -> String {
+    if let Some(dir) = doc_dir {
+        if let Ok(relative) = path.strip_prefix(dir) {
+            return relative.to_string_lossy().replace('\\', "/");
+        }
+    }
+    path.to_string_lossy().to_string()
 }
 
 fn wire_media_action(

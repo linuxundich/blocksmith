@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.13.1] - 2026-09-01
+
+### Added
+
+- "Bild einfügen…" button in the editor toolbar - opens a native file
+  picker (filtered to images) and inserts a real Markdown image reference
+  at the cursor, using a path relative to the document's own folder when
+  possible. Previously the only way to reference an image was to type its
+  filename by hand.
+- The Medienverwaltung's caption field is now seeded from the Markdown
+  image's optional `"title"` (`![alt](src "title")`) the first time an
+  image is seen, the same way alt text is already seeded from the Markdown
+  alt - once set, it's no longer overwritten by later Markdown edits, so
+  edits made in the dialog itself always win.
+
 ## [0.13.0] - 2026-09-01
 
 ### Added

@@ -111,27 +111,36 @@ impl MediaItem {
     }
 }
 
-/// Finds every `![alt](source)` image reference in `markdown`, in document
-/// order, as `(source, alt_text_as_written)` pairs. Markdown itself can't
-/// distinguish "alt intentionally left blank" from "alt never set" - that
-/// distinction is only made in `reconcile`, for images not seen before.
-fn scan_images(markdown: &str) -> Vec<(String, String)> {
+/// Finds every `![alt](source "title")` image reference in `markdown`, in
+/// document order, as `(source, alt_text_as_written, title_as_written)`
+/// triples. The optional quoted `"title"` is the closest thing plain
+/// Markdown has to a caption, so it seeds `MediaItem.caption` for images
+/// seen for the first time (see `reconcile`) - Markdown itself still can't
+/// distinguish "alt intentionally left blank" from "alt never set", so that
+/// distinction is only made in `reconcile` too.
+fn scan_images(markdown: &str) -> Vec<(String, String, String)> {
     let mut out = Vec::new();
     let mut in_image = false;
     let mut current_source = String::new();
+    let mut current_title = String::new();
     let mut current_alt = String::new();
 
     for event in Parser::new(markdown) {
         match event {
-            Event::Start(Tag::Image { dest_url, .. }) => {
+            Event::Start(Tag::Image { dest_url, title, .. }) => {
                 in_image = true;
                 current_source = dest_url.to_string();
+                current_title = title.to_string();
                 current_alt.clear();
             }
             Event::Text(text) if in_image => current_alt.push_str(&text),
             Event::End(TagEnd::Image) if in_image => {
                 in_image = false;
-                out.push((std::mem::take(&mut current_source), std::mem::take(&mut current_alt)));
+                out.push((
+                    std::mem::take(&mut current_source),
+                    std::mem::take(&mut current_alt),
+                    std::mem::take(&mut current_title),
+                ));
             }
             _ => {}
         }
@@ -145,7 +154,9 @@ fn scan_images(markdown: &str) -> Vec<(String, String)> {
 /// reordering images in the text doesn't lose their metadata. An image no
 /// longer present is dropped; a newly-added one starts as `Undefined`
 /// unless the Markdown itself already carries a non-empty alt text (e.g.
-/// pasted from elsewhere), which is taken as an initial `Text` value.
+/// pasted from elsewhere), which is taken as an initial `Text` value, and
+/// likewise seeds its caption from the Markdown title (`![alt](src "title")`)
+/// if one is present.
 pub fn reconcile(existing: &[MediaItem], markdown: &str) -> Vec<MediaItem> {
     let mut next_serial = existing
         .iter()
@@ -156,15 +167,16 @@ pub fn reconcile(existing: &[MediaItem], markdown: &str) -> Vec<MediaItem> {
 
     scan_images(markdown)
         .into_iter()
-        .map(|(source, markdown_alt)| {
+        .map(|(source, markdown_alt, markdown_title)| {
             if let Some(found) = existing.iter().find(|item| item.source == source) {
                 found.clone()
             } else {
                 let filename = source.rsplit(['/', '\\']).next().unwrap_or(&source).to_string();
                 let alt = if markdown_alt.is_empty() { AltText::Undefined } else { AltText::Text(markdown_alt) };
+                let caption = (!markdown_title.is_empty()).then_some(markdown_title);
                 let id = format!("media-{next_serial:03}");
                 next_serial += 1;
-                MediaItem { id, filename, source, alt, caption: None, wordpress: None }
+                MediaItem { id, filename, source, alt, caption, wordpress: None }
             }
         })
         .collect()
@@ -241,10 +253,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn scan_finds_images_in_order_with_their_alt_text() {
-        let markdown = "Text.\n\n![first alt](a.png)\n\nMore.\n\n![](b.png)\n";
+    fn scan_finds_images_in_order_with_their_alt_text_and_title() {
+        let markdown = "Text.\n\n![first alt](a.png \"first title\")\n\nMore.\n\n![](b.png)\n";
         let found = scan_images(markdown);
-        assert_eq!(found, vec![("a.png".to_string(), "first alt".to_string()), ("b.png".to_string(), String::new())]);
+        assert_eq!(
+            found,
+            vec![
+                ("a.png".to_string(), "first alt".to_string(), "first title".to_string()),
+                ("b.png".to_string(), String::new(), String::new()),
+            ]
+        );
     }
 
     #[test]
@@ -261,6 +279,26 @@ mod tests {
     fn reconcile_seeds_text_alt_from_existing_markdown_alt() {
         let items = reconcile(&[], "![a red barn](barn.jpg)\n");
         assert_eq!(items[0].alt, AltText::Text("a red barn".to_string()));
+    }
+
+    #[test]
+    fn reconcile_seeds_caption_from_markdown_title() {
+        let items = reconcile(&[], "![a red barn](barn.jpg \"A red barn at dusk\")\n");
+        assert_eq!(items[0].caption, Some("A red barn at dusk".to_string()));
+    }
+
+    #[test]
+    fn reconcile_does_not_overwrite_an_existing_item_caption_from_markdown_title() {
+        let existing = vec![MediaItem {
+            id: "media-001".to_string(),
+            filename: "barn.jpg".to_string(),
+            source: "barn.jpg".to_string(),
+            alt: AltText::Text("a red barn".to_string()),
+            caption: Some("User-edited caption".to_string()),
+            wordpress: None,
+        }];
+        let updated = reconcile(&existing, "![a red barn](barn.jpg \"a different markdown title\")\n");
+        assert_eq!(updated[0].caption, Some("User-edited caption".to_string()));
     }
 
     #[test]
