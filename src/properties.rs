@@ -8,6 +8,7 @@ use std::rc::Rc;
 
 use adw::prelude::*;
 
+use crate::autocomplete;
 use crate::document::{parse_list, Frontmatter, PostStatus};
 
 pub fn open(parent: &adw::ApplicationWindow, frontmatter: Rc<RefCell<Frontmatter>>) {
@@ -44,6 +45,13 @@ pub fn open(parent: &adw::ApplicationWindow, frontmatter: Rc<RefCell<Frontmatter
     group.add(&categories_row);
     group.add(&tags_row);
     group.add(&featured_image_row);
+
+    let category_terms: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
+    let tag_terms: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
+    autocomplete::spawn_term_fetch("categories", category_terms.clone());
+    autocomplete::spawn_term_fetch("tags", tag_terms.clone());
+    autocomplete::attach(&categories_row, category_terms);
+    autocomplete::attach(&tags_row, tag_terms);
 
     let clamp = adw::Clamp::builder().maximum_size(480).child(&group).build();
     let scroller = gtk4::ScrolledWindow::builder().child(&clamp).vexpand(true).build();

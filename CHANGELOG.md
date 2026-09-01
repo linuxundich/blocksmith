@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-01
+
+Editor ergonomics and distribution: a formatting toolbar, a document
+statistics view, category/tag autocomplete, in-app error notifications, and
+a working Flatpak package.
+
+### Added
+
+- Grouped formatting toolbar above the editor (`src/formatting.rs`):
+  cut/copy/paste, bold/italic/strikethrough, heading/quote/code/code block,
+  lists, and link insertion, each button visually joined into its logical
+  group ("linked" style). Keyboard shortcuts for bold (Ctrl+B), italic
+  (Ctrl+I) and link (Ctrl+K); cut/copy/paste already had GtkSourceView's own
+  bindings.
+- "Statistik" tab next to "Vorschau" (`src/stats.rs`, `Adw.ViewStack` +
+  `Adw.ViewSwitcher`, left-aligned): word/character/paragraph counts and
+  estimated reading time, updating live alongside the preview.
+- Autocomplete for the categories/tags fields in the properties dialog
+  (`src/autocomplete.rs`): fetches existing terms from the configured
+  WordPress site in the background and suggests matches in a popover as you
+  type after the last comma.
+- In-app error notifications (`Adw.ToastOverlay`) for file open/save
+  failures, replacing silent `eprintln!` calls that only showed up in a
+  terminal the user wasn't looking at.
+- Flatpak packaging: manifest (`build-aux/flatpak/`), `.desktop` entry,
+  AppStream metainfo, and an app icon under `data/`. Targets
+  `org.gnome.Platform` 49, which already bundles GTK4/libadwaita/
+  GtkSourceView5/WebKitGTK 6.0, so the only extra SDK piece needed is the
+  Rust toolchain extension. Verified with a real `flatpak-builder` build,
+  installed and run sandboxed.
+
 ## [0.2.0] - 2026-09-01
 
 The app can now actually do the thing it's for: write Markdown, review the
@@ -64,6 +95,7 @@ to WordPress.
   Service (GNOME Keyring, or the portal equivalent under Flatpak) via `oo7`,
   never written to disk in plain text.
 
-[Unreleased]: https://github.com/linuxundich/blocksmith/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/linuxundich/blocksmith/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/linuxundich/blocksmith/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/linuxundich/blocksmith/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/linuxundich/blocksmith/releases/tag/v0.1.0

@@ -13,26 +13,34 @@ an [Application Password](https://make.wordpress.org/core/2020/11/05/application
 
 ## Status
 
-Early development. Implemented so far:
+Functionally complete for its core purpose - write Markdown, review a live
+preview, and publish/update a real WordPress post as native Gutenberg
+blocks. Implemented so far:
 
-- **Split-pane editor** — Markdown editing pane + debounced live HTML preview.
+- **Split-pane editor** — Markdown editing pane (GtkSourceView, syntax
+  highlighting) with a grouped formatting toolbar (cut/copy/paste; bold/
+  italic/strikethrough with Ctrl+B/I; heading/quote/code/code block; lists;
+  link with Ctrl+K), a debounced live HTML preview, and a "Statistik" tab
+  (word/character/paragraph counts, estimated reading time) alongside it.
 - **Gutenberg block engine** (`crates/gutenberg`) — a standalone, unit-tested
   library that parses Markdown into a block tree and renders it as
   block-comment-annotated HTML (`<!-- wp:paragraph -->...`), independent of
   the GUI.
 - **Document model** — per-article frontmatter (title, slug, status,
   categories, tags, featured image, WordPress post id) stored in the `.md`
-  file itself, editable via an "Artikel-Eigenschaften" dialog.
+  file itself, editable via an "Artikel-Eigenschaften" dialog with
+  autocomplete for existing WordPress categories/tags.
 - **WordPress connection settings** — site URL/username stored in a small
   config file; the Application Password is stored in the Secret Service
   (GNOME Keyring) via [`oo7`](https://crates.io/crates/oo7), never written to
   disk in plain text.
-
-Not yet implemented:
-
-- Actually publishing/updating a post via the WordPress REST API, and
-  uploading local images as media.
-- Flatpak packaging.
+- **Publishing** — an "Artikel exportieren" dialog shows the generated
+  Gutenberg HTML, then creates/updates the WordPress post via its REST API
+  on a background thread, uploading any locally-referenced images to the
+  media library and resolving category/tag names to WordPress term ids
+  (creating them if they don't exist yet).
+- **Flatpak packaging** — manifest, desktop entry, AppStream metainfo, and
+  icon under `data/` and `build-aux/flatpak/`.
 
 ## Building & running
 
@@ -57,6 +65,32 @@ doesn't depend on your desktop's state. Run those explicitly with:
 
 ```sh
 cargo test --workspace -- --ignored
+```
+
+## Packaging (Flatpak)
+
+The manifest at `build-aux/flatpak/de.christophlangner.Blocksmith.json`
+targets `org.gnome.Platform` 49, which already bundles GTK4, libadwaita,
+GtkSourceView5 and WebKitGTK 6.0 - no extra runtime modules needed, only the
+`org.freedesktop.Sdk.Extension.rust-stable` SDK extension for the Rust
+toolchain itself:
+
+```sh
+flatpak install flathub org.gnome.Platform//49 org.gnome.Sdk//49 \
+  org.freedesktop.Sdk.Extension.rust-stable//25.08
+cd build-aux/flatpak
+flatpak-builder --force-clean --user --install build-dir \
+  de.christophlangner.Blocksmith.json
+```
+
+Builds run fully offline inside the sandbox against vendored crate sources
+listed in `cargo-sources.json`. That file is generated from `Cargo.lock` -
+regenerate it whenever dependencies change, using the
+[flatpak-cargo-generator](https://github.com/flatpak/flatpak-builder-tools/tree/master/cargo)
+script:
+
+```sh
+python3 flatpak-cargo-generator.py ../../Cargo.lock -o cargo-sources.json
 ```
 
 ## Versioning

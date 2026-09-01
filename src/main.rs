@@ -1,10 +1,13 @@
+mod autocomplete;
 mod connection;
 mod document;
 mod editor;
 mod export;
+mod formatting;
 mod preview;
 mod properties;
 mod secrets;
+mod stats;
 mod window;
 mod wpclient;
 mod wpsite;

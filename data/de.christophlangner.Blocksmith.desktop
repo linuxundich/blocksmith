@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=Blocksmith
+Comment=Markdown-Artikel schreiben und als WordPress-Gutenberg-Blöcke veröffentlichen
+Exec=blocksmith
+Icon=de.christophlangner.Blocksmith
+Terminal=false
+Type=Application
+Categories=Office;TextEditor;
+Keywords=Markdown;WordPress;Gutenberg;Blog;Editor;
+StartupNotify=true

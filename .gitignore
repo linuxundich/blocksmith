@@ -1,2 +1,5 @@
 /target
 /.claude/settings.local.json
+/build-aux/flatpak/.flatpak-builder/
+/build-aux/flatpak/build-dir/
+/build-aux/flatpak/repo/

@@ -69,13 +69,14 @@ pub fn open(parent: &adw::ApplicationWindow) {
     // Prefill the password field from the keyring, if a matching entry exists.
     if !config.url.is_empty() && !config.username.is_empty() {
         let password_row = password_row.clone();
+        let status_label = status_label.clone();
         let url = config.url.clone();
         let username = config.username.clone();
         glib::MainContext::default().spawn_local(async move {
             match secrets::load_app_password(&url, &username).await {
                 Ok(Some(password)) => password_row.set_text(&password),
                 Ok(None) => {}
-                Err(err) => eprintln!("Passwort konnte nicht geladen werden: {err}"),
+                Err(err) => status_label.set_label(&format!("Passwort konnte nicht geladen werden: {err}")),
             }
         });
     }

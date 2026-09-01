@@ -1,0 +1,46 @@
+{
+    "app-id": "de.christophlangner.Blocksmith",
+    "runtime": "org.gnome.Platform",
+    "runtime-version": "49",
+    "sdk": "org.gnome.Sdk",
+    "sdk-extensions": [
+        "org.freedesktop.Sdk.Extension.rust-stable"
+    ],
+    "command": "blocksmith",
+    "finish-args": [
+        "--socket=wayland",
+        "--socket=fallback-x11",
+        "--share=ipc",
+        "--device=dri",
+        "--share=network",
+        "--filesystem=host:rw"
+    ],
+    "build-options": {
+        "append-path": "/usr/lib/sdk/rust-stable/bin",
+        "env": {
+            "CARGO_HOME": "/run/build/blocksmith/cargo"
+        }
+    },
+    "modules": [
+        {
+            "name": "blocksmith",
+            "buildsystem": "simple",
+            "build-commands": [
+                "mkdir -p .cargo",
+                "cp cargo/config .cargo/config.toml",
+                "cargo --offline build --release",
+                "install -Dm755 target/release/blocksmith /app/bin/blocksmith",
+                "install -Dm644 data/de.christophlangner.Blocksmith.desktop /app/share/applications/de.christophlangner.Blocksmith.desktop",
+                "install -Dm644 data/de.christophlangner.Blocksmith.metainfo.xml /app/share/metainfo/de.christophlangner.Blocksmith.metainfo.xml",
+                "install -Dm644 data/icons/de.christophlangner.Blocksmith.svg /app/share/icons/hicolor/scalable/apps/de.christophlangner.Blocksmith.svg"
+            ],
+            "sources": [
+                {
+                    "type": "dir",
+                    "path": "../.."
+                },
+                "cargo-sources.json"
+            ]
+        }
+    ]
+}

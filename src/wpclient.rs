@@ -145,6 +145,34 @@ impl Client {
         Ok(())
     }
 
+    /// Lists up to 100 existing term names for a taxonomy (`"categories"` or
+    /// `"tags"`), for autocomplete suggestions. Doesn't paginate beyond that
+    /// - fine for a personal blog's category/tag list.
+    pub fn list_term_names(&self, taxonomy: &str) -> Result<Vec<String>> {
+        let url = format!("{}?per_page=100&_fields=name", self.endpoint(taxonomy));
+        let mut response = self
+            .agent
+            .get(url)
+            .header("Authorization", self.auth_header.as_str())
+            .call()
+            .map_err(network_error)?;
+        let status = response.status().as_u16();
+        let body_text = response.body_mut().read_to_string().unwrap_or_default();
+        if !(200..300).contains(&status) {
+            return Err(error_from_body(status, &body_text));
+        }
+        let value: Value = serde_json::from_str(&body_text).map_err(|err| unreadable_response(status, err))?;
+        Ok(value
+            .as_array()
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|item| item.get("name").and_then(Value::as_str).map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default())
+    }
+
     fn send_post_payload(&self, url: String, payload: &Value) -> Result<PostResult> {
         let mut response = self
             .agent
@@ -228,6 +256,24 @@ fn percent_encode(s: &str) -> String {
 mod tests {
     use super::*;
     use crate::{secrets, wpsite};
+
+    /// Backs the categories/tags autocomplete in `properties.rs` - checks
+    /// it actually gets real term names back, not just a 200 with an empty
+    /// or malformed body.
+    #[test]
+    #[ignore]
+    fn list_term_names_against_real_site() {
+        let config = wpsite::load();
+        assert!(!config.url.is_empty(), "no WordPress site configured (run the connection dialog first)");
+        let password = futures_lite::future::block_on(secrets::load_app_password(&config.url, &config.username))
+            .expect("keyring lookup failed")
+            .expect("no application password stored for this site/user");
+        let client = Client::new(&config.url, &config.username, &password);
+
+        let categories = client.list_term_names("categories").expect("list_term_names(categories) failed");
+        assert!(!categories.is_empty(), "expected at least one existing category on the real site");
+        assert!(categories.iter().any(|c| c == "Allgemein"), "expected the real site's known 'Allgemein' category, got {categories:?}");
+    }
 
     /// Exercises create -> resolve/create term -> media upload -> update ->
     /// delete against the real, already-configured WordPress site (see

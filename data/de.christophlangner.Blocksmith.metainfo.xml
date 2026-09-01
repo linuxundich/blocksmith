@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>de.christophlangner.Blocksmith</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <name>Blocksmith</name>
+  <summary>Markdown-Artikel als WordPress-Gutenberg-Blöcke veröffentlichen</summary>
+  <description>
+    <p>
+      Blocksmith ist ein Markdown-Editor für GNOME, mit dem Blogartikel für
+      ein selbst gehostetes WordPress geschrieben werden. Links wird in
+      Markdown geschrieben, rechts zeigt eine Live-Vorschau das gerenderte
+      Ergebnis. Beim Veröffentlichen wandelt Blocksmith das Markdown in
+      echte, einzeln editierbare Gutenberg-Blöcke um - nicht in einen
+      einzigen klassischen HTML-Block - und lädt den Artikel per
+      WordPress-REST-API direkt in den eigenen Blog hoch, inklusive
+      Bild-Upload und automatischer Zuordnung von Kategorien und Tags.
+    </p>
+  </description>
+  <launchable type="desktop-id">de.christophlangner.Blocksmith.desktop</launchable>
+  <content_rating type="oars-1.1"/>
+  <url type="homepage">https://github.com/linuxundich/blocksmith</url>
+  <url type="vcs-browser">https://github.com/linuxundich/blocksmith</url>
+  <releases>
+    <release version="0.2.0" date="2026-09-01">
+      <description>
+        <p>WordPress-REST-API-Export: Artikel als Entwurf/Update veröffentlichen, Medien-Upload, Kategorien/Tags-Auflösung.</p>
+      </description>
+    </release>
+    <release version="0.1.0" date="2026-09-01">
+      <description>
+        <p>Erste Version: Split-Pane-Editor mit Live-Vorschau und die Markdown-zu-Gutenberg-Konvertierungs-Engine.</p>
+      </description>
+    </release>
+  </releases>
+</component>
