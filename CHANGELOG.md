@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-09-01
+
+### Added
+
+- "Von WordPress öffnen" now groups posts into "Entwürfe" and
+  "Veröffentlicht" sections (plus a catch-all "Weitere" for pending/
+  scheduled/private posts), instead of one flat list - drafts are shown
+  first, since that's usually what you're looking for.
+
+### Fixed
+
+- Scroll-sync froze while scrolling through a long fenced code block:
+  the whole block was a single scroll-sync anchor, so the preview stayed
+  pinned to the block's first line for however many lines the block
+  spanned, only jumping once you scrolled past it entirely. Each line
+  inside a code block now gets its own anchor, so the preview tracks
+  smoothly through long code samples too.
+
 ## [0.11.0] - 2026-09-01
 
 ### Added

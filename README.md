@@ -54,10 +54,11 @@ blocks. Implemented so far:
   autocomplete for existing WordPress categories/tags, backed by an
   on-disk cache (`src/termcache.rs`) refreshed at startup and on demand.
 - **Von WordPress öffnen** (Ctrl+Shift+O) — pick an existing post from the
-  configured site and edit it as Markdown: `crates/gutenberg`'s reverse
-  converter turns its Gutenberg block HTML back into Markdown, categories/
-  tags are resolved from ids back to names, and the post's id carries over
-  so exporting afterward updates that same post instead of creating a
+  configured site, grouped into "Entwürfe" and "Veröffentlicht" (drafts
+  first), and edit it as Markdown: `crates/gutenberg`'s reverse converter
+  turns its Gutenberg block HTML back into Markdown, categories/tags are
+  resolved from ids back to names, and the post's id carries over so
+  exporting afterward updates that same post instead of creating a
   duplicate.
 - **Einstellungen dialog** (`Adw.PreferencesDialog`, Ctrl+,) — an
   "Erscheinungsbild" page adopted directly from GNOME Builder's own

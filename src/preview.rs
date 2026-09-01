@@ -22,7 +22,7 @@ use std::rc::Rc;
 
 use adw::prelude::*;
 use gtk4::{gio, glib, pango};
-use pulldown_cmark::{Event, Options, Parser, TagEnd};
+use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 use webkit6::prelude::*;
 
 use crate::fontutil;
@@ -303,6 +303,14 @@ fn render_body_with_line_anchors(markdown: &str) -> String {
     let mut i = 0;
     while i < events.len() {
         match &events[i].0 {
+            Event::Start(Tag::CodeBlock(kind)) => {
+                let kind = kind.clone();
+                let end = find_matching_end(&events, i, &TagEnd::CodeBlock);
+                let line = line_number(markdown, events[i].1.start);
+                let inner = render_code_block_with_line_anchors(&events[i..=end], &kind, line);
+                out.push_str(&format!("<div data-line=\"{line}\">{inner}</div>\n"));
+                i = end + 1;
+            }
             Event::Start(tag) => {
                 let end_marker = tag.to_end();
                 let end = find_matching_end(&events, i, &end_marker);
@@ -321,6 +329,43 @@ fn render_body_with_line_anchors(markdown: &str) -> String {
         }
     }
     out
+}
+
+/// Fenced/indented code blocks can span dozens of lines - if the whole
+/// block were a single scroll-sync anchor (like every other block type
+/// gets), the preview would sit completely frozen while the editor
+/// scrolls through it, only jumping once you scroll past the block
+/// entirely. Each *line* of the block's content gets its own anchor
+/// instead (nested `<span data-line="N">` inside the shared `<pre><code>`),
+/// so `window.scrollToLine`'s "closest preceding data-line" search - which
+/// already walks every `[data-line]` element in document order, not just
+/// top-level blocks - keeps working smoothly inside long code samples too.
+fn render_code_block_with_line_anchors(events: &[(Event, std::ops::Range<usize>)], kind: &CodeBlockKind, block_start_line: usize) -> String {
+    let mut code = String::new();
+    for (event, _) in events {
+        if let Event::Text(text) = event {
+            code.push_str(text);
+        }
+    }
+
+    let lang_class = match kind {
+        CodeBlockKind::Fenced(info) => info
+            .split_whitespace()
+            .next()
+            .filter(|lang| !lang.is_empty())
+            .map(|lang| format!(" class=\"language-{}\"", glib::markup_escape_text(lang))),
+        CodeBlockKind::Indented => None,
+    };
+
+    let mut html = format!("<pre><code{}>", lang_class.unwrap_or_default());
+    // pulldown-cmark's code content always ends with a trailing newline;
+    // drop the empty element `split('\n')` would otherwise produce for it.
+    for (index, line_text) in code.strip_suffix('\n').unwrap_or(&code).split('\n').enumerate() {
+        let line = block_start_line + 1 + index;
+        html.push_str(&format!("<span data-line=\"{line}\">{}</span>\n", glib::markup_escape_text(line_text)));
+    }
+    html.push_str("</code></pre>");
+    html
 }
 
 fn line_number(markdown: &str, byte_offset: usize) -> usize {
@@ -389,6 +434,34 @@ mod tests {
     fn thematic_break_is_tagged() {
         let out = render_body_with_line_anchors("Text.\n\n---\n\nMore text.\n");
         assert!(out.contains("<div data-line=\"3\"><hr/></div>"));
+    }
+
+    #[test]
+    fn multiline_code_block_tags_each_line_individually() {
+        // The whole point: a long fenced code block used to be one opaque
+        // scroll-sync anchor, so scrolling through it in the editor never
+        // moved the preview at all until you scrolled past the block
+        // entirely. Each line inside it needs its own `data-line` now.
+        let markdown = "Intro.\n\n```bash\nfirst\nsecond\nthird\n```\n\nOutro.\n";
+        let out = render_body_with_line_anchors(markdown);
+        assert!(out.contains("<div data-line=\"3\">"), "{out}");
+        assert!(out.contains("<span data-line=\"4\">first</span>"), "{out}");
+        assert!(out.contains("<span data-line=\"5\">second</span>"), "{out}");
+        assert!(out.contains("<span data-line=\"6\">third</span>"), "{out}");
+        assert!(out.contains("<div data-line=\"9\">"), "{out}");
+    }
+
+    #[test]
+    fn fenced_code_block_language_becomes_a_css_class() {
+        let out = render_body_with_line_anchors("```rust\nfn main() {}\n```\n");
+        assert!(out.contains("class=\"language-rust\""), "{out}");
+    }
+
+    #[test]
+    fn code_block_content_is_html_escaped() {
+        let out = render_body_with_line_anchors("```\n<script>alert(1)</script>\n```\n");
+        assert!(out.contains("&lt;script&gt;"), "{out}");
+        assert!(!out.contains("<script>"), "{out}");
     }
 
     #[test]

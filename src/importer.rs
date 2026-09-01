@@ -22,6 +22,97 @@ pub struct ImportedPost {
     pub body: String,
 }
 
+/// One status-grouped section of the post list ("Entwürfe"/"Veröffentlicht"/
+/// "Weitere") - a heading plus its own boxed-list, hidden entirely while
+/// its bucket is empty (e.g. no drafts exist).
+#[derive(Clone)]
+struct PostGroup {
+    wrap: gtk4::Box,
+    list_box: gtk4::ListBox,
+    posts: Rc<RefCell<Vec<wpclient::PostSummary>>>,
+}
+
+fn build_post_group(title: &str) -> PostGroup {
+    let heading = gtk4::Label::builder().label(title).xalign(0.0).build();
+    heading.add_css_class("heading");
+
+    let list_box = gtk4::ListBox::new();
+    list_box.add_css_class("boxed-list");
+
+    let wrap = gtk4::Box::builder().orientation(gtk4::Orientation::Vertical).spacing(6).build();
+    wrap.append(&heading);
+    wrap.append(&list_box);
+    wrap.set_visible(false);
+
+    PostGroup { wrap, list_box, posts: Rc::new(RefCell::new(Vec::new())) }
+}
+
+/// Wires one group's row activation - shared logic (fetch, convert, hand
+/// off to the caller) between the "Entwürfe"/"Veröffentlicht"/"Weitere"
+/// sections, `all_list_boxes` being every section's list box so all three
+/// get disabled together while a post is loading, not just the one it was
+/// picked from.
+fn wire_group_row_activation(
+    group: &PostGroup,
+    site: wpsite::SiteConfig,
+    status_label: gtk4::Label,
+    on_selected: Rc<dyn Fn(ImportedPost)>,
+    dialog_weak: glib::WeakRef<adw::Dialog>,
+    all_list_boxes: Vec<gtk4::ListBox>,
+) {
+    let posts = group.posts.clone();
+    group.list_box.connect_row_activated(move |_list_box, row| {
+        let Some(post) = posts.borrow().get(row.index() as usize).cloned() else {
+            return;
+        };
+        for list_box in &all_list_boxes {
+            list_box.set_sensitive(false);
+        }
+        status_label.set_label(&format!("Lade „{}“ …", post.title));
+
+        let site = site.clone();
+        let (tx, rx) = mpsc::channel::<Result<ImportedPost, String>>();
+        std::thread::spawn(move || {
+            let outcome = futures_lite::future::block_on(secrets::load_app_password(&site.url, &site.username))
+                .map_err(|err| err.to_string())
+                .and_then(|maybe_password| {
+                    maybe_password.ok_or_else(|| "Kein Application Password im Schlüsselbund gefunden.".to_string())
+                })
+                .and_then(|password| fetch_and_convert(&site, &password, post.id));
+            let _ = tx.send(outcome);
+        });
+
+        let status_label = status_label.clone();
+        let all_list_boxes = all_list_boxes.clone();
+        let on_selected = on_selected.clone();
+        let dialog_weak = dialog_weak.clone();
+        glib::timeout_add_local(Duration::from_millis(150), move || match rx.try_recv() {
+            Ok(Ok(imported)) => {
+                on_selected(imported);
+                if let Some(dialog) = dialog_weak.upgrade() {
+                    dialog.close();
+                }
+                glib::ControlFlow::Break
+            }
+            Ok(Err(err)) => {
+                status_label.set_label(&format!("Fehler: {err}"));
+                for list_box in &all_list_boxes {
+                    list_box.set_sensitive(true);
+                }
+                glib::ControlFlow::Break
+            }
+            Err(mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
+            Err(mpsc::TryRecvError::Disconnected) => {
+                status_label.set_label("Interner Fehler: Ladevorgang hat kein Ergebnis geliefert.");
+                for list_box in &all_list_boxes {
+                    list_box.set_sensitive(true);
+                }
+                glib::ControlFlow::Break
+            }
+        });
+    });
+}
+
 pub fn open(parent: &adw::ApplicationWindow, on_selected: impl Fn(ImportedPost) + 'static) {
     let site = wpsite::load();
 
@@ -29,9 +120,19 @@ pub fn open(parent: &adw::ApplicationWindow, on_selected: impl Fn(ImportedPost) 
     status_label.set_wrap(true);
     status_label.set_xalign(0.0);
 
-    let list_box = gtk4::ListBox::new();
-    list_box.add_css_class("boxed-list");
-    let list_scroller = gtk4::ScrolledWindow::builder().child(&list_box).vexpand(true).min_content_height(360).build();
+    // Drafts first - that's what the user is most likely mid-way through
+    // and looking for - then published, then anything else (pending
+    // review, scheduled, private) in a catch-all last section.
+    let drafts_group = build_post_group("Entwürfe");
+    let published_group = build_post_group("Veröffentlicht");
+    let other_group = build_post_group("Weitere");
+
+    let lists_container = gtk4::Box::builder().orientation(gtk4::Orientation::Vertical).spacing(18).build();
+    lists_container.append(&drafts_group.wrap);
+    lists_container.append(&published_group.wrap);
+    lists_container.append(&other_group.wrap);
+
+    let list_scroller = gtk4::ScrolledWindow::builder().child(&lists_container).vexpand(true).min_content_height(360).build();
 
     let refresh_button = gtk4::Button::from_icon_name("view-refresh-symbolic");
     refresh_button.set_tooltip_text(Some("Aktualisieren"));
@@ -67,73 +168,34 @@ pub fn open(parent: &adw::ApplicationWindow, on_selected: impl Fn(ImportedPost) 
         return;
     }
 
-    let posts: Rc<RefCell<Vec<wpclient::PostSummary>>> = Rc::new(RefCell::new(Vec::new()));
+    let all_list_boxes = vec![drafts_group.list_box.clone(), published_group.list_box.clone(), other_group.list_box.clone()];
 
-    load_posts(site.clone(), list_box.clone(), posts.clone(), status_label.clone());
+    load_posts(site.clone(), &drafts_group, &published_group, &other_group, status_label.clone());
     {
         let site = site.clone();
-        let list_box = list_box.clone();
-        let posts = posts.clone();
+        let drafts_group = drafts_group.clone();
+        let published_group = published_group.clone();
+        let other_group = other_group.clone();
         let status_label = status_label.clone();
         refresh_button.connect_clicked(move |_| {
-            load_posts(site.clone(), list_box.clone(), posts.clone(), status_label.clone());
+            load_posts(site.clone(), &drafts_group, &published_group, &other_group, status_label.clone());
         });
     }
 
-    let on_selected = Rc::new(on_selected);
+    let on_selected: Rc<dyn Fn(ImportedPost)> = Rc::new(on_selected);
     let dialog_weak = dialog.downgrade();
-    list_box.connect_row_activated(move |list_box, row| {
-        let Some(post) = posts.borrow().get(row.index() as usize).cloned() else {
-            return;
-        };
-        list_box.set_sensitive(false);
-        status_label.set_label(&format!("Lade „{}“ …", post.title));
-
-        let site = site.clone();
-        let (tx, rx) = mpsc::channel::<Result<ImportedPost, String>>();
-        std::thread::spawn(move || {
-            let outcome = futures_lite::future::block_on(secrets::load_app_password(&site.url, &site.username))
-                .map_err(|err| err.to_string())
-                .and_then(|maybe_password| {
-                    maybe_password.ok_or_else(|| "Kein Application Password im Schlüsselbund gefunden.".to_string())
-                })
-                .and_then(|password| fetch_and_convert(&site, &password, post.id));
-            let _ = tx.send(outcome);
-        });
-
-        let status_label = status_label.clone();
-        let list_box = list_box.clone();
-        let on_selected = on_selected.clone();
-        let dialog_weak = dialog_weak.clone();
-        glib::timeout_add_local(Duration::from_millis(150), move || match rx.try_recv() {
-            Ok(Ok(imported)) => {
-                on_selected(imported);
-                if let Some(dialog) = dialog_weak.upgrade() {
-                    dialog.close();
-                }
-                glib::ControlFlow::Break
-            }
-            Ok(Err(err)) => {
-                status_label.set_label(&format!("Fehler: {err}"));
-                list_box.set_sensitive(true);
-                glib::ControlFlow::Break
-            }
-            Err(mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
-            Err(mpsc::TryRecvError::Disconnected) => {
-                status_label.set_label("Interner Fehler: Ladevorgang hat kein Ergebnis geliefert.");
-                list_box.set_sensitive(true);
-                glib::ControlFlow::Break
-            }
-        });
-    });
+    wire_group_row_activation(&drafts_group, site.clone(), status_label.clone(), on_selected.clone(), dialog_weak.clone(), all_list_boxes.clone());
+    wire_group_row_activation(&published_group, site.clone(), status_label.clone(), on_selected.clone(), dialog_weak.clone(), all_list_boxes.clone());
+    wire_group_row_activation(&other_group, site, status_label, on_selected, dialog_weak, all_list_boxes);
 
     dialog.present(Some(parent));
 }
 
 fn load_posts(
     site: wpsite::SiteConfig,
-    list_box: gtk4::ListBox,
-    posts: Rc<RefCell<Vec<wpclient::PostSummary>>>,
+    drafts_group: &PostGroup,
+    published_group: &PostGroup,
+    other_group: &PostGroup,
     status_label: gtk4::Label,
 ) {
     status_label.set_label("Lade Artikel …");
@@ -148,21 +210,39 @@ fn load_posts(
         let _ = tx.send(outcome);
     });
 
+    let drafts_list_box = drafts_group.list_box.clone();
+    let drafts_wrap = drafts_group.wrap.clone();
+    let drafts_posts = drafts_group.posts.clone();
+    let published_list_box = published_group.list_box.clone();
+    let published_wrap = published_group.wrap.clone();
+    let published_posts = published_group.posts.clone();
+    let other_list_box = other_group.list_box.clone();
+    let other_wrap = other_group.wrap.clone();
+    let other_posts = other_group.posts.clone();
+
     glib::timeout_add_local(Duration::from_millis(150), move || match rx.try_recv() {
         Ok(Ok(fetched)) => {
-            while let Some(child) = list_box.first_child() {
-                list_box.remove(&child);
+            let mut drafts = Vec::new();
+            let mut published = Vec::new();
+            let mut other = Vec::new();
+            for post in fetched {
+                match post.status.as_str() {
+                    "draft" => drafts.push(post),
+                    "publish" => published.push(post),
+                    _ => other.push(post),
+                }
             }
-            for post in &fetched {
-                let row = adw::ActionRow::builder()
-                    .title(glib::markup_escape_text(&post.title).as_str())
-                    .subtitle(format!("{} · {}", status_display(&post.status), post.date.split('T').next().unwrap_or(&post.date)))
-                    .activatable(true)
-                    .build();
-                list_box.append(&row);
-            }
-            status_label.set_label(&format!("{} Artikel gefunden. Zum Öffnen auswählen.", fetched.len()));
-            *posts.borrow_mut() = fetched;
+            let total = drafts.len() + published.len() + other.len();
+
+            populate_group(&drafts_list_box, &drafts_wrap, &drafts, false);
+            populate_group(&published_list_box, &published_wrap, &published, false);
+            populate_group(&other_list_box, &other_wrap, &other, true);
+
+            *drafts_posts.borrow_mut() = drafts;
+            *published_posts.borrow_mut() = published;
+            *other_posts.borrow_mut() = other;
+
+            status_label.set_label(&format!("{total} Artikel gefunden. Zum Öffnen auswählen."));
             glib::ControlFlow::Break
         }
         Ok(Err(err)) => {
@@ -175,6 +255,24 @@ fn load_posts(
             glib::ControlFlow::Break
         }
     });
+}
+
+/// Rebuilds one group's rows from `posts` and shows/hides the whole group
+/// depending on whether it has anything to show. `show_status` includes
+/// the status word in each row's subtitle (used for the catch-all "Weitere"
+/// group, which mixes several statuses) - the "Entwürfe"/"Veröffentlicht"
+/// groups don't need it, since their heading already says which.
+fn populate_group(list_box: &gtk4::ListBox, wrap: &gtk4::Box, posts: &[wpclient::PostSummary], show_status: bool) {
+    while let Some(child) = list_box.first_child() {
+        list_box.remove(&child);
+    }
+    for post in posts {
+        let date = post.date.split('T').next().unwrap_or(&post.date);
+        let subtitle = if show_status { format!("{} · {date}", status_display(&post.status)) } else { date.to_string() };
+        let row = adw::ActionRow::builder().title(glib::markup_escape_text(&post.title).as_str()).subtitle(subtitle).activatable(true).build();
+        list_box.append(&row);
+    }
+    wrap.set_visible(!posts.is_empty());
 }
 
 fn status_display(status: &str) -> &str {
