@@ -1,10 +1,12 @@
 mod connection;
 mod document;
 mod editor;
+mod export;
 mod preview;
 mod properties;
 mod secrets;
 mod window;
+mod wpclient;
 mod wpsite;
 
 use adw::prelude::*;
@@ -19,6 +21,7 @@ fn main() -> glib::ExitCode {
     app.set_accels_for_action("win.open", &["<Ctrl>o"]);
     app.set_accels_for_action("win.save", &["<Ctrl>s"]);
     app.set_accels_for_action("win.properties", &["<Ctrl>comma"]);
+    app.set_accels_for_action("win.publish", &["<Ctrl><Shift>p"]);
 
     app.connect_activate(|app| {
         let win = window::build(app);

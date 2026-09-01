@@ -7,10 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-01
+
+The app can now actually do the thing it's for: write Markdown, review the
+generated Gutenberg HTML, and publish or update a real WordPress post.
+
 ### Added
 
+- WordPress REST API client (`src/wpclient.rs`, blocking `ureq`-based):
+  create/update posts, upload media, resolve-or-create category/tag terms
+  by name, delete a post.
+- "Artikel exportieren" dialog (`src/export.rs`): shows the generated
+  Gutenberg block HTML before sending, then publishes/updates the post on a
+  background thread (so the network round trip never blocks the UI) and
+  writes the returned WordPress post id back into the document's
+  frontmatter so a later export updates the same post instead of creating a
+  duplicate. Reachable from the header bar or Ctrl+Shift+P.
+- Local images referenced in the Markdown (`![alt](local/path.png)`) are
+  uploaded to the WordPress media library at export time and the generated
+  `wp:image` block is rewritten to point at the resulting hosted URL.
 - Licensed under GPL-3.0-or-later (`LICENSE`, `license` field in both crates'
   `Cargo.toml`).
+
+### Testing
+
+- `wpclient` and `export` each have an `#[ignore]`d test exercising the full
+  flow (category/tag resolution, media upload, create, update, delete)
+  against a real, already-configured WordPress site rather than a mock —
+  run explicitly with `cargo test -- --ignored`.
 
 ## [0.1.0] - 2026-09-01
 
@@ -40,5 +64,6 @@ to WordPress.
   Service (GNOME Keyring, or the portal equivalent under Flatpak) via `oo7`,
   never written to disk in plain text.
 
-[Unreleased]: https://github.com/linuxundich/blocksmith/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/linuxundich/blocksmith/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/linuxundich/blocksmith/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/linuxundich/blocksmith/releases/tag/v0.1.0

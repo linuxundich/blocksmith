@@ -8,7 +8,7 @@ use gtk4::{gio, glib};
 use webkit6::prelude::*;
 
 use crate::document::{Document, Frontmatter};
-use crate::{connection, document, editor, preview, properties};
+use crate::{connection, document, editor, export, preview, properties};
 
 const DEBOUNCE_MS: u64 = 250;
 
@@ -49,6 +49,11 @@ pub fn build(app: &adw::Application) -> adw::ApplicationWindow {
     connection_button.set_tooltip_text(Some("WordPress-Verbindung"));
     connection_button.set_action_name(Some("win.wordpress-connection"));
 
+    let publish_button = gtk4::Button::from_icon_name("send-to-symbolic");
+    publish_button.set_tooltip_text(Some("Artikel exportieren (Strg+Umschalt+P)"));
+    publish_button.set_action_name(Some("win.publish"));
+    publish_button.add_css_class("suggested-action");
+
     let header_bar = adw::HeaderBar::new();
     header_bar.set_title_widget(Some(&title));
     header_bar.pack_start(&new_button);
@@ -56,6 +61,7 @@ pub fn build(app: &adw::Application) -> adw::ApplicationWindow {
     header_bar.pack_start(&save_button);
     header_bar.pack_end(&connection_button);
     header_bar.pack_end(&properties_button);
+    header_bar.pack_end(&publish_button);
 
     let toolbar_view = adw::ToolbarView::new();
     toolbar_view.add_top_bar(&header_bar);
@@ -78,6 +84,7 @@ pub fn build(app: &adw::Application) -> adw::ApplicationWindow {
     wire_save_action(&window, &buffer, &current_path, &frontmatter, &title);
     wire_properties_action(&window, &frontmatter);
     wire_connection_action(&window);
+    wire_publish_action(&window, &buffer, &current_path, &frontmatter);
 
     window
 }
@@ -255,6 +262,28 @@ fn wire_connection_action(window: &adw::ApplicationWindow) {
         if let Some(window) = window_weak.upgrade() {
             connection::open(&window);
         }
+    });
+    window.add_action(&action);
+}
+
+fn wire_publish_action(
+    window: &adw::ApplicationWindow,
+    buffer: &sourceview5::Buffer,
+    current_path: &Rc<RefCell<Option<PathBuf>>>,
+    frontmatter: &Rc<RefCell<Frontmatter>>,
+) {
+    let action = gio::SimpleAction::new("publish", None);
+    let buffer = buffer.clone();
+    let current_path = current_path.clone();
+    let frontmatter = frontmatter.clone();
+    let window_weak = window.downgrade();
+    action.connect_activate(move |_, _| {
+        let Some(window) = window_weak.upgrade() else {
+            return;
+        };
+        let body = buffer.text(&buffer.start_iter(), &buffer.end_iter(), false).to_string();
+        let doc_dir = current_path.borrow().as_ref().and_then(|p| p.parent().map(Path::to_path_buf));
+        export::open(&window, body, frontmatter.clone(), doc_dir);
     });
     window.add_action(&action);
 }
