@@ -5,16 +5,15 @@ use std::time::Duration;
 
 use adw::prelude::*;
 use gtk4::{gio, glib};
-use webkit6::prelude::*;
 
 use crate::document::{Document, Frontmatter};
-use crate::{aimenu, chat, codeview, document, editor, export, formatting, importer, preview, properties, settings, stats, termcache};
+use crate::{aimenu, chat, codeview, document, editor, export, formatting, importer, preview, properties, settings, stats, statusbar, termcache};
 
 const DEBOUNCE_MS: u64 = 250;
 
 pub fn build(app: &adw::Application) -> adw::ApplicationWindow {
     let (editor_scroller, view, buffer, spelling_menu) = editor::build();
-    let web_view = preview::build();
+    let preview_pane = Rc::new(preview::PreviewPane::new());
     let stats_view = Rc::new(stats::StatsView::new());
 
     let toolbar = formatting::build(&view, &buffer);
@@ -29,7 +28,7 @@ pub fn build(app: &adw::Application) -> adw::ApplicationWindow {
     let code_view = Rc::new(codeview::CodeView::new());
 
     let view_stack = adw::ViewStack::new();
-    view_stack.add_titled_with_icon(&web_view, Some("preview"), "Vorschau", "view-reveal-symbolic");
+    view_stack.add_titled_with_icon(&preview_pane.widget, Some("preview"), "Vorschau", "view-reveal-symbolic");
     view_stack.add_titled_with_icon(&code_view.widget, Some("code"), "Gutenberg-Code", "text-x-generic-symbolic");
     view_stack.add_titled_with_icon(&stats_view.widget, Some("stats"), "Statistik", "view-list-symbolic");
     view_stack.add_titled_with_icon(&chat_view.widget, Some("chat"), "Chat", "chat-message-new-symbolic");
@@ -44,27 +43,31 @@ pub fn build(app: &adw::Application) -> adw::ApplicationWindow {
             }
         });
     }
-    // A proper (title-button-less) header bar for the switcher, mirroring
-    // the standard GNOME pattern for Adw.ViewSwitcher (e.g. GNOME Builder,
-    // GNOME Text Editor put it in exactly this spot) rather than a plain
-    // row - the header bar's own chrome is what makes the pill/segmented
-    // tabs read as one cohesive group instead of loose buttons.
-    let view_switcher = adw::ViewSwitcher::builder().stack(&view_stack).policy(adw::ViewSwitcherPolicy::Wide).build();
+    // `Adw.InlineViewSwitcher` renders all tabs as one seamless linked pill
+    // (unlike `Adw.ViewSwitcher`, which only highlights the active tab and
+    // leaves the others as loose, ungrouped buttons) - packed at the start
+    // rather than used as the header bar's centered title widget, so it
+    // sits left-aligned the same way it does in the reference design.
+    let view_switcher = adw::InlineViewSwitcher::builder().stack(&view_stack).build();
     let switcher_header = adw::HeaderBar::new();
-    switcher_header.set_title_widget(Some(&view_switcher));
+    switcher_header.pack_start(&view_switcher);
     switcher_header.set_show_start_title_buttons(false);
     switcher_header.set_show_end_title_buttons(false);
+    // Without an explicit title widget, Adw.HeaderBar falls back to
+    // showing the window's own title ("Blocksmith") centered here, which
+    // then reads as a stray extra segment next to the pill switcher.
+    switcher_header.set_title_widget(Some(&gtk4::Label::new(None)));
 
-    let preview_pane = gtk4::Box::builder().orientation(gtk4::Orientation::Vertical).build();
-    preview_pane.append(&switcher_header);
-    preview_pane.append(&gtk4::Separator::new(gtk4::Orientation::Horizontal));
-    preview_pane.append(&view_stack);
+    let right_pane = gtk4::Box::builder().orientation(gtk4::Orientation::Vertical).build();
+    right_pane.append(&switcher_header);
+    right_pane.append(&gtk4::Separator::new(gtk4::Orientation::Horizontal));
+    right_pane.append(&view_stack);
     view_stack.set_vexpand(true);
 
     let paned = gtk4::Paned::builder()
         .orientation(gtk4::Orientation::Horizontal)
         .start_child(&editor_pane)
-        .end_child(&preview_pane)
+        .end_child(&right_pane)
         .resize_start_child(true)
         .resize_end_child(true)
         .shrink_start_child(false)
@@ -113,9 +116,12 @@ pub fn build(app: &adw::Application) -> adw::ApplicationWindow {
     header_bar.pack_end(&properties_button);
     header_bar.pack_end(&publish_button);
 
+    let status_bar = Rc::new(statusbar::StatusBar::new());
+
     let toolbar_view = adw::ToolbarView::new();
     toolbar_view.add_top_bar(&header_bar);
     toolbar_view.set_content(Some(&paned));
+    toolbar_view.add_bottom_bar(&status_bar.widget);
 
     let toast_overlay = adw::ToastOverlay::new();
     toast_overlay.set_child(Some(&toolbar_view));
@@ -138,8 +144,9 @@ pub fn build(app: &adw::Application) -> adw::ApplicationWindow {
 
     let ai_menu_handles = aimenu::install(&view, &buffer, &view_stack, chat_view.clone(), &spelling_menu);
 
-    wire_live_preview(&buffer, &web_view, &stats_view, &code_view);
-    wire_scroll_sync(&editor_scroller, &buffer, &web_view);
+    wire_live_preview(&buffer, &preview_pane, &stats_view, &code_view);
+    wire_scroll_sync(&editor_scroller, &buffer, &preview_pane);
+    wire_status_bar(&buffer, &status_bar);
     wire_new_action(&window, &buffer, &current_path, &frontmatter, &title);
     wire_open_action(&window, &buffer, &current_path, &frontmatter, &title, &toast_overlay);
     wire_open_from_wordpress_action(&window, &buffer, &current_path, &frontmatter, &title);
@@ -166,13 +173,13 @@ fn subtitle_for(path: Option<&Path>, frontmatter: &Frontmatter) -> String {
 
 fn wire_live_preview(
     buffer: &sourceview5::Buffer,
-    web_view: &webkit6::WebView,
+    preview_pane: &Rc<preview::PreviewPane>,
     stats_view: &Rc<stats::StatsView>,
     code_view: &Rc<codeview::CodeView>,
 ) {
     let debounce: Rc<RefCell<Option<glib::SourceId>>> = Rc::new(RefCell::new(None));
 
-    let web_view_clone = web_view.clone();
+    let preview_pane_clone = preview_pane.clone();
     let stats_view_clone = stats_view.clone();
     let code_view_clone = code_view.clone();
     let debounce_clone = debounce.clone();
@@ -181,12 +188,12 @@ fn wire_live_preview(
             id.remove();
         }
         let text = buf.text(&buf.start_iter(), &buf.end_iter(), false).to_string();
-        let web_view = web_view_clone.clone();
+        let preview_pane = preview_pane_clone.clone();
         let stats_view = stats_view_clone.clone();
         let code_view = code_view_clone.clone();
         let debounce_inner = debounce_clone.clone();
         let id = glib::timeout_add_local(Duration::from_millis(DEBOUNCE_MS), move || {
-            web_view.load_html(&preview::render_html(&text), None);
+            preview_pane.update(&text);
             stats_view.update(&text);
             code_view.update(&text);
             *debounce_inner.borrow_mut() = None;
@@ -195,9 +202,55 @@ fn wire_live_preview(
         *debounce_clone.borrow_mut() = Some(id);
     });
 
-    web_view.load_html(&preview::render_html(""), None);
+    preview_pane.update("");
     stats_view.update("");
     code_view.update("");
+}
+
+/// The bottom status bar: word count/reading time for the whole document
+/// (debounced on `changed`, same rhythm as the preview/stats/code panels),
+/// plus the same two numbers for the current selection - tracked via
+/// `mark-set`, since that's the signal that fires for both cursor moves
+/// and selection drags, with its own (shorter) debounce since it fires far
+/// more often than `changed` while the user is just moving the cursor.
+fn wire_status_bar(buffer: &sourceview5::Buffer, status_bar: &Rc<statusbar::StatusBar>) {
+    const SELECTION_DEBOUNCE_MS: u64 = 120;
+
+    let debounce: Rc<RefCell<Option<glib::SourceId>>> = Rc::new(RefCell::new(None));
+    let status_bar_clone = status_bar.clone();
+    let debounce_clone = debounce.clone();
+    buffer.connect_changed(move |buf| {
+        if let Some(id) = debounce_clone.borrow_mut().take() {
+            id.remove();
+        }
+        let text = buf.text(&buf.start_iter(), &buf.end_iter(), false).to_string();
+        let status_bar = status_bar_clone.clone();
+        let debounce_inner = debounce_clone.clone();
+        let id = glib::timeout_add_local(Duration::from_millis(DEBOUNCE_MS), move || {
+            status_bar.update_document(&text);
+            *debounce_inner.borrow_mut() = None;
+            glib::ControlFlow::Break
+        });
+        *debounce_clone.borrow_mut() = Some(id);
+    });
+    status_bar.update_document("");
+
+    let selection_debounce: Rc<RefCell<Option<glib::SourceId>>> = Rc::new(RefCell::new(None));
+    let status_bar_clone = status_bar.clone();
+    buffer.connect_mark_set(move |buf, _iter, _mark| {
+        if let Some(id) = selection_debounce.borrow_mut().take() {
+            id.remove();
+        }
+        let selection = buf.selection_bounds().map(|(start, end)| buf.text(&start, &end, false).to_string());
+        let status_bar = status_bar_clone.clone();
+        let selection_debounce_inner = selection_debounce.clone();
+        let id = glib::timeout_add_local(Duration::from_millis(SELECTION_DEBOUNCE_MS), move || {
+            status_bar.update_selection(selection.as_deref());
+            *selection_debounce_inner.borrow_mut() = None;
+            glib::ControlFlow::Break
+        });
+        *selection_debounce.borrow_mut() = Some(id);
+    });
 }
 
 const SCROLL_SYNC_DEBOUNCE_MS: u64 = 80;
@@ -220,28 +273,22 @@ const SCROLL_SYNC_DEBOUNCE_MS: u64 = 80;
 /// mismatch is handled entirely on the preview side via `data-line`
 /// block-boundary snapping, so the editor side never needs pixel-perfect
 /// line detection to get the overall sync right.
-fn wire_scroll_sync(scroller: &gtk4::ScrolledWindow, buffer: &sourceview5::Buffer, web_view: &webkit6::WebView) {
+fn wire_scroll_sync(scroller: &gtk4::ScrolledWindow, buffer: &sourceview5::Buffer, preview_pane: &Rc<preview::PreviewPane>) {
     let debounce: Rc<RefCell<Option<glib::SourceId>>> = Rc::new(RefCell::new(None));
     let buffer = buffer.clone();
-    let web_view = web_view.clone();
+    let preview_pane = preview_pane.clone();
     scroller.vadjustment().connect_value_changed(move |adjustment| {
         if let Some(id) = debounce.borrow_mut().take() {
             id.remove();
         }
         let adjustment = adjustment.clone();
         let buffer = buffer.clone();
-        let web_view = web_view.clone();
+        let preview_pane = preview_pane.clone();
         let debounce_inner = debounce.clone();
         let id = glib::timeout_add_local(Duration::from_millis(SCROLL_SYNC_DEBOUNCE_MS), move || {
             let total_lines = buffer.end_iter().line() + 1;
             let line = estimate_visible_line(adjustment.value(), adjustment.upper(), adjustment.page_size(), total_lines);
-            web_view.evaluate_javascript(
-                &format!("window.scrollToLine && window.scrollToLine({line});"),
-                None,
-                None,
-                gio::Cancellable::NONE,
-                |_| {},
-            );
+            preview_pane.scroll_to_line(line);
             *debounce_inner.borrow_mut() = None;
             glib::ControlFlow::Break
         });

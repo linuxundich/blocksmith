@@ -23,14 +23,18 @@ blocks. Implemented so far:
   strikethrough with Ctrl+B/I; heading/quote/code/code block; lists; link
   with Ctrl+K), a debounced live HTML preview kept in scroll-sync with the
   editor (matched by source line, not scroll percentage, so a tall image
-  doesn't throw off the sync). The right pane's tabs (hosted in a proper
-  `Adw.HeaderBar`-based `ViewSwitcher`, GNOME's standard grouped-pill
-  pattern) are "Vorschau", "Gutenberg-Code" (the exact block HTML that
-  would be published), "Statistik" (word/character/paragraph counts,
-  estimated reading time), and "Chat" - a writing assistant with message
-  bubbles (replies rendered as Markdown), backed by Gemini, ChatGPT, Claude,
-  or Ollama (self-hosted, no API key), with a provider/model picker both in
-  the tab itself and in Einstellungen.
+  doesn't throw off the sync), and a footer status bar with word count and
+  reading time for the whole article - plus the same two numbers for the
+  current selection, whenever one is active. The right pane's tabs (hosted
+  in an `Adw.HeaderBar`-based `Adw.InlineViewSwitcher`, rendering all tabs
+  as one seamless linked pill) are "Vorschau" (follows the app's light/dark
+  mode, with a choice of Modern/Klassisch/Sepia typographic styles),
+  "Gutenberg-Code" (the exact block HTML that would be published),
+  "Statistik" (word/character/paragraph counts, estimated reading time),
+  and "Chat" - a writing assistant with message bubbles (replies rendered
+  as Markdown), backed by Gemini, ChatGPT, Claude, or Ollama (self-hosted,
+  no API key), with a provider/model picker both in the tab itself and in
+  Einstellungen.
 - **AI actions in the editor's context menu** — right-click the editor for
   "Übersetzen" (into any configured target language), "Inhalt prüfen",
   "Stil & Formatierung prüfen", "Rechtschreibung prüfen", "Zeichensetzung

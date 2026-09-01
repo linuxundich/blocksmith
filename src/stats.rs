@@ -3,6 +3,7 @@
 
 use gtk4::prelude::*;
 
+#[derive(Clone, Copy)]
 pub struct Stats {
     pub words: usize,
     pub chars_with_spaces: usize,

@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-09-01
+
+### Added
+
+- The preview now follows the app's light/dark mode - it previously always
+  rendered as plain black-on-white regardless of theme. Colors are baked
+  into the generated HTML per render (not left to a `prefers-color-scheme`
+  media query), so it updates immediately when the theme changes, even
+  without retyping.
+- Three selectable preview styles - Modern (the previous look), Klassisch
+  (serif, justified, indented paragraphs), and Sepia (warm sepia-toned,
+  with its own light and dark variant) - picked from a dropdown above the
+  Vorschau tab, persisted across restarts.
+- A footer status bar showing word count and estimated reading time for
+  the whole article, plus the same two numbers for the current selection
+  whenever one is active.
+
+### Fixed
+
+- The right pane's tab switcher only visually grouped the *active* tab
+  into a pill shape, leaving the others as loose, ungrouped buttons.
+  Switched from `Adw.ViewSwitcher` to `Adw.InlineViewSwitcher`, which
+  renders all tabs as one seamless linked pill, and packed it left-aligned
+  in its header bar rather than as a centered title widget - this also
+  surfaced and fixed a bug where, without an explicit title widget,
+  `Adw.HeaderBar` fell back to showing the window's own title ("Blocksmith")
+  as a stray extra tab-like segment next to the real ones.
+
 ## [0.9.2] - 2026-09-01
 
 ### Changed

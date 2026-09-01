@@ -21,6 +21,7 @@ mod properties;
 mod secrets;
 mod settings;
 mod stats;
+mod statusbar;
 mod termcache;
 mod window;
 mod wpclient;
