@@ -1,7 +1,7 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use adw::prelude::*;
 use gtk4::{gio, glib};
@@ -253,7 +253,7 @@ fn wire_status_bar(buffer: &sourceview5::Buffer, status_bar: &Rc<statusbar::Stat
     });
 }
 
-const SCROLL_SYNC_DEBOUNCE_MS: u64 = 80;
+const SCROLL_SYNC_THROTTLE_MS: u64 = 60;
 
 /// Drives the preview's scroll position from the editor's: on every editor
 /// scroll, estimates the source line currently at the top of the editor's
@@ -273,27 +273,55 @@ const SCROLL_SYNC_DEBOUNCE_MS: u64 = 80;
 /// mismatch is handled entirely on the preview side via `data-line`
 /// block-boundary snapping, so the editor side never needs pixel-perfect
 /// line detection to get the overall sync right.
+///
+/// This is throttled, not debounced: a debounce (cancel-and-reschedule on
+/// every event) only ever fires once scrolling has *stopped*, so the
+/// preview sits frozen for the whole scroll gesture and then snaps to the
+/// final position - exactly the "jumps instead of scrolling" symptom this
+/// was built to fix. A throttle instead fires at most once per interval
+/// *while* scrolling continues (leading edge immediately, a single
+/// trailing-edge call queued for whatever's left of the window so the
+/// final position is never dropped), so the preview visibly tracks the
+/// editor the whole time instead of only catching up afterward.
 fn wire_scroll_sync(scroller: &gtk4::ScrolledWindow, buffer: &sourceview5::Buffer, preview_pane: &Rc<preview::PreviewPane>) {
-    let debounce: Rc<RefCell<Option<glib::SourceId>>> = Rc::new(RefCell::new(None));
+    let throttle_interval = Duration::from_millis(SCROLL_SYNC_THROTTLE_MS);
+    let last_synced: Rc<Cell<Instant>> = Rc::new(Cell::new(Instant::now() - throttle_interval));
+    let trailing: Rc<RefCell<Option<glib::SourceId>>> = Rc::new(RefCell::new(None));
     let buffer = buffer.clone();
     let preview_pane = preview_pane.clone();
+
     scroller.vadjustment().connect_value_changed(move |adjustment| {
-        if let Some(id) = debounce.borrow_mut().take() {
-            id.remove();
+        let elapsed = last_synced.get().elapsed();
+        if elapsed >= throttle_interval {
+            if let Some(id) = trailing.borrow_mut().take() {
+                id.remove();
+            }
+            sync_scroll(&buffer, &preview_pane, adjustment);
+            last_synced.set(Instant::now());
+            return;
+        }
+        if trailing.borrow().is_some() {
+            return;
         }
         let adjustment = adjustment.clone();
         let buffer = buffer.clone();
         let preview_pane = preview_pane.clone();
-        let debounce_inner = debounce.clone();
-        let id = glib::timeout_add_local(Duration::from_millis(SCROLL_SYNC_DEBOUNCE_MS), move || {
-            let total_lines = buffer.end_iter().line() + 1;
-            let line = estimate_visible_line(adjustment.value(), adjustment.upper(), adjustment.page_size(), total_lines);
-            preview_pane.scroll_to_line(line);
-            *debounce_inner.borrow_mut() = None;
+        let last_synced = last_synced.clone();
+        let trailing_inner = trailing.clone();
+        let id = glib::timeout_add_local(throttle_interval - elapsed, move || {
+            sync_scroll(&buffer, &preview_pane, &adjustment);
+            last_synced.set(Instant::now());
+            *trailing_inner.borrow_mut() = None;
             glib::ControlFlow::Break
         });
-        *debounce.borrow_mut() = Some(id);
+        *trailing.borrow_mut() = Some(id);
     });
+}
+
+fn sync_scroll(buffer: &sourceview5::Buffer, preview_pane: &preview::PreviewPane, adjustment: &gtk4::Adjustment) {
+    let total_lines = buffer.end_iter().line() + 1;
+    let line = estimate_visible_line(adjustment.value(), adjustment.upper(), adjustment.page_size(), total_lines);
+    preview_pane.scroll_to_line(line);
 }
 
 /// Pure scroll-fraction-to-line estimate backing `wire_scroll_sync` - see

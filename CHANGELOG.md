@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.10.2] - 2026-09-01
+
+### Fixed
+
+- Scroll-sync felt laggy and made the preview jump instead of scroll: the
+  editor-to-preview sync was debounced (cancel-and-reschedule on every
+  scroll event), which only ever fires once scrolling has stopped - the
+  preview sat frozen for the whole scroll gesture, then snapped to the
+  final position. Switched to a throttle (fires at once, then at most
+  once per ~60ms while scrolling continues, with a trailing call so the
+  final position is never dropped), so the preview now visibly tracks the
+  editor throughout the scroll instead of only catching up afterward.
+
 ## [0.10.1] - 2026-09-01
 
 ### Changed
