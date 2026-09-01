@@ -1,7 +1,11 @@
+mod connection;
 mod document;
 mod editor;
 mod preview;
+mod properties;
+mod secrets;
 mod window;
+mod wpsite;
 
 use adw::prelude::*;
 use gtk4::glib;
@@ -14,6 +18,7 @@ fn main() -> glib::ExitCode {
     app.set_accels_for_action("win.new", &["<Ctrl>n"]);
     app.set_accels_for_action("win.open", &["<Ctrl>o"]);
     app.set_accels_for_action("win.save", &["<Ctrl>s"]);
+    app.set_accels_for_action("win.properties", &["<Ctrl>comma"]);
 
     app.connect_activate(|app| {
         let win = window::build(app);
