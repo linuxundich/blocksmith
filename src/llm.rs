@@ -255,6 +255,123 @@ impl Client {
         let body_text = response.body_mut().read_to_string().unwrap_or_default();
         Ok((status, body_text))
     }
+
+    fn get(&self, url: &str, headers: &[(&str, &str)]) -> Result<(u16, String)> {
+        let mut request = self.agent.get(url);
+        for (name, value) in headers {
+            request = request.header(*name, *value);
+        }
+        let mut response = request.call().map_err(|err| ApiError { message: err.to_string() })?;
+        let status = response.status().as_u16();
+        let body_text = response.body_mut().read_to_string().unwrap_or_default();
+        Ok((status, body_text))
+    }
+
+    /// Lists the models available to this account/instance. Doubles as an
+    /// API-key check: a successful call (200, non-empty list) means the key
+    /// is valid, which is why the settings UI uses this same call both to
+    /// populate the model picker and to report "key OK" to the user.
+    pub fn list_models(&self) -> Result<Vec<String>> {
+        match self.provider {
+            Provider::Gemini => self.list_models_gemini(),
+            Provider::OpenAi => self.list_models_openai(),
+            Provider::Claude => self.list_models_claude(),
+            Provider::Ollama => self.list_models_ollama(),
+        }
+    }
+
+    fn list_models_gemini(&self) -> Result<Vec<String>> {
+        let url = "https://generativelanguage.googleapis.com/v1beta/models";
+        let (status, body_text) = self.get(url, &[("x-goog-api-key", &self.api_key)])?;
+        if !(200..300).contains(&status) {
+            return Err(error_from_body(status, &body_text, &["error", "message"]));
+        }
+        Ok(extract_gemini_models(&parse_json(&body_text)?))
+    }
+
+    fn list_models_openai(&self) -> Result<Vec<String>> {
+        let auth = format!("Bearer {}", self.api_key);
+        let (status, body_text) = self.get("https://api.openai.com/v1/models", &[("Authorization", &auth)])?;
+        if !(200..300).contains(&status) {
+            return Err(error_from_body(status, &body_text, &["error", "message"]));
+        }
+        Ok(extract_openai_models(&parse_json(&body_text)?))
+    }
+
+    fn list_models_claude(&self) -> Result<Vec<String>> {
+        let (status, body_text) = self.get(
+            "https://api.anthropic.com/v1/models",
+            &[("x-api-key", &self.api_key), ("anthropic-version", "2023-06-01")],
+        )?;
+        if !(200..300).contains(&status) {
+            return Err(error_from_body(status, &body_text, &["error", "message"]));
+        }
+        Ok(extract_claude_models(&parse_json(&body_text)?))
+    }
+
+    fn list_models_ollama(&self) -> Result<Vec<String>> {
+        let url = format!("{}/api/tags", self.base_url);
+        let (status, body_text) = self.get(&url, &[])?;
+        if !(200..300).contains(&status) {
+            return Err(error_from_body(status, &body_text, &["error"]));
+        }
+        Ok(extract_ollama_models(&parse_json(&body_text)?))
+    }
+}
+
+fn extract_gemini_models(value: &Value) -> Vec<String> {
+    value
+        .get("models")
+        .and_then(Value::as_array)
+        .map(|models| {
+            models
+                .iter()
+                .filter(|m| {
+                    m.get("supportedGenerationMethods")
+                        .and_then(Value::as_array)
+                        .is_some_and(|methods| methods.iter().any(|m| m.as_str() == Some("generateContent")))
+                })
+                .filter_map(|m| m.get("name").and_then(Value::as_str))
+                .map(|name| name.strip_prefix("models/").unwrap_or(name).to_string())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Excludes obviously non-chat model families (embeddings, audio, image
+/// generation, moderation) to keep the picker focused - OpenAI's `/models`
+/// endpoint lists everything the account can use, chat or not.
+fn extract_openai_models(value: &Value) -> Vec<String> {
+    const EXCLUDED_SUBSTRINGS: &[&str] = &["embedding", "whisper", "tts", "dall-e", "moderation"];
+    let mut models: Vec<String> = value
+        .get("data")
+        .and_then(Value::as_array)
+        .map(|data| {
+            data.iter()
+                .filter_map(|m| m.get("id").and_then(Value::as_str))
+                .filter(|id| !EXCLUDED_SUBSTRINGS.iter().any(|excluded| id.contains(excluded)))
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
+    models.sort();
+    models
+}
+
+fn extract_claude_models(value: &Value) -> Vec<String> {
+    value
+        .get("data")
+        .and_then(Value::as_array)
+        .map(|data| data.iter().filter_map(|m| m.get("id").and_then(Value::as_str)).map(str::to_string).collect())
+        .unwrap_or_default()
+}
+
+fn extract_ollama_models(value: &Value) -> Vec<String> {
+    value
+        .get("models")
+        .and_then(Value::as_array)
+        .map(|models| models.iter().filter_map(|m| m.get("name").and_then(Value::as_str)).map(str::to_string).collect())
+        .unwrap_or_default()
 }
 
 fn parse_json(body_text: &str) -> Result<Value> {
@@ -346,5 +463,41 @@ mod tests {
     fn error_from_body_falls_back_to_raw_text_on_mismatch() {
         let err = error_from_body(500, "plain text error", &["error", "message"]);
         assert_eq!(err.message, "HTTP 500: plain text error");
+    }
+
+    #[test]
+    fn gemini_models_are_filtered_to_generate_content_and_stripped_of_prefix() {
+        let body = r#"{"models":[
+            {"name":"models/gemini-2.5-flash","supportedGenerationMethods":["generateContent"]},
+            {"name":"models/embedding-001","supportedGenerationMethods":["embedContent"]}
+        ]}"#;
+        let value: Value = parse_json(body).unwrap();
+        assert_eq!(extract_gemini_models(&value), vec!["gemini-2.5-flash".to_string()]);
+    }
+
+    #[test]
+    fn openai_models_exclude_non_chat_families_and_are_sorted() {
+        let body = r#"{"data":[
+            {"id":"gpt-4o-mini"},
+            {"id":"text-embedding-3-small"},
+            {"id":"whisper-1"},
+            {"id":"gpt-4o"}
+        ]}"#;
+        let value: Value = parse_json(body).unwrap();
+        assert_eq!(extract_openai_models(&value), vec!["gpt-4o".to_string(), "gpt-4o-mini".to_string()]);
+    }
+
+    #[test]
+    fn claude_models_are_extracted_in_api_order() {
+        let body = r#"{"data":[{"id":"claude-sonnet-5"},{"id":"claude-haiku-4-5"}]}"#;
+        let value: Value = parse_json(body).unwrap();
+        assert_eq!(extract_claude_models(&value), vec!["claude-sonnet-5".to_string(), "claude-haiku-4-5".to_string()]);
+    }
+
+    #[test]
+    fn ollama_models_are_extracted_from_tags() {
+        let body = r#"{"models":[{"name":"llama3.2:latest"},{"name":"mistral:latest"}]}"#;
+        let value: Value = parse_json(body).unwrap();
+        assert_eq!(extract_ollama_models(&value), vec!["llama3.2:latest".to_string(), "mistral:latest".to_string()]);
     }
 }

@@ -1,3 +1,5 @@
+mod aimenu;
+mod aiprompts;
 mod appearance;
 mod autocomplete;
 mod chat;
@@ -12,7 +14,9 @@ mod export;
 mod formatting;
 mod importer;
 mod llm;
+mod mdpango;
 mod preview;
+mod promptsettings;
 mod properties;
 mod secrets;
 mod settings;

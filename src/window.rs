@@ -8,12 +8,12 @@ use gtk4::{gio, glib};
 use webkit6::prelude::*;
 
 use crate::document::{Document, Frontmatter};
-use crate::{chat, codeview, document, editor, export, formatting, importer, preview, properties, settings, stats, termcache};
+use crate::{aimenu, chat, codeview, document, editor, export, formatting, importer, preview, properties, settings, stats, termcache};
 
 const DEBOUNCE_MS: u64 = 250;
 
 pub fn build(app: &adw::Application) -> adw::ApplicationWindow {
-    let (editor_scroller, view, buffer) = editor::build();
+    let (editor_scroller, view, buffer, spelling_menu) = editor::build();
     let web_view = preview::build();
     let stats_view = Rc::new(stats::StatsView::new());
 
@@ -25,7 +25,7 @@ pub fn build(app: &adw::Application) -> adw::ApplicationWindow {
     editor_pane.append(&editor_scroller);
     editor_scroller.set_vexpand(true);
 
-    let chat_view = chat::ChatView::new();
+    let chat_view = Rc::new(chat::ChatView::new());
     let code_view = Rc::new(codeview::CodeView::new());
 
     let view_stack = adw::ViewStack::new();
@@ -33,6 +33,17 @@ pub fn build(app: &adw::Application) -> adw::ApplicationWindow {
     view_stack.add_titled_with_icon(&code_view.widget, Some("code"), "Gutenberg-Code", "text-x-generic-symbolic");
     view_stack.add_titled_with_icon(&stats_view.widget, Some("stats"), "Statistik", "view-list-symbolic");
     view_stack.add_titled_with_icon(&chat_view.widget, Some("chat"), "Chat", "chat-message-new-symbolic");
+    {
+        // The active provider/model may have changed in Einstellungen since
+        // the Chat tab was built (or since it was last shown), so refresh
+        // its provider label/model picker every time it becomes visible.
+        let chat_view = chat_view.clone();
+        view_stack.connect_visible_child_name_notify(move |stack| {
+            if stack.visible_child_name().as_deref() == Some("chat") {
+                chat_view.refresh();
+            }
+        });
+    }
     // A proper (title-button-less) header bar for the switcher, mirroring
     // the standard GNOME pattern for Adw.ViewSwitcher (e.g. GNOME Builder,
     // GNOME Text Editor put it in exactly this spot) rather than a plain
@@ -83,7 +94,7 @@ pub fn build(app: &adw::Application) -> adw::ApplicationWindow {
     properties_button.set_tooltip_text(Some("Artikel-Eigenschaften"));
     properties_button.set_action_name(Some("win.properties"));
 
-    let settings_button = gtk4::Button::from_icon_name("preferences-system-symbolic");
+    let settings_button = gtk4::Button::from_icon_name("open-menu-symbolic");
     settings_button.set_tooltip_text(Some("Einstellungen (Strg+,)"));
     settings_button.set_action_name(Some("win.settings"));
 
@@ -125,6 +136,8 @@ pub fn build(app: &adw::Application) -> adw::ApplicationWindow {
     let tag_terms: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(cached_terms.tags));
     termcache::spawn_refresh(category_terms.clone(), tag_terms.clone());
 
+    let ai_menu_handles = aimenu::install(&view, &buffer, &view_stack, chat_view.clone(), &spelling_menu);
+
     wire_live_preview(&buffer, &web_view, &stats_view, &code_view);
     wire_scroll_sync(&editor_scroller, &buffer, &web_view);
     wire_new_action(&window, &buffer, &current_path, &frontmatter, &title);
@@ -132,7 +145,7 @@ pub fn build(app: &adw::Application) -> adw::ApplicationWindow {
     wire_open_from_wordpress_action(&window, &buffer, &current_path, &frontmatter, &title);
     wire_save_action(&window, &buffer, &current_path, &frontmatter, &title, &toast_overlay);
     wire_properties_action(&window, &frontmatter, &category_terms, &tag_terms);
-    wire_settings_action(&window, &buffer);
+    wire_settings_action(&window, &buffer, ai_menu_handles);
     wire_publish_action(&window, &buffer, &current_path, &frontmatter);
 
     window
@@ -424,13 +437,13 @@ fn wire_properties_action(
     window.add_action(&action);
 }
 
-fn wire_settings_action(window: &adw::ApplicationWindow, buffer: &sourceview5::Buffer) {
+fn wire_settings_action(window: &adw::ApplicationWindow, buffer: &sourceview5::Buffer, ai_menu_handles: aimenu::AiMenuHandles) {
     let action = gio::SimpleAction::new("settings", None);
     let buffer = buffer.clone();
     let window_weak = window.downgrade();
     action.connect_activate(move |_, _| {
         if let Some(window) = window_weak.upgrade() {
-            settings::open(&window, &buffer);
+            settings::open(&window, &buffer, &ai_menu_handles);
         }
     });
     window.add_action(&action);

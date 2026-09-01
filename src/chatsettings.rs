@@ -1,16 +1,20 @@
 //! The "KI-Chat" page of the Einstellungen dialog: provider selection
 //! (Gemini/ChatGPT/Claude/Ollama), that provider's API key (a secret,
-//! stored via `secrets.rs`) and model id, Ollama's base URL, and the
-//! editable/resettable system prompt (persisted via `chatconfig.rs`).
+//! stored via `secrets.rs`, verified live against the provider's API as
+//! soon as it's entered) and model (picked from the models the provider
+//! actually offers, fetched via `llm::Client::list_models`), Ollama's base
+//! URL, and the editable/resettable system prompt (persisted via
+//! `chatconfig.rs`).
 
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::sync::mpsc;
 use std::time::Duration;
 
 use adw::prelude::*;
 use gtk4::glib;
 
-use crate::llm::Provider;
+use crate::llm::{self, Provider};
 use crate::{chatconfig, secrets};
 
 pub fn build_page() -> adw::PreferencesPage {
@@ -26,14 +30,17 @@ pub fn build_page() -> adw::PreferencesPage {
 
     let api_key_row = adw::PasswordEntryRow::builder().title("API-Key").build();
     let base_url_row = adw::EntryRow::builder().title("Basis-URL").build();
-    let model_row = adw::EntryRow::builder().title("Modell").build();
+    let model_row = adw::ComboRow::builder().title("Modell").build();
+    model_row.set_enable_search(true);
 
     let connection_save_button = gtk4::Button::from_icon_name("document-save-symbolic");
     connection_save_button.set_tooltip_text(Some("Speichern"));
     connection_save_button.add_css_class("flat");
 
     let connection_group = adw::PreferencesGroup::builder().title("KI-Verbindung").build();
-    connection_group.set_description(Some("Der API-Key wird im Schlüsselbund gespeichert, nicht als Klartext."));
+    connection_group.set_description(Some(
+        "Der API-Key wird im Schlüsselbund gespeichert, nicht als Klartext. Er wird nach der Eingabe direkt gegen die API des Anbieters geprüft.",
+    ));
     connection_group.set_header_suffix(Some(&connection_save_button));
     connection_group.add(&provider_row);
     connection_group.add(&api_key_row);
@@ -46,6 +53,73 @@ pub fn build_page() -> adw::PreferencesPage {
     connection_status.set_visible(false);
     let connection_status_group = adw::PreferencesGroup::new();
     connection_status_group.add(&connection_status);
+
+    fn combo_row_selected_string(row: &adw::ComboRow) -> String {
+        row.model()
+            .and_then(|m| m.downcast::<gtk4::StringList>().ok())
+            .and_then(|list| list.string(row.selected()))
+            .map(|s| s.to_string())
+            .unwrap_or_default()
+    }
+
+    fn populate_model_row(model_row: &adw::ComboRow, models: &[String], current: &str) {
+        let mut items: Vec<String> = models.to_vec();
+        if !current.is_empty() && !items.iter().any(|m| m == current) {
+            items.insert(0, current.to_string());
+        }
+        if items.is_empty() {
+            items.push(current.to_string());
+        }
+        let refs: Vec<&str> = items.iter().map(String::as_str).collect();
+        model_row.set_model(Some(&gtk4::StringList::new(&refs)));
+        let selected = items.iter().position(|m| m == current).unwrap_or(0);
+        model_row.set_selected(selected as u32);
+    }
+
+    /// Calls the provider's models endpoint on a background thread and
+    /// reports the outcome - this is both the "is this API key valid?"
+    /// check and the source of the model picker's contents, since a
+    /// successful models list *is* the proof the key works.
+    fn spawn_verify(
+        provider: Provider,
+        api_key: String,
+        base_url: String,
+        status_label: gtk4::Label,
+        model_row: adw::ComboRow,
+        current_model: String,
+    ) {
+        if provider.needs_api_key() && api_key.trim().is_empty() {
+            status_label.set_visible(false);
+            return;
+        }
+        status_label.remove_css_class("error");
+        status_label.set_label(if provider.needs_api_key() { "API-Key wird geprüft …" } else { "Verbindung wird geprüft …" });
+        status_label.set_visible(true);
+
+        let (tx, rx) = mpsc::channel::<Result<Vec<String>, String>>();
+        std::thread::spawn(move || {
+            let client = llm::Client::new(provider, &api_key, "unused", &base_url);
+            let _ = tx.send(client.list_models().map_err(|err| err.to_string()));
+        });
+
+        glib::timeout_add_local(Duration::from_millis(150), move || match rx.try_recv() {
+            Ok(Ok(models)) => {
+                let _ = chatconfig::save_cached_models(provider, &models);
+                populate_model_row(&model_row, &models, &current_model);
+                status_label.set_label(&format!("✓ Verbindung erfolgreich - {} Modelle gefunden.", models.len()));
+                status_label.set_visible(true);
+                glib::ControlFlow::Break
+            }
+            Ok(Err(err)) => {
+                status_label.add_css_class("error");
+                status_label.set_label(&format!("✗ {err}"));
+                status_label.set_visible(true);
+                glib::ControlFlow::Break
+            }
+            Err(mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
+            Err(mpsc::TryRecvError::Disconnected) => glib::ControlFlow::Break,
+        });
+    }
 
     fn load_api_key_into_row(provider: Provider, api_key_row: &adw::PasswordEntryRow) {
         api_key_row.set_text("");
@@ -62,12 +136,12 @@ pub fn build_page() -> adw::PreferencesPage {
         config: &chatconfig::ProviderConfig,
         api_key_row: &adw::PasswordEntryRow,
         base_url_row: &adw::EntryRow,
-        model_row: &adw::EntryRow,
+        model_row: &adw::ComboRow,
     ) {
         api_key_row.set_visible(provider.needs_api_key());
         base_url_row.set_visible(provider.needs_base_url());
-        model_row.set_text(config.model_for(provider));
         base_url_row.set_text(&config.ollama_base_url);
+        populate_model_row(model_row, &chatconfig::load_cached_models(provider), config.model_for(provider));
         load_api_key_into_row(provider, api_key_row);
     }
 
@@ -79,13 +153,13 @@ pub fn build_page() -> adw::PreferencesPage {
         let base_url_row = base_url_row.clone();
         let model_row = model_row.clone();
         provider_row.connect_selected_notify(move |row| {
-            // Persist whatever was typed for the *previous* provider before
-            // switching the visible fields to the new one, so quick back-
-            // and-forth between providers doesn't lose in-progress edits.
+            // Persist whatever was picked/typed for the *previous* provider
+            // before switching the visible fields to the new one, so quick
+            // back-and-forth between providers doesn't lose in-progress edits.
             {
                 let mut config = state.borrow_mut();
                 let previous = config.active;
-                config.set_model_for(previous, model_row.text().to_string());
+                config.set_model_for(previous, combo_row_selected_string(&model_row));
                 config.ollama_base_url = base_url_row.text().to_string();
             }
             let provider = Provider::ALL[row.selected() as usize];
@@ -94,12 +168,68 @@ pub fn build_page() -> adw::PreferencesPage {
         });
     }
 
+    {
+        let state = state.clone();
+        let base_url_row = base_url_row.clone();
+        let model_row = model_row.clone();
+        let connection_status = connection_status.clone();
+        let debounce: Rc<RefCell<Option<glib::SourceId>>> = Rc::new(RefCell::new(None));
+        api_key_row.connect_changed(move |row| {
+            if let Some(id) = debounce.borrow_mut().take() {
+                id.remove();
+            }
+            let key = row.text().to_string();
+            let provider = state.borrow().active;
+            let base_url = base_url_row.text().to_string();
+            let current_model = state.borrow().model_for(provider).to_string();
+            let status_label = connection_status.clone();
+            let model_row = model_row.clone();
+            let debounce_inner = debounce.clone();
+            let id = glib::timeout_add_local(Duration::from_millis(700), move || {
+                spawn_verify(provider, key.clone(), base_url.clone(), status_label.clone(), model_row.clone(), current_model.clone());
+                *debounce_inner.borrow_mut() = None;
+                glib::ControlFlow::Break
+            });
+            *debounce.borrow_mut() = Some(id);
+        });
+    }
+
+    {
+        let state = state.clone();
+        let model_row = model_row.clone();
+        let connection_status = connection_status.clone();
+        let debounce: Rc<RefCell<Option<glib::SourceId>>> = Rc::new(RefCell::new(None));
+        base_url_row.connect_changed(move |row| {
+            if let Some(id) = debounce.borrow_mut().take() {
+                id.remove();
+            }
+            let base_url = row.text().to_string();
+            let provider = state.borrow().active;
+            if provider.needs_api_key() {
+                // Base-URL changes only trigger a live check for providers
+                // that don't need a key (Ollama) - for the others this row
+                // is hidden anyway.
+                return;
+            }
+            let current_model = state.borrow().model_for(provider).to_string();
+            let status_label = connection_status.clone();
+            let model_row = model_row.clone();
+            let debounce_inner = debounce.clone();
+            let id = glib::timeout_add_local(Duration::from_millis(700), move || {
+                spawn_verify(provider, String::new(), base_url.clone(), status_label.clone(), model_row.clone(), current_model.clone());
+                *debounce_inner.borrow_mut() = None;
+                glib::ControlFlow::Break
+            });
+            *debounce.borrow_mut() = Some(id);
+        });
+    }
+
     connection_save_button.connect_clicked(move |_| {
         let provider = {
             let mut config = state.borrow_mut();
             let provider = Provider::ALL[provider_row.selected() as usize];
             config.active = provider;
-            config.set_model_for(provider, model_row.text().to_string());
+            config.set_model_for(provider, combo_row_selected_string(&model_row));
             config.ollama_base_url = base_url_row.text().to_string();
             provider
         };

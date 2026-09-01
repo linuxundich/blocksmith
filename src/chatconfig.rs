@@ -31,6 +31,12 @@ fn providers_path() -> PathBuf {
     path
 }
 
+fn models_cache_path() -> PathBuf {
+    let mut path = config_dir();
+    path.push("chat_models_cache.json");
+    path
+}
+
 /// The active system prompt: the user's saved custom one if they've set
 /// one, otherwise [`DEFAULT_SYSTEM_PROMPT`].
 pub fn load_system_prompt() -> String {
@@ -135,6 +141,34 @@ pub fn save_provider_config(config: &ProviderConfig) -> std::io::Result<()> {
     std::fs::write(providers_path(), value.to_string())
 }
 
+/// The model list last fetched from a provider (`llm::Client::list_models`),
+/// cached so the model picker (in both Einstellungen and the Chat tab) has
+/// something to show without a network round-trip on every dialog open or
+/// app start. Refreshed whenever the API key is (re-)verified.
+pub fn load_cached_models(provider: Provider) -> Vec<String> {
+    let Ok(contents) = std::fs::read_to_string(models_cache_path()) else {
+        return Vec::new();
+    };
+    let Ok(value) = serde_json::from_str::<Value>(&contents) else {
+        return Vec::new();
+    };
+    value
+        .get(provider.id())
+        .and_then(Value::as_array)
+        .map(|models| models.iter().filter_map(Value::as_str).map(str::to_string).collect())
+        .unwrap_or_default()
+}
+
+pub fn save_cached_models(provider: Provider, models: &[String]) -> std::io::Result<()> {
+    let mut root: Value = std::fs::read_to_string(models_cache_path())
+        .ok()
+        .and_then(|contents| serde_json::from_str(&contents).ok())
+        .unwrap_or_else(|| serde_json::json!({}));
+    root[provider.id()] = serde_json::json!(models);
+    std::fs::create_dir_all(config_dir())?;
+    std::fs::write(models_cache_path(), root.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -188,5 +222,20 @@ mod tests {
         let defaults = ProviderConfig::default();
         assert_eq!(defaults.active, Provider::Gemini);
         assert_eq!(defaults.model_for(Provider::Gemini), Provider::Gemini.default_model());
+    }
+
+    #[test]
+    fn cached_models_round_trip_per_provider_without_clobbering_others() {
+        let original_gemini = load_cached_models(Provider::Gemini);
+        let original_openai = load_cached_models(Provider::OpenAi);
+
+        save_cached_models(Provider::Gemini, &["gemini-test-model".to_string()]).expect("save failed");
+        save_cached_models(Provider::OpenAi, &["gpt-test-model".to_string()]).expect("save failed");
+
+        assert_eq!(load_cached_models(Provider::Gemini), vec!["gemini-test-model".to_string()]);
+        assert_eq!(load_cached_models(Provider::OpenAi), vec!["gpt-test-model".to_string()]);
+
+        save_cached_models(Provider::Gemini, &original_gemini).expect("restore failed");
+        save_cached_models(Provider::OpenAi, &original_openai).expect("restore failed");
     }
 }

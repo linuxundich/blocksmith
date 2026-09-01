@@ -2,9 +2,11 @@
 //! whichever is active in the KI-Chat settings) with message bubbles. Sends
 //! run on a background thread (see `llm.rs`'s module docs for why), polled
 //! back via the same thread+mpsc-channel+`glib::timeout_add_local` pattern
-//! used throughout this app's WordPress-facing dialogs.
+//! used throughout this app's WordPress-facing dialogs. The model's replies
+//! are rendered as Markdown (`mdpango`) so headings/lists/code/links show up
+//! formatted instead of as raw Markdown source.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::sync::mpsc;
 use std::time::Duration;
@@ -13,10 +15,15 @@ use adw::prelude::*;
 use gtk4::glib;
 
 use crate::llm;
+use crate::mdpango;
 use crate::{chatconfig, secrets};
 
 pub struct ChatView {
     pub widget: gtk4::Widget,
+    provider_label: gtk4::Label,
+    model_dropdown: gtk4::DropDown,
+    updating_model_dropdown: Rc<Cell<bool>>,
+    send_fn: Rc<dyn Fn(String, String)>,
 }
 
 impl ChatView {
@@ -30,6 +37,16 @@ impl ChatView {
             .margin_end(12)
             .build();
         let scroller = gtk4::ScrolledWindow::builder().child(&messages_box).vexpand(true).build();
+
+        let provider_label = gtk4::Label::new(None);
+        provider_label.add_css_class("dim-label");
+
+        let model_dropdown = gtk4::DropDown::new(None::<gtk4::StringList>, None::<gtk4::Expression>);
+        model_dropdown.set_hexpand(true);
+
+        let model_row = gtk4::Box::builder().orientation(gtk4::Orientation::Horizontal).spacing(8).margin_top(6).margin_bottom(6).margin_start(6).margin_end(6).build();
+        model_row.append(&provider_label);
+        model_row.append(&model_dropdown);
 
         let entry = gtk4::Entry::builder().placeholder_text("Nachricht an die KI …").hexpand(true).build();
         let send_button = gtk4::Button::from_icon_name("mail-send-symbolic");
@@ -54,31 +71,45 @@ impl ChatView {
         input_row.append(&send_button);
 
         let root = gtk4::Box::builder().orientation(gtk4::Orientation::Vertical).build();
+        root.append(&model_row);
+        root.append(&gtk4::Separator::new(gtk4::Orientation::Horizontal));
         root.append(&scroller);
         root.append(&gtk4::Separator::new(gtk4::Orientation::Horizontal));
         root.append(&status_label);
         root.append(&input_row);
 
         let history: Rc<RefCell<Vec<llm::ChatMessage>>> = Rc::new(RefCell::new(Vec::new()));
+        let updating_model_dropdown: Rc<Cell<bool>> = Rc::new(Cell::new(false));
 
-        let send: Rc<dyn Fn()> = {
+        {
+            let updating_model_dropdown = updating_model_dropdown.clone();
+            model_dropdown.connect_selected_notify(move |dropdown| {
+                if updating_model_dropdown.get() {
+                    return;
+                }
+                let Some(model) = dropdown.selected_item().and_downcast::<gtk4::StringObject>() else {
+                    return;
+                };
+                let mut config = chatconfig::load_provider_config();
+                let provider = config.active;
+                config.set_model_for(provider, model.string().to_string());
+                let _ = chatconfig::save_provider_config(&config);
+            });
+        }
+
+        let send_fn: Rc<dyn Fn(String, String)> = {
             let entry = entry.clone();
             let send_button = send_button.clone();
             let messages_box = messages_box.clone();
             let scroller = scroller.clone();
             let status_label = status_label.clone();
             let history = history.clone();
-            Rc::new(move || {
-                let text = entry.text().trim().to_string();
-                if text.is_empty() {
-                    return;
-                }
-                entry.set_text("");
-                append_bubble(&messages_box, &text, true);
+            Rc::new(move |display_text: String, history_text: String| {
+                append_bubble(&messages_box, &display_text, true);
                 scroll_to_bottom(&scroller);
                 history.borrow_mut().push(llm::ChatMessage {
                     role: llm::Role::User,
-                    text,
+                    text: history_text,
                 });
 
                 entry.set_sensitive(false);
@@ -153,20 +184,87 @@ impl ChatView {
         };
 
         {
-            let send = send.clone();
-            entry.connect_activate(move |_| send());
+            let send_fn = send_fn.clone();
+            let entry_for_activate = entry.clone();
+            entry.connect_activate(move |_| {
+                let text = entry_for_activate.text().trim().to_string();
+                if text.is_empty() {
+                    return;
+                }
+                entry_for_activate.set_text("");
+                send_fn(text.clone(), text);
+            });
         }
         {
-            let send = send.clone();
-            send_button.connect_clicked(move |_| send());
+            let send_fn = send_fn.clone();
+            let entry = entry.clone();
+            send_button.connect_clicked(move |_| {
+                let text = entry.text().trim().to_string();
+                if text.is_empty() {
+                    return;
+                }
+                entry.set_text("");
+                send_fn(text.clone(), text);
+            });
         }
 
-        Self { widget: root.upcast() }
+        let view = Self {
+            widget: root.upcast(),
+            provider_label,
+            model_dropdown,
+            updating_model_dropdown,
+            send_fn,
+        };
+        view.refresh();
+        view
+    }
+
+    /// Re-reads the active provider/model from `chatconfig` and repopulates
+    /// the provider label and model picker accordingly. Call this whenever
+    /// the Chat tab becomes visible, since the active provider/model may
+    /// have been changed in Einstellungen since the tab was built.
+    pub fn refresh(&self) {
+        let config = chatconfig::load_provider_config();
+        let provider = config.active;
+        self.provider_label.set_label(provider.label());
+
+        let current_model = config.model_for(provider).to_string();
+        let mut models = chatconfig::load_cached_models(provider);
+        if !current_model.is_empty() && !models.iter().any(|m| m == &current_model) {
+            models.insert(0, current_model.clone());
+        }
+        if models.is_empty() {
+            models.push(current_model.clone());
+        }
+
+        self.updating_model_dropdown.set(true);
+        let refs: Vec<&str> = models.iter().map(String::as_str).collect();
+        self.model_dropdown.set_model(Some(&gtk4::StringList::new(&refs)));
+        let selected = models.iter().position(|m| m == &current_model).unwrap_or(0);
+        self.model_dropdown.set_selected(selected as u32);
+        self.updating_model_dropdown.set(false);
+    }
+
+    /// Runs a predefined AI action (from the editor's context menu): shows
+    /// `display_label` as the user's chat bubble (so the transcript stays
+    /// readable, e.g. "Stil & Formatierung prüfen" instead of the whole
+    /// article), while `full_prompt` - the actual instruction plus the
+    /// selected/full article text - is what's sent to and remembered by the
+    /// model.
+    pub fn run_action(&self, display_label: &str, full_prompt: String) {
+        (self.send_fn)(display_label.to_string(), full_prompt);
     }
 }
 
 fn append_bubble(messages_box: &gtk4::Box, text: &str, is_user: bool) {
-    let label = gtk4::Label::builder().label(text).wrap(true).xalign(0.0).selectable(true).max_width_chars(48).build();
+    let label = gtk4::Label::builder().wrap(true).xalign(0.0).selectable(true).max_width_chars(48).build();
+    label.set_wrap_mode(gtk4::pango::WrapMode::WordChar);
+    if is_user {
+        label.set_text(text);
+    } else {
+        label.set_use_markup(true);
+        label.set_markup(&mdpango::markdown_to_pango(text));
+    }
 
     let bubble = gtk4::Box::builder().orientation(gtk4::Orientation::Vertical).build();
     bubble.append(&label);

@@ -7,6 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-09-01
+
+### Added
+
+- **API-key verification and model discovery**: entering an API key in
+  Einstellungen now calls the provider's `/models` endpoint on a background
+  thread (debounced) as soon as you stop typing, reporting "✓ Verbindung
+  erfolgreich" (with the number of models found) or the provider's error
+  message directly - this call doubles as the model list for the "Modell"
+  picker, which is now a searchable dropdown fed from what the account
+  actually has access to (cached to disk so it's available offline
+  afterward), rather than a free-text field. Ollama gets the same check
+  keyed off its base URL instead of a key.
+- **Model choice from the Chat tab itself**: a small provider/model row at
+  the top of the tab lets you switch models without opening Einstellungen;
+  the choice is persisted the same way as the settings picker.
+- **Markdown-rendered replies**: the model's answers are now parsed as
+  Markdown and shown as Pango markup in the bubble (bold/italic/strikethrough,
+  inline code, fenced code blocks, links, headings, lists), instead of raw
+  Markdown source; long unbroken tokens (URLs, code) now wrap correctly.
+- **AI actions in the editor's context menu**: right-clicking the editor
+  now offers "Übersetzen" (into any of a configurable list of target
+  languages), "Inhalt prüfen", "Stil & Formatierung prüfen", "Rechtschreibung
+  prüfen", "Zeichensetzung prüfen", and "Länge anpassen…" (a small dialog for
+  the target word/character count and whether it should be hit exactly or
+  approximately). Each sends the current selection - or, if nothing is
+  selected, the whole article - to the Chat tab together with a matching
+  prompt template, and switches to that tab to show the reply. A "KI-Prompts"
+  settings page lets you edit any of these six built-in prompts (resettable
+  to their defaults, independently of each other), edit the translation
+  language list, and define your own custom prompts (title + template),
+  kept in a separate "Eigene Prompts" group so they're never confused with
+  the built-ins - both also show up in the context menu, live-updated as
+  you edit them without restarting the app.
+- The Einstellungen button in the header bar now uses the classic hamburger
+  icon (`open-menu-symbolic`) instead of a gear.
+
+### Fixed
+
+- `Adw.ExpanderRow` titles (used for the prompt-editor rows) interpret
+  their title as Pango markup by default; a literal `&` in a prompt's title
+  (e.g. "Stil & Formatierung prüfen") crashed markup parsing with a GTK
+  critical. Fixed by building these rows with `use_markup(false)`, since the
+  titles are always plain text.
+
 ## [0.8.0] - 2026-09-01
 
 ### Added

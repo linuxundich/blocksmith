@@ -9,7 +9,7 @@ use sourceview5::prelude::*;
 
 use crate::appearance;
 
-pub fn build() -> (gtk4::ScrolledWindow, sourceview5::View, sourceview5::Buffer) {
+pub fn build() -> (gtk4::ScrolledWindow, sourceview5::View, sourceview5::Buffer, gtk4::gio::MenuModel) {
     let buffer = sourceview5::Buffer::new(None::<&gtk4::TextTagTable>);
 
     if let Some(lang) = sourceview5::LanguageManager::default().language("markdown") {
@@ -35,10 +35,14 @@ pub fn build() -> (gtk4::ScrolledWindow, sourceview5::View, sourceview5::Buffer)
     let checker = spelling::Checker::default();
     let adapter = spelling::TextBufferAdapter::new(&buffer, &checker);
     adapter.set_enabled(true);
-    // Both kept alive by the view: inserted action groups and the buffer's
-    // own signal connections hold their own strong references.
+    // Kept alive by the view: inserted action groups and the buffer's own
+    // signal connections hold their own strong references. The menu model
+    // itself is returned rather than installed here, so the caller
+    // (`window.rs`/`aimenu.rs`) can combine it with the editor's AI-actions
+    // menu into a single `extra-menu` - `set_extra_menu` replaces whatever
+    // was set before, so only one caller may ever call it for this view.
     view.insert_action_group("spelling", Some(&adapter));
-    view.set_extra_menu(Some(&adapter.menu_model()));
+    let spelling_menu = adapter.menu_model();
 
     let scroller = gtk4::ScrolledWindow::builder()
         .hexpand(true)
@@ -46,5 +50,5 @@ pub fn build() -> (gtk4::ScrolledWindow, sourceview5::View, sourceview5::Buffer)
         .child(&view)
         .build();
 
-    (scroller, view, buffer)
+    (scroller, view, buffer, spelling_menu)
 }
