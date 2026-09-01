@@ -60,6 +60,17 @@ blocks. Implemented so far:
   resolved from ids back to names, and the post's id carries over so
   exporting afterward updates that same post instead of creating a
   duplicate.
+- **Medienverwaltung** (Ctrl+Shift+M) — every image referenced in the
+  article gets its own alt text, caption, and WordPress upload state,
+  independent of the Markdown source (persisted alongside the rest of the
+  document in the frontmatter). Alt text is a three-state value rather
+  than a plain on/off: not yet defined (flagged by a non-blocking "N von M
+  Bildern haben noch keinen Alternativtext" hint), deliberately left empty
+  for decorative images (not treated as an error), or defined text; the
+  caption is a separate field, never derived from the alt text. A "Zu
+  WordPress hochladen" button per image uploads it via the real REST API
+  and stores the resulting media id/URL so re-opening the article
+  recognizes it as already uploaded rather than re-uploading it.
 - **Einstellungen dialog** (`Adw.PreferencesDialog`, Ctrl+,) — an
   "Erscheinungsbild" page adopted directly from GNOME Builder's own
   implementation (light/dark/follow-system cards using Builder's bundled

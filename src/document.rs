@@ -13,6 +13,8 @@
 
 use std::path::Path;
 
+use crate::media::MediaItem;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PostStatus {
     Draft,
@@ -72,6 +74,11 @@ pub struct Frontmatter {
     /// featured image; this carries the existing remote one through
     /// unchanged on re-export until the user actually sets `featured_image`.
     pub featured_media_id: Option<u64>,
+    /// Per-image alt text/caption/WordPress-upload metadata (`media.rs`) -
+    /// rebuilt from the current body on every properties/media-panel open
+    /// via `media::reconcile`, so this only needs to persist what a plain
+    /// `![alt](url)` can't represent on its own.
+    pub media: Vec<MediaItem>,
 }
 
 impl Frontmatter {
@@ -137,6 +144,7 @@ pub fn parse(input: &str) -> Document {
             }
             "wp_post_id" => frontmatter.wp_post_id = value.parse::<u64>().ok(),
             "wp_featured_media_id" => frontmatter.featured_media_id = value.parse::<u64>().ok(),
+            "media_json" => frontmatter.media = crate::media::from_json_str(value),
             _ => {}
         }
     }
@@ -173,6 +181,9 @@ pub fn serialize(doc: &Document) -> String {
     }
     if let Some(id) = fm.featured_media_id {
         out.push_str(&format!("wp_featured_media_id: {id}\n"));
+    }
+    if !fm.media.is_empty() {
+        out.push_str(&format!("media_json: {}\n", crate::media::to_json_string(&fm.media)));
     }
     out.push_str("---\n\n");
     out.push_str(&doc.body);
@@ -275,6 +286,14 @@ mod tests {
                 featured_image: None,
                 wp_post_id: Some(7),
                 featured_media_id: Some(99),
+                media: vec![MediaItem {
+                    id: "media-001".to_string(),
+                    filename: "cat.png".to_string(),
+                    source: "cat.png".to_string(),
+                    alt: crate::media::AltText::Text("A cat".to_string()),
+                    caption: Some("My cat".to_string()),
+                    wordpress: Some(crate::media::WordPressMediaRef { media_id: 42, url: "https://example.com/cat.png".to_string() }),
+                }],
             },
             body: "Some **body**.\n".to_string(),
         };
@@ -285,5 +304,32 @@ mod tests {
     #[test]
     fn unknown_status_falls_back_to_draft() {
         assert_eq!(PostStatus::from_str("bogus"), PostStatus::Draft);
+    }
+
+    /// The whole reason `media` exists: a decorative image's deliberately
+    /// blank alt text must come back as blank-but-defined, not as
+    /// "undefined" again, after a full file round trip - not just within
+    /// `media.rs`'s own in-memory JSON round trip.
+    #[test]
+    fn deliberately_empty_alt_text_survives_a_full_file_round_trip() {
+        let doc = Document {
+            frontmatter: Frontmatter {
+                title: "Has a decorative image".to_string(),
+                media: vec![MediaItem {
+                    id: "media-001".to_string(),
+                    filename: "divider.png".to_string(),
+                    source: "divider.png".to_string(),
+                    alt: crate::media::AltText::Empty,
+                    caption: None,
+                    wordpress: None,
+                }],
+                ..Frontmatter::default()
+            },
+            body: "![](divider.png)\n".to_string(),
+        };
+        let round_tripped = parse(&serialize(&doc));
+        assert_eq!(round_tripped.frontmatter.media.len(), 1);
+        assert!(!round_tripped.frontmatter.media[0].alt.is_undefined());
+        assert_eq!(round_tripped.frontmatter.media[0].alt.as_wordpress_value(), Some(""));
     }
 }

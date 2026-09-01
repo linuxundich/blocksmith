@@ -302,7 +302,7 @@ fn upload_local_images(client: &wpclient::Client, blocks: &mut [gutenberg::Block
     Ok(())
 }
 
-fn upload_image_file(client: &wpclient::Client, path_str: &str, base_dir: Option<&Path>) -> wpclient::Result<wpclient::MediaResult> {
+pub(crate) fn upload_image_file(client: &wpclient::Client, path_str: &str, base_dir: Option<&Path>) -> wpclient::Result<wpclient::MediaResult> {
     let path = Path::new(path_str);
     let resolved = if path.is_absolute() {
         path.to_path_buf()
@@ -320,7 +320,7 @@ fn upload_image_file(client: &wpclient::Client, path_str: &str, base_dir: Option
     client.upload_media(&bytes, &filename, mime_from_extension(&filename))
 }
 
-fn mime_from_extension(filename: &str) -> &'static str {
+pub(crate) fn mime_from_extension(filename: &str) -> &'static str {
     match filename.rsplit('.').next().unwrap_or("").to_lowercase().as_str() {
         "png" => "image/png",
         "jpg" | "jpeg" => "image/jpeg",
@@ -362,6 +362,7 @@ mod tests {
             featured_image: None,
             wp_post_id: None,
             featured_media_id: None,
+            media: Vec::new(),
         };
 
         let created = run_export(&site, &password, &frontmatter, body, Some(&doc_dir)).expect("run_export failed");

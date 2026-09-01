@@ -309,6 +309,7 @@ fn fetch_and_convert(site: &wpsite::SiteConfig, password: &str, post_id: u64) ->
         featured_image: None,
         wp_post_id: Some(detail.id),
         featured_media_id: (detail.featured_media != 0).then_some(detail.featured_media),
+        media: crate::media::reconcile(&[], &body),
     };
 
     Ok(ImportedPost { frontmatter, body })

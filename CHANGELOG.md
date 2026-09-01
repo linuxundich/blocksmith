@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-09-01
+
+### Added
+
+- Per-image media management ("Medienverwaltung", Strg+Umschalt+M): every
+  image referenced in the article gets its own alt text, caption, and
+  WordPress upload state, independent of the Markdown source.
+  - Alt text is a three-state value, not a plain on/off: **not yet
+    defined** (flagged by the "N von M Bildern haben noch keinen
+    Alternativtext" hint), **deliberately empty** (for decorative images -
+    an explicit switch, not treated as an error), or **defined text**.
+  - Caption is a separate field from alt text - the app never derives one
+    from the other.
+  - "Zu WordPress hochladen" uploads the image via the real REST API,
+    sends the file, filename, alt text and caption, and stores the
+    resulting media id/URL so re-opening the article recognizes it as
+    already uploaded and never re-uploads by accident. Upload state
+    (not uploaded / uploading / uploaded / failed) is shown per image; a
+    failed or slow upload never touches the locally held article.
+  - Metadata is persisted alongside the rest of the document in the
+    existing `.md` frontmatter (a new `media_json` line) - no new file
+    format yet; this lays the groundwork for the planned `.bsm` project
+    container.
+
 ## [0.12.0] - 2026-09-01
 
 ### Added

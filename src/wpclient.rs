@@ -48,6 +48,19 @@ pub struct MediaResult {
     pub source_url: String,
 }
 
+/// Only used to verify uploads in integration tests (`get_media`/
+/// `delete_media` below) - the app itself only ever needs a
+/// `media::WordPressMediaRef` (id + URL), read back from the locally saved
+/// document, not a live re-fetch from the server.
+#[cfg(test)]
+#[derive(Debug, Clone)]
+pub struct MediaDetail {
+    pub id: u64,
+    pub source_url: String,
+    pub alt_text: String,
+    pub caption: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct PostSummary {
     pub id: u64,
@@ -157,6 +170,72 @@ impl Client {
             .ok_or_else(|| ApiError { status, message: "Keine Medien-ID in der Antwort".into() })?;
         let source_url = value.get("source_url").and_then(Value::as_str).unwrap_or_default().to_string();
         Ok(MediaResult { id, source_url })
+    }
+
+    /// Sets alt text and/or caption on an already-uploaded media item -
+    /// `upload_media`'s `POST /media` only accepts the raw file bytes, so
+    /// this is always a separate follow-up call, same endpoint (WordPress
+    /// treats a `POST` to an existing attachment id as an update).
+    pub fn update_media_metadata(&self, media_id: u64, alt_text: Option<&str>, caption: Option<&str>) -> Result<()> {
+        let mut payload = serde_json::json!({});
+        if let Some(alt) = alt_text {
+            payload["alt_text"] = serde_json::json!(alt);
+        }
+        if let Some(caption) = caption {
+            payload["caption"] = serde_json::json!(caption);
+        }
+        let mut response = self
+            .agent
+            .post(self.endpoint(&format!("media/{media_id}")))
+            .header("Authorization", self.auth_header.as_str())
+            .send_json(&payload)
+            .map_err(network_error)?;
+        let status = response.status().as_u16();
+        if !(200..300).contains(&status) {
+            let body_text = response.body_mut().read_to_string().unwrap_or_default();
+            return Err(error_from_body(status, &body_text));
+        }
+        Ok(())
+    }
+
+    /// Fetches a media item's current alt text/caption back from the server
+    /// (`context=edit` for the raw, untranslated `caption.raw` rather than
+    /// the display-filtered `caption.rendered`) - used to verify an upload's
+    /// metadata actually landed, not just that the `POST` returned 2xx.
+    #[cfg(test)]
+    pub fn get_media(&self, media_id: u64) -> Result<MediaDetail> {
+        let url = format!("{}?context=edit", self.endpoint(&format!("media/{media_id}")));
+        let value = self.get_json(&url)?;
+        let id = value.get("id").and_then(Value::as_u64).unwrap_or(media_id);
+        let source_url = value.get("source_url").and_then(Value::as_str).unwrap_or_default().to_string();
+        let alt_text = value.get("alt_text").and_then(Value::as_str).unwrap_or_default().to_string();
+        let caption = value
+            .get("caption")
+            .and_then(|c| c.get("raw"))
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        Ok(MediaDetail { id, source_url, alt_text, caption })
+    }
+
+    /// Permanently deletes a media item (bypassing trash, which media
+    /// attachments don't support anyway). Mainly useful for cleaning up
+    /// after integration tests against a real site.
+    #[cfg(test)]
+    pub fn delete_media(&self, media_id: u64) -> Result<()> {
+        let url = format!("{}?force=true", self.endpoint(&format!("media/{media_id}")));
+        let mut response = self
+            .agent
+            .delete(url)
+            .header("Authorization", self.auth_header.as_str())
+            .call()
+            .map_err(network_error)?;
+        let status = response.status().as_u16();
+        if !(200..300).contains(&status) {
+            let body_text = response.body_mut().read_to_string().unwrap_or_default();
+            return Err(error_from_body(status, &body_text));
+        }
+        Ok(())
     }
 
     pub fn create_post(&self, payload: &Value) -> Result<PostResult> {
@@ -423,5 +502,88 @@ mod tests {
         assert_eq!(updated.id, created.id);
 
         client.delete_post(created.id).expect("cleanup delete_post failed");
+    }
+
+    /// A 1x1 transparent PNG - real image bytes, not a text stand-in, so
+    /// this exercises the same upload path a real screenshot would take.
+    const ONE_PIXEL_PNG: &[u8] = &[
+        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00,
+        0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4, 0x89, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x63,
+        0x00, 0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60,
+        0x82,
+    ];
+
+    /// Exercises the standalone per-image media workflow from
+    /// `mediapanel.rs`: upload -> transmit alt text/caption -> read them
+    /// back from the server (not just check the `POST` returned 2xx) ->
+    /// clean up. Covers "WordPress upload", "alt text transmitted to
+    /// WordPress", "caption transmitted to WordPress", and "WordPress media
+    /// id saved" from the media-management spec.
+    #[test]
+    #[ignore]
+    fn media_upload_with_alt_text_and_caption_round_trips_against_real_site() {
+        let config = wpsite::load();
+        assert!(!config.url.is_empty(), "no WordPress site configured (run the connection dialog first)");
+        let password = futures_lite::future::block_on(secrets::load_app_password(&config.url, &config.username))
+            .expect("keyring lookup failed")
+            .expect("no application password stored for this site/user");
+        let client = Client::new(&config.url, &config.username, &password);
+
+        let media = client.upload_media(ONE_PIXEL_PNG, "blocksmith-media-test.png", "image/png").expect("media upload failed");
+        assert!(media.id > 0);
+        assert!(!media.source_url.is_empty());
+
+        client
+            .update_media_metadata(media.id, Some("Ein einzelnes Testpixel"), Some("Testunterschrift"))
+            .expect("update_media_metadata failed");
+
+        let detail = client.get_media(media.id).expect("get_media failed");
+        assert_eq!(detail.id, media.id);
+        assert_eq!(detail.source_url, media.source_url);
+        assert_eq!(detail.alt_text, "Ein einzelnes Testpixel");
+        assert_eq!(detail.caption, "Testunterschrift");
+
+        client.delete_media(media.id).expect("cleanup delete_media failed");
+    }
+
+    /// A deliberately empty alt text (decorative image) must reach WordPress
+    /// as an empty string, not be skipped or rejected as an error - the same
+    /// distinction `media::AltText::Empty` exists to preserve locally.
+    #[test]
+    #[ignore]
+    fn media_deliberately_empty_alt_text_is_sent_as_an_empty_string() {
+        let config = wpsite::load();
+        assert!(!config.url.is_empty(), "no WordPress site configured (run the connection dialog first)");
+        let password = futures_lite::future::block_on(secrets::load_app_password(&config.url, &config.username))
+            .expect("keyring lookup failed")
+            .expect("no application password stored for this site/user");
+        let client = Client::new(&config.url, &config.username, &password);
+
+        let media = client.upload_media(ONE_PIXEL_PNG, "blocksmith-decorative-test.png", "image/png").expect("media upload failed");
+
+        client.update_media_metadata(media.id, Some(""), None).expect("update_media_metadata with empty alt failed");
+
+        let detail = client.get_media(media.id).expect("get_media failed");
+        assert_eq!(detail.alt_text, "");
+
+        client.delete_media(media.id).expect("cleanup delete_media failed");
+    }
+
+    /// A failed metadata update against a nonexistent attachment id must
+    /// surface as a plain `Err`, never a panic - `mediapanel.rs` relies on
+    /// exactly this to keep a failed upload from touching (let alone
+    /// losing) the locally held article.
+    #[test]
+    #[ignore]
+    fn update_media_metadata_on_an_unknown_id_fails_cleanly() {
+        let config = wpsite::load();
+        assert!(!config.url.is_empty(), "no WordPress site configured (run the connection dialog first)");
+        let password = futures_lite::future::block_on(secrets::load_app_password(&config.url, &config.username))
+            .expect("keyring lookup failed")
+            .expect("no application password stored for this site/user");
+        let client = Client::new(&config.url, &config.username, &password);
+
+        let result = client.update_media_metadata(u64::MAX, Some("does not matter"), None);
+        assert!(result.is_err(), "expected updating a nonexistent media id to fail, not silently succeed");
     }
 }

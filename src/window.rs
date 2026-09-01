@@ -7,7 +7,7 @@ use adw::prelude::*;
 use gtk4::{gio, glib};
 
 use crate::document::{Document, Frontmatter};
-use crate::{aimenu, chat, codeview, document, editor, export, formatting, importer, preview, properties, settings, stats, statusbar, termcache};
+use crate::{aimenu, chat, codeview, document, editor, export, formatting, importer, mediapanel, preview, properties, settings, stats, statusbar, termcache};
 
 const DEBOUNCE_MS: u64 = 250;
 
@@ -101,6 +101,10 @@ pub fn build(app: &adw::Application) -> adw::ApplicationWindow {
     properties_button.set_tooltip_text(Some("Artikel-Eigenschaften"));
     properties_button.set_action_name(Some("win.properties"));
 
+    let media_button = gtk4::Button::from_icon_name("image-x-generic-symbolic");
+    media_button.set_tooltip_text(Some("Medienverwaltung (Strg+Umschalt+M)"));
+    media_button.set_action_name(Some("win.media-manager"));
+
     let settings_button = gtk4::Button::from_icon_name("open-menu-symbolic");
     settings_button.set_tooltip_text(Some("Einstellungen (Strg+,)"));
     settings_button.set_action_name(Some("win.settings"));
@@ -118,6 +122,7 @@ pub fn build(app: &adw::Application) -> adw::ApplicationWindow {
     header_bar.pack_start(&save_button);
     header_bar.pack_end(&settings_button);
     header_bar.pack_end(&properties_button);
+    header_bar.pack_end(&media_button);
     header_bar.pack_end(&publish_button);
 
     let status_bar = Rc::new(statusbar::StatusBar::new());
@@ -158,6 +163,7 @@ pub fn build(app: &adw::Application) -> adw::ApplicationWindow {
     wire_properties_action(&window, &frontmatter, &category_terms, &tag_terms);
     wire_settings_action(&window, &buffer, ai_menu_handles, &preview_pane);
     wire_publish_action(&window, &buffer, &current_path, &frontmatter);
+    wire_media_action(&window, &buffer, &current_path, &frontmatter);
 
     window
 }
@@ -552,6 +558,28 @@ fn wire_publish_action(
         let body = buffer.text(&buffer.start_iter(), &buffer.end_iter(), false).to_string();
         let doc_dir = current_path.borrow().as_ref().and_then(|p| p.parent().map(Path::to_path_buf));
         export::open(&window, body, frontmatter.clone(), doc_dir);
+    });
+    window.add_action(&action);
+}
+
+fn wire_media_action(
+    window: &adw::ApplicationWindow,
+    buffer: &sourceview5::Buffer,
+    current_path: &Rc<RefCell<Option<PathBuf>>>,
+    frontmatter: &Rc<RefCell<Frontmatter>>,
+) {
+    let action = gio::SimpleAction::new("media-manager", None);
+    let buffer = buffer.clone();
+    let current_path = current_path.clone();
+    let frontmatter = frontmatter.clone();
+    let window_weak = window.downgrade();
+    action.connect_activate(move |_, _| {
+        let Some(window) = window_weak.upgrade() else {
+            return;
+        };
+        let body = buffer.text(&buffer.start_iter(), &buffer.end_iter(), false).to_string();
+        let doc_dir = current_path.borrow().as_ref().and_then(|p| p.parent().map(Path::to_path_buf));
+        mediapanel::open(&window, body, frontmatter.clone(), doc_dir);
     });
     window.add_action(&action);
 }

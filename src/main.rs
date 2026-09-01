@@ -16,6 +16,8 @@ mod formatting;
 mod importer;
 mod llm;
 mod mdpango;
+mod media;
+mod mediapanel;
 mod preview;
 mod promptsettings;
 mod properties;
@@ -42,6 +44,7 @@ fn main() -> glib::ExitCode {
     app.set_accels_for_action("win.save", &["<Ctrl>s"]);
     app.set_accels_for_action("win.settings", &["<Ctrl>comma"]);
     app.set_accels_for_action("win.publish", &["<Ctrl><Shift>p"]);
+    app.set_accels_for_action("win.media-manager", &["<Ctrl><Shift>m"]);
 
     app.connect_activate(|app| {
         appearance::apply_saved_color_scheme();
