@@ -66,3 +66,7 @@ in `Cargo.toml` is the source of truth; see [CHANGELOG.md](CHANGELOG.md) for
 what changed in each release. Before `1.0.0`, minor version bumps (`0.x.0`)
 may still change the on-disk frontmatter format or other user-facing
 behavior — check the changelog when upgrading.
+
+## License
+
+GPL-3.0-or-later. See [LICENSE](LICENSE).

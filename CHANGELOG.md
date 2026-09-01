@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Licensed under GPL-3.0-or-later (`LICENSE`, `license` field in both crates'
+  `Cargo.toml`).
+
 ## [0.1.0] - 2026-09-01
 
 Initial development release: a working foundation, not yet able to publish
