@@ -42,7 +42,8 @@ blocks. Implemented so far:
   Gutenberg HTML, then creates/updates the WordPress post via its REST API
   on a background thread, uploading any locally-referenced images to the
   media library and resolving category/tag names to WordPress term ids
-  (creating them if they don't exist yet).
+  (creating them if they don't exist yet). Once published, the same dialog
+  offers a confirmed "Von WordPress löschen" to remove the post again.
 - **Flatpak packaging** — manifest, desktop entry, AppStream metainfo, and
   icon under `data/` and `build-aux/flatpak/`.
 

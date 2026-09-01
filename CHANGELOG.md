@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-09-01
+
+### Added
+
+- "Von WordPress löschen" button in the export dialog, shown once an
+  article has a `wp_post_id` (i.e. it's been published/updated at least
+  once). Asks for confirmation (`Adw.AlertDialog`, destructive-styled
+  "Löschen" response) before permanently deleting the post via
+  `wpclient::Client::delete_post`, then clears `wp_post_id` so a later
+  export creates a fresh post instead of trying to update a deleted one.
+
 ## [0.4.0] - 2026-09-01
 
 ### Added
@@ -117,7 +128,8 @@ to WordPress.
   Service (GNOME Keyring, or the portal equivalent under Flatpak) via `oo7`,
   never written to disk in plain text.
 
-[Unreleased]: https://github.com/linuxundich/blocksmith/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/linuxundich/blocksmith/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/linuxundich/blocksmith/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/linuxundich/blocksmith/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/linuxundich/blocksmith/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/linuxundich/blocksmith/compare/v0.1.0...v0.2.0

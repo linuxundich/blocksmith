@@ -74,9 +74,19 @@ pub fn open(
     publish_button.add_css_class("suggested-action");
     publish_button.set_halign(gtk4::Align::End);
 
+    let delete_button = gtk4::Button::with_label("Von WordPress löschen");
+    delete_button.add_css_class("destructive-action");
+    delete_button.set_halign(gtk4::Align::End);
+    delete_button.set_visible(current_fm.wp_post_id.is_some());
+
+    let button_row = gtk4::Box::builder().orientation(gtk4::Orientation::Horizontal).spacing(6).halign(gtk4::Align::End).build();
+    button_row.append(&delete_button);
+    button_row.append(&publish_button);
+
     if site.url.is_empty() {
         status_label.set_label("Keine WordPress-Verbindung eingerichtet - bitte zuerst über den Verbindungs-Dialog konfigurieren.");
         publish_button.set_sensitive(false);
+        delete_button.set_sensitive(false);
     } else if current_fm.title.is_empty() {
         status_label.set_label("Bitte zuerst einen Titel in den Artikel-Eigenschaften setzen.");
         publish_button.set_sensitive(false);
@@ -85,7 +95,7 @@ pub fn open(
     content_box.append(&preview_label);
     content_box.append(&preview_scroller);
     content_box.append(&status_label);
-    content_box.append(&publish_button);
+    content_box.append(&button_row);
     toolbar_view.set_content(Some(&content_box));
 
     let dialog = adw::Dialog::builder()
@@ -94,6 +104,80 @@ pub fn open(
         .content_height(560)
         .child(&toolbar_view)
         .build();
+
+    {
+        let frontmatter = frontmatter.clone();
+        let status_label = status_label.clone();
+        let publish_button = publish_button.clone();
+        let delete_button_for_click = delete_button.clone();
+        let dialog_for_confirm = dialog.clone();
+        delete_button.connect_clicked(move |_| {
+            let Some(post_id) = frontmatter.borrow().wp_post_id else { return };
+            let confirm = adw::AlertDialog::new(
+                Some("Artikel wirklich löschen?"),
+                Some("Der Artikel wird unwiderruflich von der WordPress-Seite gelöscht."),
+            );
+            confirm.add_response("cancel", "Abbrechen");
+            confirm.add_response("delete", "Löschen");
+            confirm.set_response_appearance("delete", adw::ResponseAppearance::Destructive);
+            confirm.set_default_response(Some("cancel"));
+            confirm.set_close_response("cancel");
+
+            let frontmatter = frontmatter.clone();
+            let status_label = status_label.clone();
+            let publish_button = publish_button.clone();
+            let delete_button = delete_button_for_click.clone();
+            confirm.connect_response(None, move |_, response| {
+                if response != "delete" {
+                    return;
+                }
+                status_label.set_label("Wird gelöscht …");
+                delete_button.set_sensitive(false);
+
+                let site = wpsite::load();
+                let (tx, rx) = mpsc::channel::<Result<(), String>>();
+                std::thread::spawn(move || {
+                    let outcome = futures_lite::future::block_on(secrets::load_app_password(&site.url, &site.username))
+                        .map_err(|err| err.to_string())
+                        .and_then(|maybe_password| {
+                            maybe_password.ok_or_else(|| "Kein Application Password im Schlüsselbund gefunden.".to_string())
+                        })
+                        .and_then(|password| {
+                            wpclient::Client::new(&site.url, &site.username, &password)
+                                .delete_post(post_id)
+                                .map_err(|err| err.to_string())
+                        });
+                    let _ = tx.send(outcome);
+                });
+
+                let frontmatter = frontmatter.clone();
+                let status_label = status_label.clone();
+                let publish_button = publish_button.clone();
+                let delete_button = delete_button.clone();
+                glib::timeout_add_local(Duration::from_millis(150), move || match rx.try_recv() {
+                    Ok(Ok(())) => {
+                        frontmatter.borrow_mut().wp_post_id = None;
+                        status_label.set_label("Artikel wurde von WordPress gelöscht.");
+                        publish_button.set_label("Veröffentlichen");
+                        delete_button.set_visible(false);
+                        glib::ControlFlow::Break
+                    }
+                    Ok(Err(err)) => {
+                        status_label.set_label(&format!("Fehler beim Löschen: {err}"));
+                        delete_button.set_sensitive(true);
+                        glib::ControlFlow::Break
+                    }
+                    Err(mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
+                    Err(mpsc::TryRecvError::Disconnected) => {
+                        status_label.set_label("Interner Fehler: Lösch-Thread hat kein Ergebnis geliefert.");
+                        delete_button.set_sensitive(true);
+                        glib::ControlFlow::Break
+                    }
+                });
+            });
+            confirm.present(Some(&dialog_for_confirm));
+        });
+    }
 
     let publish_button_for_click = publish_button.clone();
     publish_button.connect_clicked(move |_| {
