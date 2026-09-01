@@ -13,16 +13,29 @@
 //!   light/dark mode (Builder's `update_style_schemes`/`is_dark` logic,
 //!   ported to Rust below) rather than showing every scheme at once.
 
+use std::cell::Cell;
 use std::path::PathBuf;
 use std::rc::Rc;
 
 use adw::prelude::*;
-use gtk4::glib;
+use gtk4::{glib, pango};
 use sourceview5::prelude::*;
+use webkit6::prelude::*;
 
+use crate::fontutil;
 use crate::preview::{self, PreviewStyle};
 
 const DEFAULT_SOURCE_SCHEME_ID: &str = "Adwaita";
+// Fontconfig's generic aliases ("Sans"/"Monospace") always resolve to
+// *some* installed font, unlike a specific family name (e.g. "Cantarell")
+// which may not be installed on every system - these are display-only
+// seeds for the font picker before the user customizes anything, so
+// resolving to a real font name (not "Keine"/"None") matters here.
+const DEFAULT_FONT_DISPLAY: &str = "Sans 11";
+const DEFAULT_MONOSPACE_FONT_DISPLAY: &str = "Monospace 11";
+
+const EDITOR_FONT_SAMPLE_MARKDOWN: &str = "# Überschrift\n\nEin **fetter** und *kursiver* Text mit `Inline-Code`.\n\n- Erster Listenpunkt\n- Zweiter Listenpunkt\n";
+const PREVIEW_STYLE_SAMPLE_MARKDOWN: &str = "# Beispielartikel\n\nDies ist ein **Beispieltext**, der zeigt, wie der gewählte *Stil* und die Schrift wirken.\n\n> Ein Zitat zur Veranschaulichung.\n";
 
 const PREVIEW_LIGHT_SVG: &[u8] = include_bytes!("../data/icons/appearance-preview/preview-light.svg");
 const PREVIEW_DARK_SVG: &[u8] = include_bytes!("../data/icons/appearance-preview/preview-dark.svg");
@@ -82,6 +95,81 @@ fn save_source_scheme_id(id: &str) {
 /// flashing the default first.
 pub fn apply_saved_color_scheme() {
     adw::StyleManager::default().set_color_scheme(load_color_scheme());
+}
+
+fn editor_font_path() -> PathBuf {
+    let mut path = config_dir();
+    path.push("editor_font.txt");
+    path
+}
+
+/// A saved Pango font description (e.g. `"Fira Code 11"`) if the user has
+/// picked a custom editor font - `None` means the editor keeps using the
+/// system monospace font, as before this setting existed.
+pub fn load_editor_font_override() -> Option<String> {
+    std::fs::read_to_string(editor_font_path()).ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
+}
+
+fn save_editor_font_override(desc: &str) {
+    let _ = std::fs::create_dir_all(config_dir());
+    let _ = std::fs::write(editor_font_path(), desc);
+}
+
+fn reset_editor_font_override() {
+    let _ = std::fs::remove_file(editor_font_path());
+}
+
+const EDITOR_FONT_CSS_CLASS: &str = "blocksmith-editor-font";
+// GTK objects aren't `Sync` (GLib's single-threaded-by-convention model),
+// so this can't be a plain `static` - `thread_local!` is fine since GTK
+// only ever runs on the main thread anyway.
+thread_local! {
+    static EDITOR_FONT_PROVIDER: std::cell::RefCell<Option<gtk4::CssProvider>> = const { std::cell::RefCell::new(None) };
+}
+
+fn refresh_editor_font_css(provider: &gtk4::CssProvider) {
+    let css = match load_editor_font_override() {
+        Some(desc) => format!(".{EDITOR_FONT_CSS_CLASS} {{ {} }}", fontutil::css_declarations(&pango::FontDescription::from_string(&desc))),
+        None => String::new(),
+    };
+    provider.load_from_string(&css);
+}
+
+/// Installs the editor's custom-font CSS provider (once, application-wide)
+/// and applies whatever's currently saved - call once when the real editor
+/// view is built. Any widget wanting to reflect the same font (e.g. the
+/// settings page's own live sample) just needs the same CSS class.
+pub fn install_editor_font_css(view: &sourceview5::View) {
+    view.add_css_class(EDITOR_FONT_CSS_CLASS);
+    EDITOR_FONT_PROVIDER.with(|cell| {
+        let mut provider_ref = cell.borrow_mut();
+        let provider = provider_ref.get_or_insert_with(|| {
+            let provider = gtk4::CssProvider::new();
+            if let Some(display) = gtk4::gdk::Display::default() {
+                gtk4::style_context_add_provider_for_display(&display, &provider, gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION);
+            }
+            provider
+        });
+        refresh_editor_font_css(provider);
+    });
+}
+
+fn apply_editor_font_override_live(desc: &str) {
+    save_editor_font_override(desc);
+    EDITOR_FONT_PROVIDER.with(|cell| {
+        if let Some(provider) = cell.borrow().as_ref() {
+            refresh_editor_font_css(provider);
+        }
+    });
+}
+
+fn reset_editor_font_override_live() {
+    reset_editor_font_override();
+    EDITOR_FONT_PROVIDER.with(|cell| {
+        if let Some(provider) = cell.borrow().as_ref() {
+            refresh_editor_font_css(provider);
+        }
+    });
 }
 
 /// Port of Builder's `ide_source_style_scheme_is_dark()`
@@ -170,8 +258,10 @@ fn build_theme_card(label_text: &str, svg_bytes: &'static [u8], group: Option<&g
 /// Rebuilds the scheme `flow_box`'s children from the schemes matching
 /// `is_dark` - Builder's `update_style_schemes()`, minus the light/dark
 /// "alternate variant" bookkeeping (Blocksmith doesn't offer per-scheme
-/// variant swapping, just the filtered list itself).
-fn populate_scheme_flow_box(flow_box: &gtk4::FlowBox, buffer: &sourceview5::Buffer) {
+/// variant swapping, just the filtered list itself). `buffers` are every
+/// buffer that should switch to the picked scheme immediately - the real
+/// editor buffer, plus this page's own font-sample buffer.
+fn populate_scheme_flow_box(flow_box: &gtk4::FlowBox, buffers: &[sourceview5::Buffer]) {
     while let Some(child) = flow_box.first_child() {
         flow_box.remove(&child);
     }
@@ -196,12 +286,14 @@ fn populate_scheme_flow_box(flow_box: &gtk4::FlowBox, buffer: &sourceview5::Buff
         let preview = sourceview5::StyleSchemePreview::new(&scheme);
         preview.set_selected(scheme.id() == current_id);
 
-        let buffer = buffer.clone();
+        let buffers: Vec<sourceview5::Buffer> = buffers.to_vec();
         let flow_box_weak = flow_box.downgrade();
         preview.connect_activate(move |activated| {
             let scheme = activated.scheme();
             save_source_scheme_id(&scheme.id());
-            buffer.set_style_scheme(Some(&scheme));
+            for buffer in &buffers {
+                buffer.set_style_scheme(Some(&scheme));
+            }
             if let Some(flow_box) = flow_box_weak.upgrade() {
                 let mut child = flow_box.first_child();
                 while let Some(c) = child {
@@ -264,33 +356,203 @@ pub fn build_page(buffer: &sourceview5::Buffer, preview_pane: Rc<preview::Previe
 
     let flow_box = gtk4::FlowBox::builder().column_spacing(12).row_spacing(12).max_children_per_line(4).selection_mode(gtk4::SelectionMode::None).homogeneous(true).build();
     flow_box.add_css_class("style-schemes");
-    populate_scheme_flow_box(&flow_box, buffer);
-
-    {
-        let flow_box = flow_box.clone();
-        let buffer = buffer.clone();
-        adw::StyleManager::default().connect_dark_notify(move |_| {
-            populate_scheme_flow_box(&flow_box, &buffer);
-        });
-    }
-
+    // Populated below by `build_editor_font_group`, which also owns this
+    // page's font-sample buffer and needs it kept in sync with whichever
+    // scheme gets picked here.
     color_group.add(&flow_box);
 
-    let preview_group = adw::PreferencesGroup::builder().title("Vorschau").build();
-    let preview_style_labels: Vec<&str> = PreviewStyle::ALL.iter().map(|s| s.label()).collect();
-    let preview_style_row = adw::ComboRow::builder().title("Stil").model(&gtk4::StringList::new(&preview_style_labels)).build();
-    let current_index = PreviewStyle::ALL.iter().position(|s| *s == preview_pane.style()).unwrap_or(0);
-    preview_style_row.set_selected(current_index as u32);
-    preview_style_row.connect_selected_notify(move |row| {
-        if let Some(style) = PreviewStyle::ALL.get(row.selected() as usize) {
-            preview_pane.set_style(*style);
-        }
-    });
-    preview_group.add(&preview_style_row);
+    let editor_font_group = build_editor_font_group(buffer, &flow_box);
+
+    let preview_group = build_preview_group(preview_pane);
 
     let page = adw::PreferencesPage::builder().title("Erscheinungsbild").icon_name("preferences-desktop-appearance-symbolic").build();
     page.add(&interface_group);
     page.add(&color_group);
+    page.add(&editor_font_group);
     page.add(&preview_group);
     page
+}
+
+/// "Editor-Schriftart": a live Markdown sample (Builder's
+/// `GbpEditoruiPreview` pattern - a small read-only source view reflecting
+/// the current scheme *and* font, not just a static swatch) plus a
+/// `Gtk.FontDialogButton`/Reset pair for the custom-font override.
+fn build_editor_font_group(buffer: &sourceview5::Buffer, scheme_flow_box: &gtk4::FlowBox) -> adw::PreferencesGroup {
+    let group = adw::PreferencesGroup::builder().title("Editor-Schriftart").build();
+
+    let sample_buffer = sourceview5::Buffer::new(None::<&gtk4::TextTagTable>);
+    sample_buffer.set_highlight_syntax(true);
+    if let Some(lang) = sourceview5::LanguageManager::default().language("markdown") {
+        sample_buffer.set_language(Some(&lang));
+    }
+    sample_buffer.set_text(EDITOR_FONT_SAMPLE_MARKDOWN);
+    if let Some(scheme) = sourceview5::StyleSchemeManager::default().scheme(&load_source_scheme_id()) {
+        sample_buffer.set_style_scheme(Some(&scheme));
+    }
+    let sample_view = sourceview5::View::with_buffer(&sample_buffer);
+    sample_view.set_editable(false);
+    sample_view.set_cursor_visible(false);
+    sample_view.set_monospace(true);
+    sample_view.set_top_margin(8);
+    sample_view.set_bottom_margin(8);
+    sample_view.set_left_margin(10);
+    sample_view.set_right_margin(10);
+    sample_view.add_css_class(EDITOR_FONT_CSS_CLASS);
+    let sample_scroller = gtk4::ScrolledWindow::builder()
+        .child(&sample_view)
+        .height_request(130)
+        .hscrollbar_policy(gtk4::PolicyType::Never)
+        .vscrollbar_policy(gtk4::PolicyType::Never)
+        .build();
+    sample_scroller.add_css_class("card");
+    group.add(&sample_scroller);
+
+    // Keep this sample in sync with whichever scheme the "Farbe" swatches
+    // pick, in addition to the real editor buffer.
+    populate_scheme_flow_box(scheme_flow_box, &[buffer.clone(), sample_buffer.clone()]);
+    {
+        let scheme_flow_box = scheme_flow_box.clone();
+        let buffer = buffer.clone();
+        let sample_buffer = sample_buffer.clone();
+        adw::StyleManager::default().connect_dark_notify(move |_| {
+            populate_scheme_flow_box(&scheme_flow_box, &[buffer.clone(), sample_buffer.clone()]);
+        });
+    }
+
+    let font_row = adw::ActionRow::builder().title("Schriftart").build();
+    let font_dialog = gtk4::FontDialog::builder().title("Editor-Schriftart wählen").build();
+    let font_button = gtk4::FontDialogButton::builder().dialog(&font_dialog).level(gtk4::FontLevel::Font).use_size(true).valign(gtk4::Align::Center).build();
+    let initial_desc = load_editor_font_override().unwrap_or_else(|| DEFAULT_MONOSPACE_FONT_DISPLAY.to_string());
+    font_button.set_font_desc(&pango::FontDescription::from_string(&initial_desc));
+
+    let reset_button = gtk4::Button::from_icon_name("edit-undo-symbolic");
+    reset_button.set_tooltip_text(Some("Auf Systemschrift zurücksetzen"));
+    reset_button.add_css_class("flat");
+    reset_button.set_valign(gtk4::Align::Center);
+    reset_button.set_sensitive(load_editor_font_override().is_some());
+
+    let suppress_font_notify = Rc::new(Cell::new(false));
+    {
+        let reset_button = reset_button.clone();
+        let sample_view = sample_view.clone();
+        let suppress_font_notify = suppress_font_notify.clone();
+        font_button.connect_font_desc_notify(move |button| {
+            if suppress_font_notify.replace(false) {
+                return;
+            }
+            let Some(desc) = button.font_desc() else { return };
+            apply_editor_font_override_live(&desc.to_str());
+            sample_view.add_css_class(EDITOR_FONT_CSS_CLASS); // re-touch to force a redraw
+            reset_button.set_sensitive(true);
+        });
+    }
+    {
+        let font_button = font_button.clone();
+        let suppress_font_notify = suppress_font_notify.clone();
+        reset_button.connect_clicked(move |button| {
+            reset_editor_font_override_live();
+            suppress_font_notify.set(true);
+            font_button.set_font_desc(&pango::FontDescription::from_string(DEFAULT_MONOSPACE_FONT_DISPLAY));
+            button.set_sensitive(false);
+        });
+    }
+
+    font_row.add_suffix(&font_button);
+    font_row.add_suffix(&reset_button);
+    group.add(&font_row);
+
+    group
+}
+
+/// The "Vorschau" group: style picker, custom-font override, and a live
+/// rendered-Markdown sample so a font or style choice's effect is visible
+/// immediately, the same way the editor's own font sample works.
+fn build_preview_group(preview_pane: Rc<preview::PreviewPane>) -> adw::PreferencesGroup {
+    let group = adw::PreferencesGroup::builder().title("Vorschau").build();
+
+    let sample_view = webkit6::WebView::new();
+    sample_view.set_size_request(-1, 160);
+    let sample_scroller = gtk4::Box::builder().orientation(gtk4::Orientation::Vertical).build();
+    sample_scroller.add_css_class("card");
+    sample_scroller.append(&sample_view);
+    group.add(&sample_scroller);
+
+    let refresh_sample: Rc<dyn Fn()> = {
+        let preview_pane = preview_pane.clone();
+        let sample_view = sample_view.clone();
+        Rc::new(move || {
+            let dark = adw::StyleManager::default().is_dark();
+            sample_view.load_html(&preview::render_html(PREVIEW_STYLE_SAMPLE_MARKDOWN, preview_pane.style(), dark), None);
+        })
+    };
+    refresh_sample();
+    {
+        let refresh_sample = refresh_sample.clone();
+        adw::StyleManager::default().connect_dark_notify(move |_| refresh_sample());
+    }
+
+    let style_row = adw::ComboRow::builder().title("Stil").build();
+    let style_labels: Vec<&str> = PreviewStyle::ALL.iter().map(|s| s.label()).collect();
+    style_row.set_model(Some(&gtk4::StringList::new(&style_labels)));
+    let current_index = PreviewStyle::ALL.iter().position(|s| *s == preview_pane.style()).unwrap_or(0);
+    style_row.set_selected(current_index as u32);
+    {
+        let preview_pane = preview_pane.clone();
+        let refresh_sample = refresh_sample.clone();
+        style_row.connect_selected_notify(move |row| {
+            if let Some(style) = PreviewStyle::ALL.get(row.selected() as usize) {
+                preview_pane.set_style(*style);
+                refresh_sample();
+            }
+        });
+    }
+    group.add(&style_row);
+
+    let font_row = adw::ActionRow::builder().title("Schriftart").build();
+    let font_dialog = gtk4::FontDialog::builder().title("Vorschau-Schriftart wählen").build();
+    let font_button = gtk4::FontDialogButton::builder().dialog(&font_dialog).level(gtk4::FontLevel::Font).use_size(true).valign(gtk4::Align::Center).build();
+    let initial_desc = preview_pane.font_override().unwrap_or_else(|| DEFAULT_FONT_DISPLAY.to_string());
+    font_button.set_font_desc(&pango::FontDescription::from_string(&initial_desc));
+
+    let reset_button = gtk4::Button::from_icon_name("edit-undo-symbolic");
+    reset_button.set_tooltip_text(Some("Auf Stil-Standardschrift zurücksetzen"));
+    reset_button.add_css_class("flat");
+    reset_button.set_valign(gtk4::Align::Center);
+    reset_button.set_sensitive(preview_pane.is_font_customized());
+
+    let suppress_font_notify = Rc::new(Cell::new(false));
+    {
+        let preview_pane = preview_pane.clone();
+        let reset_button = reset_button.clone();
+        let refresh_sample = refresh_sample.clone();
+        let suppress_font_notify = suppress_font_notify.clone();
+        font_button.connect_font_desc_notify(move |button| {
+            if suppress_font_notify.replace(false) {
+                return;
+            }
+            let Some(desc) = button.font_desc() else { return };
+            preview_pane.set_font_override(&desc.to_str());
+            reset_button.set_sensitive(true);
+            refresh_sample();
+        });
+    }
+    {
+        let preview_pane = preview_pane.clone();
+        let font_button = font_button.clone();
+        let refresh_sample = refresh_sample.clone();
+        let suppress_font_notify = suppress_font_notify.clone();
+        reset_button.connect_clicked(move |button| {
+            preview_pane.reset_font_override();
+            suppress_font_notify.set(true);
+            font_button.set_font_desc(&pango::FontDescription::from_string(DEFAULT_FONT_DISPLAY));
+            button.set_sensitive(false);
+            refresh_sample();
+        });
+    }
+
+    font_row.add_suffix(&font_button);
+    font_row.add_suffix(&reset_button);
+    group.add(&font_row);
+
+    group
 }

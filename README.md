@@ -65,7 +65,9 @@ blocks. Implemented so far:
   preview illustrations, and an editor color-scheme grid using
   GtkSourceView's `StyleSchemePreview` widget filtered to schemes matching
   the current light/dark mode, the same widget and filtering Builder uses,
-  plus the article preview's own typographic style picker), a WordPress-connection page (site
+  plus the article preview's own typographic style picker), independent
+  font pickers for the editor and the preview (family/size/weight/style,
+  each with a live sample and a reset-to-default button), a WordPress-connection page (site
   URL/username in a small config file, the Application Password in the
   Secret Service via [`oo7`](https://crates.io/crates/oo7), never written
   to disk in plain text), a "KI-Chat" page (a provider picker for

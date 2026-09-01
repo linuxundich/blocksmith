@@ -31,6 +31,7 @@ pub fn build() -> (gtk4::ScrolledWindow, sourceview5::View, sourceview5::Buffer,
     view.set_right_margin(12);
     view.set_hexpand(true);
     view.set_vexpand(true);
+    appearance::install_editor_font_css(&view);
 
     let checker = spelling::Checker::default();
     let adapter = spelling::TextBufferAdapter::new(&buffer, &checker);

@@ -21,9 +21,11 @@ use std::path::PathBuf;
 use std::rc::Rc;
 
 use adw::prelude::*;
-use gtk4::{gio, glib};
+use gtk4::{gio, glib, pango};
 use pulldown_cmark::{Event, Options, Parser, TagEnd};
 use webkit6::prelude::*;
+
+use crate::fontutil;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PreviewStyle {
@@ -81,6 +83,29 @@ fn save_preview_style(style: PreviewStyle) {
     let _ = std::fs::write(preview_style_path(), style.id());
 }
 
+fn preview_font_path() -> PathBuf {
+    let mut path = config_dir();
+    path.push("preview_font.txt");
+    path
+}
+
+/// A saved Pango font description (e.g. `"Cantarell 11"`) if the user has
+/// picked one - each `PreviewStyle`'s own font stays the default until
+/// this is set, so choosing a style still looks like that style out of
+/// the box.
+fn load_preview_font_override() -> Option<String> {
+    std::fs::read_to_string(preview_font_path()).ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
+}
+
+fn save_preview_font_override(desc: &str) {
+    let _ = std::fs::create_dir_all(config_dir());
+    let _ = std::fs::write(preview_font_path(), desc);
+}
+
+fn reset_preview_font_override() {
+    let _ = std::fs::remove_file(preview_font_path());
+}
+
 /// The "Vorschau" tab: a style picker above a `WebKit` view. Remembers the
 /// last rendered Markdown so it can re-render immediately when the style
 /// changes (picked in Einstellungen, see `appearance::build_page`) or the
@@ -121,8 +146,7 @@ impl PreviewPane {
 
     pub fn update(&self, markdown: &str) {
         *self.last_markdown.borrow_mut() = markdown.to_string();
-        let dark = adw::StyleManager::default().is_dark();
-        self.web_view.load_html(&render_html(markdown, self.style.get(), dark), None);
+        self.rerender();
     }
 
     pub fn scroll_to_line(&self, line: i32) {
@@ -140,8 +164,32 @@ impl PreviewPane {
     pub fn set_style(&self, style: PreviewStyle) {
         self.style.set(style);
         save_preview_style(style);
+        self.rerender();
+    }
+
+    /// The saved custom font, if any - `None` means each `PreviewStyle`
+    /// still uses its own built-in font.
+    pub fn font_override(&self) -> Option<String> {
+        load_preview_font_override()
+    }
+
+    pub fn is_font_customized(&self) -> bool {
+        load_preview_font_override().is_some()
+    }
+
+    pub fn set_font_override(&self, desc: &str) {
+        save_preview_font_override(desc);
+        self.rerender();
+    }
+
+    pub fn reset_font_override(&self) {
+        reset_preview_font_override();
+        self.rerender();
+    }
+
+    fn rerender(&self) {
         let dark = adw::StyleManager::default().is_dark();
-        self.web_view.load_html(&render_html(&self.last_markdown.borrow(), style, dark), None);
+        self.web_view.load_html(&render_html(&self.last_markdown.borrow(), self.style.get(), dark), None);
     }
 }
 
@@ -214,11 +262,19 @@ fn style_css(style: PreviewStyle, dark: bool) -> &'static str {
 pub fn render_html(markdown: &str, style: PreviewStyle, dark: bool) -> String {
     let body = render_body_with_line_anchors(markdown);
     let css = style_css(style, dark);
+    // A user-picked font (if any) overrides just the two font properties,
+    // applied after the style's own block so the cascade lets it win
+    // while everything else the style defines (colors, indentation,
+    // justification, ...) stays intact.
+    let font_override_css = load_preview_font_override()
+        .map(|desc| format!("body {{ {} }}", fontutil::css_declarations(&pango::FontDescription::from_string(&desc))))
+        .unwrap_or_default();
 
     format!(
         r#"<!doctype html>
 <html><head><meta charset="utf-8"><style>
 {css}
+{font_override_css}
 img {{ max-width: 100%; }}
 table {{ border-collapse: collapse; }}
 th, td {{ border: 1px solid #ccc; padding: .4rem .6rem; }}

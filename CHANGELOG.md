@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-09-01
+
+### Added
+
+- Font selection for both the editor and the preview, in "Erscheinungsbild"
+  - each gets its own `Gtk.FontDialogButton` (family, size, weight and style
+    all in the one native GNOME font picker) with a "reset" button, unset
+    by default so the editor keeps the system monospace font and each
+    preview style keeps its own typeface until customized.
+  - A live sample accompanies each: the editor's is a small read-only
+    Markdown source view (reflecting the current color scheme *and* font,
+    porting GNOME Builder's `GbpEditoruiPreview` pattern - the same live
+    sample it shows in both its "Erscheinungsbild" and "Fonts & Styling"
+    pages); the preview's is a small rendered sample article, updating
+    live as the style, font, or light/dark mode changes.
+
 ## [0.10.3] - 2026-09-01
 
 ### Fixed

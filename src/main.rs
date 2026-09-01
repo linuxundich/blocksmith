@@ -11,6 +11,7 @@ mod default_prompt;
 mod document;
 mod editor;
 mod export;
+mod fontutil;
 mod formatting;
 mod importer;
 mod llm;
