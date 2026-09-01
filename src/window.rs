@@ -152,7 +152,7 @@ pub fn build(app: &adw::Application) -> adw::ApplicationWindow {
     wire_open_from_wordpress_action(&window, &buffer, &current_path, &frontmatter, &title);
     wire_save_action(&window, &buffer, &current_path, &frontmatter, &title, &toast_overlay);
     wire_properties_action(&window, &frontmatter, &category_terms, &tag_terms);
-    wire_settings_action(&window, &buffer, ai_menu_handles);
+    wire_settings_action(&window, &buffer, ai_menu_handles, &preview_pane);
     wire_publish_action(&window, &buffer, &current_path, &frontmatter);
 
     window
@@ -484,13 +484,19 @@ fn wire_properties_action(
     window.add_action(&action);
 }
 
-fn wire_settings_action(window: &adw::ApplicationWindow, buffer: &sourceview5::Buffer, ai_menu_handles: aimenu::AiMenuHandles) {
+fn wire_settings_action(
+    window: &adw::ApplicationWindow,
+    buffer: &sourceview5::Buffer,
+    ai_menu_handles: aimenu::AiMenuHandles,
+    preview_pane: &Rc<preview::PreviewPane>,
+) {
     let action = gio::SimpleAction::new("settings", None);
     let buffer = buffer.clone();
+    let preview_pane = preview_pane.clone();
     let window_weak = window.downgrade();
     action.connect_activate(move |_, _| {
         if let Some(window) = window_weak.upgrade() {
-            settings::open(&window, &buffer, &ai_menu_handles);
+            settings::open(&window, &buffer, &ai_menu_handles, &preview_pane);
         }
     });
     window.add_action(&action);

@@ -51,7 +51,7 @@ impl PreviewStyle {
         }
     }
 
-    fn label(&self) -> &'static str {
+    pub fn label(&self) -> &'static str {
         match self {
             PreviewStyle::Modern => "Modern",
             PreviewStyle::Classic => "Klassisch",
@@ -83,8 +83,9 @@ fn save_preview_style(style: PreviewStyle) {
 
 /// The "Vorschau" tab: a style picker above a `WebKit` view. Remembers the
 /// last rendered Markdown so it can re-render immediately when the style
-/// picker changes or the app's light/dark mode flips, without needing the
-/// editor buffer passed back in.
+/// changes (picked in Einstellungen, see `appearance::build_page`) or the
+/// app's light/dark mode flips, without needing the editor buffer passed
+/// back in.
 pub struct PreviewPane {
     pub widget: gtk4::Widget,
     web_view: webkit6::WebView,
@@ -101,37 +102,6 @@ impl PreviewPane {
         let style = Rc::new(Cell::new(load_preview_style()));
         let last_markdown: Rc<RefCell<String>> = Rc::new(RefCell::new(String::new()));
 
-        let style_label = gtk4::Label::new(Some("Stil"));
-        style_label.add_css_class("dim-label");
-        let style_labels: Vec<&str> = PreviewStyle::ALL.iter().map(|s| s.label()).collect();
-        let style_dropdown = gtk4::DropDown::from_strings(&style_labels);
-        let initial_index = PreviewStyle::ALL.iter().position(|s| *s == style.get()).unwrap_or(0);
-        style_dropdown.set_selected(initial_index as u32);
-
-        let style_row = gtk4::Box::builder().orientation(gtk4::Orientation::Horizontal).spacing(8).margin_top(6).margin_bottom(6).margin_start(6).margin_end(6).build();
-        style_row.append(&style_label);
-        style_row.append(&style_dropdown);
-
-        let root = gtk4::Box::builder().orientation(gtk4::Orientation::Vertical).build();
-        root.append(&style_row);
-        root.append(&gtk4::Separator::new(gtk4::Orientation::Horizontal));
-        root.append(&web_view);
-
-        {
-            let web_view = web_view.clone();
-            let style = style.clone();
-            let last_markdown = last_markdown.clone();
-            style_dropdown.connect_selected_notify(move |dropdown| {
-                let Some(new_style) = PreviewStyle::ALL.get(dropdown.selected() as usize) else {
-                    return;
-                };
-                style.set(*new_style);
-                save_preview_style(*new_style);
-                let dark = adw::StyleManager::default().is_dark();
-                web_view.load_html(&render_html(&last_markdown.borrow(), *new_style, dark), None);
-            });
-        }
-
         {
             let web_view = web_view.clone();
             let style = style.clone();
@@ -142,7 +112,7 @@ impl PreviewPane {
         }
 
         Self {
-            widget: root.upcast(),
+            widget: web_view.clone().upcast(),
             web_view,
             style,
             last_markdown,
@@ -157,6 +127,21 @@ impl PreviewPane {
 
     pub fn scroll_to_line(&self, line: i32) {
         self.web_view.evaluate_javascript(&format!("window.scrollToLine && window.scrollToLine({line});"), None, None, gio::Cancellable::NONE, |_| {});
+    }
+
+    pub fn style(&self) -> PreviewStyle {
+        self.style.get()
+    }
+
+    /// Called from the "Erscheinungsbild" settings page's style picker:
+    /// persists the choice and re-renders immediately with the
+    /// last-known Markdown, the same way an editor color-scheme change
+    /// applies live without needing the dialog closed.
+    pub fn set_style(&self, style: PreviewStyle) {
+        self.style.set(style);
+        save_preview_style(style);
+        let dark = adw::StyleManager::default().is_dark();
+        self.web_view.load_html(&render_html(&self.last_markdown.borrow(), style, dark), None);
     }
 }
 

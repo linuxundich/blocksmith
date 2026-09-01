@@ -28,8 +28,8 @@ blocks. Implemented so far:
   current selection, whenever one is active. The right pane's tabs (hosted
   in an `Adw.HeaderBar`-based `Adw.InlineViewSwitcher`, rendering all tabs
   as one seamless linked pill) are "Vorschau" (follows the app's light/dark
-  mode, with a choice of Modern/Klassisch/Sepia typographic styles),
-  "Gutenberg-Code" (the exact block HTML that would be published),
+  mode, with a choice of Modern/Klassisch/Sepia typographic styles picked
+  in Einstellungen), "Gutenberg-Code" (the exact block HTML that would be published),
   "Statistik" (word/character/paragraph counts, estimated reading time),
   and "Chat" - a writing assistant with message bubbles (replies rendered
   as Markdown), backed by Gemini, ChatGPT, Claude, or Ollama (self-hosted,
@@ -64,8 +64,8 @@ blocks. Implemented so far:
   implementation (light/dark/follow-system cards using Builder's bundled
   preview illustrations, and an editor color-scheme grid using
   GtkSourceView's `StyleSchemePreview` widget filtered to schemes matching
-  the current light/dark mode, the same widget and filtering Builder uses),
-  a WordPress-connection page (site
+  the current light/dark mode, the same widget and filtering Builder uses,
+  plus the article preview's own typographic style picker), a WordPress-connection page (site
   URL/username in a small config file, the Application Password in the
   Secret Service via [`oo7`](https://crates.io/crates/oo7), never written
   to disk in plain text), a "KI-Chat" page (a provider picker for

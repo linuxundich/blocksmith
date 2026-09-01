@@ -14,10 +14,13 @@
 //!   ported to Rust below) rather than showing every scheme at once.
 
 use std::path::PathBuf;
+use std::rc::Rc;
 
 use adw::prelude::*;
 use gtk4::glib;
 use sourceview5::prelude::*;
+
+use crate::preview::{self, PreviewStyle};
 
 const DEFAULT_SOURCE_SCHEME_ID: &str = "Adwaita";
 
@@ -216,7 +219,7 @@ fn populate_scheme_flow_box(flow_box: &gtk4::FlowBox, buffer: &sourceview5::Buff
     }
 }
 
-pub fn build_page(buffer: &sourceview5::Buffer) -> adw::PreferencesPage {
+pub fn build_page(buffer: &sourceview5::Buffer, preview_pane: Rc<preview::PreviewPane>) -> adw::PreferencesPage {
     install_theme_card_css();
 
     let interface_group = adw::PreferencesGroup::builder().title("Schnittstelle").build();
@@ -273,8 +276,21 @@ pub fn build_page(buffer: &sourceview5::Buffer) -> adw::PreferencesPage {
 
     color_group.add(&flow_box);
 
+    let preview_group = adw::PreferencesGroup::builder().title("Vorschau").build();
+    let preview_style_labels: Vec<&str> = PreviewStyle::ALL.iter().map(|s| s.label()).collect();
+    let preview_style_row = adw::ComboRow::builder().title("Stil").model(&gtk4::StringList::new(&preview_style_labels)).build();
+    let current_index = PreviewStyle::ALL.iter().position(|s| *s == preview_pane.style()).unwrap_or(0);
+    preview_style_row.set_selected(current_index as u32);
+    preview_style_row.connect_selected_notify(move |row| {
+        if let Some(style) = PreviewStyle::ALL.get(row.selected() as usize) {
+            preview_pane.set_style(*style);
+        }
+    });
+    preview_group.add(&preview_style_row);
+
     let page = adw::PreferencesPage::builder().title("Erscheinungsbild").icon_name("preferences-desktop-appearance-symbolic").build();
     page.add(&interface_group);
     page.add(&color_group);
+    page.add(&preview_group);
     page
 }

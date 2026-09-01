@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.10.1] - 2026-09-01
+
+### Changed
+
+- Moved the preview style picker (Modern/Klassisch/Sepia) out of the
+  Vorschau tab and into the "Erscheinungsbild" settings page, in a new
+  "Vorschau" group next to the interface and editor color-scheme pickers -
+  it's a look-and-feel setting, not something that needs to sit in the tab
+  itself. Choosing a style there still applies immediately to an already-
+  open preview, the same as the other appearance settings.
+
 ## [0.10.0] - 2026-09-01
 
 ### Added
