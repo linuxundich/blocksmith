@@ -8,7 +8,7 @@ use gtk4::{gio, glib};
 use webkit6::prelude::*;
 
 use crate::document::{Document, Frontmatter};
-use crate::{document, editor, export, formatting, preview, properties, settings, stats};
+use crate::{document, editor, export, formatting, importer, preview, properties, settings, stats, termcache};
 
 const DEBOUNCE_MS: u64 = 250;
 
@@ -64,6 +64,10 @@ pub fn build(app: &adw::Application) -> adw::ApplicationWindow {
     open_button.set_tooltip_text(Some("Öffnen (Strg+O)"));
     open_button.set_action_name(Some("win.open"));
 
+    let open_from_wp_button = gtk4::Button::from_icon_name("folder-remote-symbolic");
+    open_from_wp_button.set_tooltip_text(Some("Von WordPress öffnen (Strg+Umschalt+O)"));
+    open_from_wp_button.set_action_name(Some("win.open-from-wordpress"));
+
     let save_button = gtk4::Button::from_icon_name("document-save-symbolic");
     save_button.set_tooltip_text(Some("Speichern (Strg+S)"));
     save_button.set_action_name(Some("win.save"));
@@ -85,6 +89,7 @@ pub fn build(app: &adw::Application) -> adw::ApplicationWindow {
     header_bar.set_title_widget(Some(&title));
     header_bar.pack_start(&new_button);
     header_bar.pack_start(&open_button);
+    header_bar.pack_start(&open_from_wp_button);
     header_bar.pack_start(&save_button);
     header_bar.pack_end(&settings_button);
     header_bar.pack_end(&properties_button);
@@ -108,12 +113,18 @@ pub fn build(app: &adw::Application) -> adw::ApplicationWindow {
     let current_path: Rc<RefCell<Option<PathBuf>>> = Rc::new(RefCell::new(None));
     let frontmatter: Rc<RefCell<Frontmatter>> = Rc::new(RefCell::new(Frontmatter::default()));
 
+    let cached_terms = termcache::load();
+    let category_terms: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(cached_terms.categories));
+    let tag_terms: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(cached_terms.tags));
+    termcache::spawn_refresh(category_terms.clone(), tag_terms.clone());
+
     wire_live_preview(&buffer, &web_view, &stats_view);
     wire_scroll_sync(&editor_scroller, &view, &web_view);
     wire_new_action(&window, &buffer, &current_path, &frontmatter, &title);
     wire_open_action(&window, &buffer, &current_path, &frontmatter, &title, &toast_overlay);
+    wire_open_from_wordpress_action(&window, &buffer, &current_path, &frontmatter, &title);
     wire_save_action(&window, &buffer, &current_path, &frontmatter, &title, &toast_overlay);
-    wire_properties_action(&window, &frontmatter);
+    wire_properties_action(&window, &frontmatter, &category_terms, &tag_terms);
     wire_settings_action(&window);
     wire_publish_action(&window, &buffer, &current_path, &frontmatter);
 
@@ -273,6 +284,37 @@ fn wire_open_action(
     window.add_action(&action);
 }
 
+fn wire_open_from_wordpress_action(
+    window: &adw::ApplicationWindow,
+    buffer: &sourceview5::Buffer,
+    current_path: &Rc<RefCell<Option<PathBuf>>>,
+    frontmatter: &Rc<RefCell<Frontmatter>>,
+    title: &adw::WindowTitle,
+) {
+    let action = gio::SimpleAction::new("open-from-wordpress", None);
+    let buffer = buffer.clone();
+    let current_path = current_path.clone();
+    let frontmatter = frontmatter.clone();
+    let title = title.clone();
+    let window_weak = window.downgrade();
+    action.connect_activate(move |_, _| {
+        let Some(window) = window_weak.upgrade() else {
+            return;
+        };
+        let buffer = buffer.clone();
+        let current_path = current_path.clone();
+        let frontmatter = frontmatter.clone();
+        let title = title.clone();
+        importer::open(&window, move |imported| {
+            buffer.set_text(&imported.body);
+            title.set_subtitle(&subtitle_for(None, &imported.frontmatter));
+            *frontmatter.borrow_mut() = imported.frontmatter;
+            *current_path.borrow_mut() = None;
+        });
+    });
+    window.add_action(&action);
+}
+
 fn wire_save_action(
     window: &adw::ApplicationWindow,
     buffer: &sourceview5::Buffer,
@@ -327,13 +369,20 @@ fn wire_save_action(
     window.add_action(&action);
 }
 
-fn wire_properties_action(window: &adw::ApplicationWindow, frontmatter: &Rc<RefCell<Frontmatter>>) {
+fn wire_properties_action(
+    window: &adw::ApplicationWindow,
+    frontmatter: &Rc<RefCell<Frontmatter>>,
+    category_terms: &Rc<RefCell<Vec<String>>>,
+    tag_terms: &Rc<RefCell<Vec<String>>>,
+) {
     let action = gio::SimpleAction::new("properties", None);
     let frontmatter = frontmatter.clone();
+    let category_terms = category_terms.clone();
+    let tag_terms = tag_terms.clone();
     let window_weak = window.downgrade();
     action.connect_activate(move |_, _| {
         if let Some(window) = window_weak.upgrade() {
-            properties::open(&window, frontmatter.clone());
+            properties::open(&window, frontmatter.clone(), category_terms.clone(), tag_terms.clone());
         }
     });
     window.add_action(&action);

@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-09-01
+
+### Added
+
+- Categories/tags cache (`src/termcache.rs`): loaded from disk at startup
+  (`~/.cache/blocksmith/terms.json`) so the properties dialog's
+  autocomplete has data immediately, refreshed automatically in the
+  background at every launch, and refreshable on demand via a button next
+  to "Artikel-Eigenschaften". Replaces the previous per-dialog-open fetch
+  that started empty every time and was discarded on close.
+- "Von WordPress öffnen" (`src/importer.rs`, header bar or Ctrl+Shift+O):
+  lists existing posts on the configured site; picking one fetches its
+  full content and metadata, resolves category/tag ids back to names, and
+  converts the Gutenberg block HTML back to Markdown via the new
+  `gutenberg::gutenberg_to_markdown` (the reverse of
+  `markdown_to_gutenberg`, `crates/gutenberg/src/reverse.rs`) so the
+  article opens as editable Markdown with its `wp_post_id` already set -
+  exporting it afterward updates the same post. The reverse converter is a
+  hand-rolled block-comment scanner (not a general HTML parser), with unit
+  tests round-tripping every block type our forward converter produces,
+  plus a live test creating a real post, fetching it back, and converting
+  it - verifying actual WordPress storage/serving round-trips cleanly, not
+  just in-memory conversion.
+- `wpclient` gained `list_posts`, `get_post`, and `get_term_name` to back
+  the above.
+
 ## [0.5.0] - 2026-09-01
 
 ### Added
@@ -128,7 +154,8 @@ to WordPress.
   Service (GNOME Keyring, or the portal equivalent under Flatpak) via `oo7`,
   never written to disk in plain text.
 
-[Unreleased]: https://github.com/linuxundich/blocksmith/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/linuxundich/blocksmith/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/linuxundich/blocksmith/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/linuxundich/blocksmith/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/linuxundich/blocksmith/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/linuxundich/blocksmith/compare/v0.2.0...v0.3.0

@@ -32,7 +32,14 @@ blocks. Implemented so far:
 - **Document model** — per-article frontmatter (title, slug, status,
   categories, tags, featured image, WordPress post id) stored in the `.md`
   file itself, editable via an "Artikel-Eigenschaften" dialog with
-  autocomplete for existing WordPress categories/tags.
+  autocomplete for existing WordPress categories/tags, backed by an
+  on-disk cache (`src/termcache.rs`) refreshed at startup and on demand.
+- **Von WordPress öffnen** (Ctrl+Shift+O) — pick an existing post from the
+  configured site and edit it as Markdown: `crates/gutenberg`'s reverse
+  converter turns its Gutenberg block HTML back into Markdown, categories/
+  tags are resolved from ids back to names, and the post's id carries over
+  so exporting afterward updates that same post instead of creating a
+  duplicate.
 - **Einstellungen dialog** (`Adw.PreferencesDialog`, Ctrl+,) — currently a
   WordPress-connection page: site URL/username stored in a small config
   file, the Application Password stored in the Secret Service (GNOME

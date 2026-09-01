@@ -48,6 +48,29 @@ pub struct MediaResult {
     pub source_url: String,
 }
 
+#[derive(Debug, Clone)]
+pub struct PostSummary {
+    pub id: u64,
+    pub title: String,
+    pub status: String,
+    pub date: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct PostDetail {
+    pub id: u64,
+    pub title: String,
+    /// Raw Gutenberg block-comment HTML (`content.raw`, which needs
+    /// `context=edit` to get - `content.rendered` has been run through
+    /// WordPress's display filters, which strip the `<!-- wp:... -->`
+    /// comments a block editor needs to reconstruct the blocks).
+    pub content: String,
+    pub status: String,
+    pub slug: String,
+    pub categories: Vec<u64>,
+    pub tags: Vec<u64>,
+}
+
 fn network_error(err: ureq::Error) -> ApiError {
     ApiError {
         status: 0,
@@ -90,6 +113,21 @@ impl Client {
 
     fn endpoint(&self, path: &str) -> String {
         format!("{}/wp-json/wp/v2/{path}", self.base_url)
+    }
+
+    fn get_json(&self, url: &str) -> Result<Value> {
+        let mut response = self
+            .agent
+            .get(url)
+            .header("Authorization", self.auth_header.as_str())
+            .call()
+            .map_err(network_error)?;
+        let status = response.status().as_u16();
+        let body_text = response.body_mut().read_to_string().unwrap_or_default();
+        if !(200..300).contains(&status) {
+            return Err(error_from_body(status, &body_text));
+        }
+        serde_json::from_str(&body_text).map_err(|err| unreadable_response(status, err))
     }
 
     /// Uploads a local file to the media library, returning its id and the
@@ -150,18 +188,7 @@ impl Client {
     /// - fine for a personal blog's category/tag list.
     pub fn list_term_names(&self, taxonomy: &str) -> Result<Vec<String>> {
         let url = format!("{}?per_page=100&_fields=name", self.endpoint(taxonomy));
-        let mut response = self
-            .agent
-            .get(url)
-            .header("Authorization", self.auth_header.as_str())
-            .call()
-            .map_err(network_error)?;
-        let status = response.status().as_u16();
-        let body_text = response.body_mut().read_to_string().unwrap_or_default();
-        if !(200..300).contains(&status) {
-            return Err(error_from_body(status, &body_text));
-        }
-        let value: Value = serde_json::from_str(&body_text).map_err(|err| unreadable_response(status, err))?;
+        let value = self.get_json(&url)?;
         Ok(value
             .as_array()
             .map(|items| {
@@ -171,6 +198,66 @@ impl Client {
                     .collect()
             })
             .unwrap_or_default())
+    }
+
+    /// Resolves a taxonomy term id back to its name (the REST API gives
+    /// posts' categories/tags as ids; opening an existing post for editing
+    /// needs their names for the frontmatter).
+    pub fn get_term_name(&self, taxonomy: &str, id: u64) -> Result<String> {
+        let url = format!("{}?_fields=name", self.endpoint(&format!("{taxonomy}/{id}")));
+        let value = self.get_json(&url)?;
+        Ok(value.get("name").and_then(Value::as_str).unwrap_or_default().to_string())
+    }
+
+    /// Lists the most recent posts (any status the authenticated user can
+    /// see), for the "Von WordPress öffnen" picker. Doesn't paginate beyond
+    /// the first 50 - fine for finding a recent article to edit.
+    pub fn list_posts(&self) -> Result<Vec<PostSummary>> {
+        let url = format!(
+            "{}?per_page=50&orderby=date&order=desc&context=edit&status=publish,future,draft,pending,private&_fields=id,title,status,date",
+            self.endpoint("posts")
+        );
+        let value = self.get_json(&url)?;
+        Ok(value
+            .as_array()
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|item| {
+                        Some(PostSummary {
+                            id: item.get("id")?.as_u64()?,
+                            title: post_title(item),
+                            status: item.get("status").and_then(Value::as_str).unwrap_or_default().to_string(),
+                            date: item.get("date").and_then(Value::as_str).unwrap_or_default().to_string(),
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default())
+    }
+
+    /// Fetches a post's full content (as raw Gutenberg block-comment HTML,
+    /// via `context=edit` - see [`PostDetail::content`]) plus the metadata
+    /// needed to populate the properties dialog after converting it back to
+    /// Markdown.
+    pub fn get_post(&self, id: u64) -> Result<PostDetail> {
+        let url = format!(
+            "{}?context=edit&_fields=id,title,content,status,slug,categories,tags",
+            self.endpoint(&format!("posts/{id}"))
+        );
+        let value = self.get_json(&url)?;
+        let u64_array = |key: &str| -> Vec<u64> {
+            value.get(key).and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_u64).collect()).unwrap_or_default()
+        };
+        Ok(PostDetail {
+            id,
+            title: post_title(&value),
+            content: value.get("content").and_then(|c| c.get("raw")).and_then(Value::as_str).unwrap_or_default().to_string(),
+            status: value.get("status").and_then(Value::as_str).unwrap_or("draft").to_string(),
+            slug: value.get("slug").and_then(Value::as_str).unwrap_or_default().to_string(),
+            categories: u64_array("categories"),
+            tags: u64_array("tags"),
+        })
     }
 
     fn send_post_payload(&self, url: String, payload: &Value) -> Result<PostResult> {
@@ -237,6 +324,17 @@ impl Client {
             .and_then(Value::as_u64)
             .ok_or_else(|| ApiError { status, message: format!("Kein Term-ID für \"{name}\" erhalten") })
     }
+}
+
+/// A post's `title` is `{"raw": "...", "rendered": "..."}` in `context=edit`
+/// responses (and just `{"rendered": "..."}` otherwise) - prefer `raw`
+/// since `rendered` may have HTML entities substituted in.
+fn post_title(post: &Value) -> String {
+    post.get("title")
+        .and_then(|t| t.get("raw").or_else(|| t.get("rendered")))
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string()
 }
 
 /// Minimal percent-encoding for a query parameter value - not a general URL

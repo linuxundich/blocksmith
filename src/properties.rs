@@ -8,10 +8,15 @@ use std::rc::Rc;
 
 use adw::prelude::*;
 
-use crate::autocomplete;
 use crate::document::{parse_list, Frontmatter, PostStatus};
+use crate::{autocomplete, termcache};
 
-pub fn open(parent: &adw::ApplicationWindow, frontmatter: Rc<RefCell<Frontmatter>>) {
+pub fn open(
+    parent: &adw::ApplicationWindow,
+    frontmatter: Rc<RefCell<Frontmatter>>,
+    category_terms: Rc<RefCell<Vec<String>>>,
+    tag_terms: Rc<RefCell<Vec<String>>>,
+) {
     let current = frontmatter.borrow().clone();
 
     let title_row = adw::EntryRow::builder().title("Titel").text(current.title.as_str()).build();
@@ -38,7 +43,19 @@ pub fn open(parent: &adw::ApplicationWindow, frontmatter: Rc<RefCell<Frontmatter
         .selected(selected_index as u32)
         .build();
 
+    let refresh_button = gtk4::Button::from_icon_name("view-refresh-symbolic");
+    refresh_button.set_tooltip_text(Some("Kategorien & Tags von WordPress aktualisieren"));
+    refresh_button.add_css_class("flat");
+    {
+        let category_terms = category_terms.clone();
+        let tag_terms = tag_terms.clone();
+        refresh_button.connect_clicked(move |_| {
+            termcache::spawn_refresh(category_terms.clone(), tag_terms.clone());
+        });
+    }
+
     let group = adw::PreferencesGroup::builder().title("Artikel-Eigenschaften").build();
+    group.set_header_suffix(Some(&refresh_button));
     group.add(&title_row);
     group.add(&slug_row);
     group.add(&status_row);
@@ -46,10 +63,6 @@ pub fn open(parent: &adw::ApplicationWindow, frontmatter: Rc<RefCell<Frontmatter
     group.add(&tags_row);
     group.add(&featured_image_row);
 
-    let category_terms: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
-    let tag_terms: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
-    autocomplete::spawn_term_fetch("categories", category_terms.clone());
-    autocomplete::spawn_term_fetch("tags", tag_terms.clone());
     autocomplete::attach(&categories_row, category_terms);
     autocomplete::attach(&tags_row, tag_terms);
 

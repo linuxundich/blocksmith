@@ -1,17 +1,14 @@
 //! Attaches suggestion-popover autocomplete to a comma-separated `EntryRow`
 //! (used for the categories/tags fields in `properties.rs`), suggesting
-//! from a shared, asynchronously-populated term list fetched from
-//! WordPress (see `spawn_term_fetch` below).
+//! from a shared term list. That list's contents (fetching from WordPress,
+//! on-disk caching, manual refresh) are `termcache`'s concern, not this
+//! module's - this is purely the popover/matching UI wired to whatever
+//! `Rc<RefCell<Vec<String>>>` it's handed.
 
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::sync::mpsc;
-use std::time::Duration;
 
 use adw::prelude::*;
-use gtk4::glib;
-
-use crate::{secrets, wpclient, wpsite};
 
 const MAX_SUGGESTIONS: usize = 8;
 
@@ -84,39 +81,5 @@ pub fn attach(entry: &adw::EntryRow, terms: Rc<RefCell<Vec<String>>>) {
             list_box_for_changed.append(&list_row);
         }
         popover_for_changed.popup();
-    });
-}
-
-/// Fetches existing term names for a taxonomy (`"categories"`/`"tags"`) from
-/// the configured WordPress site on a background thread (see `wpclient`'s
-/// module docs for why it's blocking), filling `terms` once done. A no-op if
-/// no site is configured or the password isn't in the keyring - autocomplete
-/// then just stays empty rather than erroring.
-pub fn spawn_term_fetch(taxonomy: &'static str, terms: Rc<RefCell<Vec<String>>>) {
-    let site = wpsite::load();
-    if site.url.is_empty() {
-        return;
-    }
-
-    let (tx, rx) = mpsc::channel::<Vec<String>>();
-    std::thread::spawn(move || {
-        let names = futures_lite::future::block_on(secrets::load_app_password(&site.url, &site.username))
-            .ok()
-            .flatten()
-            .and_then(|password| {
-                let client = wpclient::Client::new(&site.url, &site.username, &password);
-                client.list_term_names(taxonomy).ok()
-            })
-            .unwrap_or_default();
-        let _ = tx.send(names);
-    });
-
-    glib::timeout_add_local(Duration::from_millis(150), move || match rx.try_recv() {
-        Ok(names) => {
-            *terms.borrow_mut() = names;
-            glib::ControlFlow::Break
-        }
-        Err(mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
-        Err(mpsc::TryRecvError::Disconnected) => glib::ControlFlow::Break,
     });
 }

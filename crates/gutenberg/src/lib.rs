@@ -6,6 +6,9 @@
 
 use pulldown_cmark::{Alignment, CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 
+mod reverse;
+pub use reverse::gutenberg_to_markdown;
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Block {
     Paragraph { html: String },
