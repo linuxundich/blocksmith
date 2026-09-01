@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-01
+
+### Added
+
+- Scroll-sync between editor and preview (`src/preview.rs`, `wire_scroll_sync`
+  in `src/window.rs`): scrolling the editor scrolls the preview to match,
+  keyed by *source line* rather than scroll percentage - each rendered
+  block carries a `data-line` attribute for its starting Markdown line, so
+  a block that renders far taller than its one source line (an image, a
+  large table) doesn't throw off the sync the way a naive proportional
+  mapping would.
+- Spell-checking in the editor via [`libspelling`](https://gitlab.gnome.org/GNOME/libspelling)
+  (the GTK4-native successor to gspell, which was never ported to GTK4):
+  squiggly-underlines misspelled words and adds correction suggestions to
+  the editor's context menu, using the system's hunspell dictionaries.
+- "Einstellungen" (settings) dialog: a proper `Adw.PreferencesDialog`
+  (`src/settings.rs`) replacing the standalone WordPress-connection dialog,
+  which is now one page within it (`connection::build_page`). Reachable
+  from the header bar or Ctrl+, (moved off "Artikel-Eigenschaften", which
+  now has no reserved accelerator, freeing Ctrl+, for its conventional
+  GNOME meaning).
+
 ## [0.3.0] - 2026-09-01
 
 Editor ergonomics and distribution: a formatting toolbar, a document
@@ -95,7 +117,8 @@ to WordPress.
   Service (GNOME Keyring, or the portal equivalent under Flatpak) via `oo7`,
   never written to disk in plain text.
 
-[Unreleased]: https://github.com/linuxundich/blocksmith/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/linuxundich/blocksmith/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/linuxundich/blocksmith/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/linuxundich/blocksmith/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/linuxundich/blocksmith/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/linuxundich/blocksmith/releases/tag/v0.1.0

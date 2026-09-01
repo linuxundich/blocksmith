@@ -7,6 +7,7 @@ mod formatting;
 mod preview;
 mod properties;
 mod secrets;
+mod settings;
 mod stats;
 mod window;
 mod wpclient;
@@ -23,7 +24,7 @@ fn main() -> glib::ExitCode {
     app.set_accels_for_action("win.new", &["<Ctrl>n"]);
     app.set_accels_for_action("win.open", &["<Ctrl>o"]);
     app.set_accels_for_action("win.save", &["<Ctrl>s"]);
-    app.set_accels_for_action("win.properties", &["<Ctrl>comma"]);
+    app.set_accels_for_action("win.settings", &["<Ctrl>comma"]);
     app.set_accels_for_action("win.publish", &["<Ctrl><Shift>p"]);
 
     app.connect_activate(|app| {

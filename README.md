@@ -18,10 +18,13 @@ preview, and publish/update a real WordPress post as native Gutenberg
 blocks. Implemented so far:
 
 - **Split-pane editor** — Markdown editing pane (GtkSourceView, syntax
-  highlighting) with a grouped formatting toolbar (cut/copy/paste; bold/
-  italic/strikethrough with Ctrl+B/I; heading/quote/code/code block; lists;
-  link with Ctrl+K), a debounced live HTML preview, and a "Statistik" tab
-  (word/character/paragraph counts, estimated reading time) alongside it.
+  highlighting, spell-checking via [`libspelling`](https://gitlab.gnome.org/GNOME/libspelling))
+  with a grouped formatting toolbar (cut/copy/paste; bold/italic/
+  strikethrough with Ctrl+B/I; heading/quote/code/code block; lists; link
+  with Ctrl+K), a debounced live HTML preview kept in scroll-sync with the
+  editor (matched by source line, not scroll percentage, so a tall image
+  doesn't throw off the sync), and a "Statistik" tab (word/character/
+  paragraph counts, estimated reading time) alongside it.
 - **Gutenberg block engine** (`crates/gutenberg`) — a standalone, unit-tested
   library that parses Markdown into a block tree and renders it as
   block-comment-annotated HTML (`<!-- wp:paragraph -->...`), independent of
@@ -30,10 +33,11 @@ blocks. Implemented so far:
   categories, tags, featured image, WordPress post id) stored in the `.md`
   file itself, editable via an "Artikel-Eigenschaften" dialog with
   autocomplete for existing WordPress categories/tags.
-- **WordPress connection settings** — site URL/username stored in a small
-  config file; the Application Password is stored in the Secret Service
-  (GNOME Keyring) via [`oo7`](https://crates.io/crates/oo7), never written to
-  disk in plain text.
+- **Einstellungen dialog** (`Adw.PreferencesDialog`, Ctrl+,) — currently a
+  WordPress-connection page: site URL/username stored in a small config
+  file, the Application Password stored in the Secret Service (GNOME
+  Keyring) via [`oo7`](https://crates.io/crates/oo7), never written to disk
+  in plain text.
 - **Publishing** — an "Artikel exportieren" dialog shows the generated
   Gutenberg HTML, then creates/updates the WordPress post via its REST API
   on a background thread, uploading any locally-referenced images to the
@@ -45,8 +49,9 @@ blocks. Implemented so far:
 ## Building & running
 
 Requires a Rust toolchain (stable) and the GTK4/libadwaita/GtkSourceView5/
-WebKitGTK 6.0 development packages (available on any recent GNOME-based
-Linux distribution).
+WebKitGTK 6.0/libspelling development packages (available on any recent
+GNOME-based Linux distribution). Spell-checking needs at least one hunspell
+dictionary installed for it to have anything to check against.
 
 ```sh
 cargo build

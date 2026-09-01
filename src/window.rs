@@ -8,7 +8,7 @@ use gtk4::{gio, glib};
 use webkit6::prelude::*;
 
 use crate::document::{Document, Frontmatter};
-use crate::{connection, document, editor, export, formatting, preview, properties, stats};
+use crate::{document, editor, export, formatting, preview, properties, settings, stats};
 
 const DEBOUNCE_MS: u64 = 250;
 
@@ -72,9 +72,9 @@ pub fn build(app: &adw::Application) -> adw::ApplicationWindow {
     properties_button.set_tooltip_text(Some("Artikel-Eigenschaften"));
     properties_button.set_action_name(Some("win.properties"));
 
-    let connection_button = gtk4::Button::from_icon_name("network-server-symbolic");
-    connection_button.set_tooltip_text(Some("WordPress-Verbindung"));
-    connection_button.set_action_name(Some("win.wordpress-connection"));
+    let settings_button = gtk4::Button::from_icon_name("preferences-system-symbolic");
+    settings_button.set_tooltip_text(Some("Einstellungen (Strg+,)"));
+    settings_button.set_action_name(Some("win.settings"));
 
     let publish_button = gtk4::Button::from_icon_name("send-to-symbolic");
     publish_button.set_tooltip_text(Some("Artikel exportieren (Strg+Umschalt+P)"));
@@ -86,7 +86,7 @@ pub fn build(app: &adw::Application) -> adw::ApplicationWindow {
     header_bar.pack_start(&new_button);
     header_bar.pack_start(&open_button);
     header_bar.pack_start(&save_button);
-    header_bar.pack_end(&connection_button);
+    header_bar.pack_end(&settings_button);
     header_bar.pack_end(&properties_button);
     header_bar.pack_end(&publish_button);
 
@@ -109,11 +109,12 @@ pub fn build(app: &adw::Application) -> adw::ApplicationWindow {
     let frontmatter: Rc<RefCell<Frontmatter>> = Rc::new(RefCell::new(Frontmatter::default()));
 
     wire_live_preview(&buffer, &web_view, &stats_view);
+    wire_scroll_sync(&editor_scroller, &view, &web_view);
     wire_new_action(&window, &buffer, &current_path, &frontmatter, &title);
     wire_open_action(&window, &buffer, &current_path, &frontmatter, &title, &toast_overlay);
     wire_save_action(&window, &buffer, &current_path, &frontmatter, &title, &toast_overlay);
     wire_properties_action(&window, &frontmatter);
-    wire_connection_action(&window);
+    wire_settings_action(&window);
     wire_publish_action(&window, &buffer, &current_path, &frontmatter);
 
     window
@@ -157,6 +158,45 @@ fn wire_live_preview(buffer: &sourceview5::Buffer, web_view: &webkit6::WebView, 
 
     web_view.load_html(&preview::render_html(""), None);
     stats_view.update("");
+}
+
+const SCROLL_SYNC_DEBOUNCE_MS: u64 = 80;
+
+/// Drives the preview's scroll position from the editor's: on every editor
+/// scroll, finds the source line currently at the top of the editor's
+/// viewport and asks the preview (via `preview::render_html`'s embedded
+/// `scrollToLine`) to bring the block starting at or before that line to
+/// its own top - matching by source line rather than by scroll percentage,
+/// since a block's rendered height doesn't correspond to its line count
+/// (an image is one source line but can render far taller than that).
+fn wire_scroll_sync(scroller: &gtk4::ScrolledWindow, view: &sourceview5::View, web_view: &webkit6::WebView) {
+    let debounce: Rc<RefCell<Option<glib::SourceId>>> = Rc::new(RefCell::new(None));
+    let view = view.clone();
+    let web_view = web_view.clone();
+    scroller.vadjustment().connect_value_changed(move |_| {
+        if let Some(id) = debounce.borrow_mut().take() {
+            id.remove();
+        }
+        let view = view.clone();
+        let web_view = web_view.clone();
+        let debounce_inner = debounce.clone();
+        let id = glib::timeout_add_local(Duration::from_millis(SCROLL_SYNC_DEBOUNCE_MS), move || {
+            let rect = view.visible_rect();
+            if let Some(iter) = view.iter_at_location(rect.x(), rect.y()) {
+                let line = iter.line() + 1;
+                web_view.evaluate_javascript(
+                    &format!("window.scrollToLine && window.scrollToLine({line});"),
+                    None,
+                    None,
+                    gio::Cancellable::NONE,
+                    |_| {},
+                );
+            }
+            *debounce_inner.borrow_mut() = None;
+            glib::ControlFlow::Break
+        });
+        *debounce.borrow_mut() = Some(id);
+    });
 }
 
 fn wire_new_action(
@@ -299,12 +339,12 @@ fn wire_properties_action(window: &adw::ApplicationWindow, frontmatter: &Rc<RefC
     window.add_action(&action);
 }
 
-fn wire_connection_action(window: &adw::ApplicationWindow) {
-    let action = gio::SimpleAction::new("wordpress-connection", None);
+fn wire_settings_action(window: &adw::ApplicationWindow) {
+    let action = gio::SimpleAction::new("settings", None);
     let window_weak = window.downgrade();
     action.connect_activate(move |_, _| {
         if let Some(window) = window_weak.upgrade() {
-            connection::open(&window);
+            settings::open(&window);
         }
     });
     window.add_action(&action);

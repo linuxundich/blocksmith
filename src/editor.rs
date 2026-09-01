@@ -1,7 +1,10 @@
 //! The left-hand Markdown editing pane: a `GtkSourceView` with markdown
-//! syntax highlighting inside a scrolled window.
+//! syntax highlighting inside a scrolled window, plus spell-checking via
+//! `libspelling` (the GTK4-native successor to gspell, which never got a
+//! GTK4 port).
 
 use gtk4::prelude::*;
+use libspelling as spelling;
 use sourceview5::prelude::*;
 
 pub fn build() -> (gtk4::ScrolledWindow, sourceview5::View, sourceview5::Buffer) {
@@ -26,6 +29,14 @@ pub fn build() -> (gtk4::ScrolledWindow, sourceview5::View, sourceview5::Buffer)
     view.set_right_margin(12);
     view.set_hexpand(true);
     view.set_vexpand(true);
+
+    let checker = spelling::Checker::default();
+    let adapter = spelling::TextBufferAdapter::new(&buffer, &checker);
+    adapter.set_enabled(true);
+    // Both kept alive by the view: inserted action groups and the buffer's
+    // own signal connections hold their own strong references.
+    view.insert_action_group("spelling", Some(&adapter));
+    view.set_extra_menu(Some(&adapter.menu_model()));
 
     let scroller = gtk4::ScrolledWindow::builder()
         .hexpand(true)
