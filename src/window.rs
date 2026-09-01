@@ -8,7 +8,7 @@ use gtk4::{gio, glib};
 use webkit6::prelude::*;
 
 use crate::document::{Document, Frontmatter};
-use crate::{document, editor, export, formatting, importer, preview, properties, settings, stats, termcache};
+use crate::{chat, document, editor, export, formatting, importer, preview, properties, settings, stats, termcache};
 
 const DEBOUNCE_MS: u64 = 250;
 
@@ -25,9 +25,12 @@ pub fn build(app: &adw::Application) -> adw::ApplicationWindow {
     editor_pane.append(&editor_scroller);
     editor_scroller.set_vexpand(true);
 
+    let chat_view = chat::ChatView::new();
+
     let view_stack = adw::ViewStack::new();
     view_stack.add_titled_with_icon(&web_view, Some("preview"), "Vorschau", "view-reveal-symbolic");
     view_stack.add_titled_with_icon(&stats_view.widget, Some("stats"), "Statistik", "view-list-symbolic");
+    view_stack.add_titled_with_icon(&chat_view.widget, Some("chat"), "Chat", "chat-symbolic");
     let view_switcher = adw::ViewSwitcher::builder().stack(&view_stack).policy(adw::ViewSwitcherPolicy::Wide).build();
     let switcher_bar = gtk4::Box::builder()
         .orientation(gtk4::Orientation::Horizontal)

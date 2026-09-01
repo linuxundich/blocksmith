@@ -1,9 +1,14 @@
 mod autocomplete;
+mod chat;
+mod chatconfig;
+mod chatsettings;
 mod connection;
+mod default_prompt;
 mod document;
 mod editor;
 mod export;
 mod formatting;
+mod gemini;
 mod importer;
 mod preview;
 mod properties;
@@ -31,9 +36,28 @@ fn main() -> glib::ExitCode {
     app.set_accels_for_action("win.publish", &["<Ctrl><Shift>p"]);
 
     app.connect_activate(|app| {
+        load_chat_bubble_css();
         let win = window::build(app);
         win.present();
     });
 
     app.run()
+}
+
+/// Chat bubble colors use libadwaita's named theme colors so they adapt to
+/// light/dark mode automatically, rather than hardcoding colors that would
+/// only look right in one theme.
+fn load_chat_bubble_css() {
+    let Some(display) = gtk4::gdk::Display::default() else {
+        return;
+    };
+    let provider = gtk4::CssProvider::new();
+    provider.load_from_string(
+        "
+        .chat-bubble { padding: 8px 12px; border-radius: 12px; }
+        .chat-bubble-user { background-color: @accent_bg_color; color: @accent_fg_color; }
+        .chat-bubble-model { background-color: alpha(currentColor, 0.08); }
+        ",
+    );
+    gtk4::style_context_add_provider_for_display(&display, &provider, gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION);
 }

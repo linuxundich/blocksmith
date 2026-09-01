@@ -23,8 +23,9 @@ blocks. Implemented so far:
   strikethrough with Ctrl+B/I; heading/quote/code/code block; lists; link
   with Ctrl+K), a debounced live HTML preview kept in scroll-sync with the
   editor (matched by source line, not scroll percentage, so a tall image
-  doesn't throw off the sync), and a "Statistik" tab (word/character/
-  paragraph counts, estimated reading time) alongside it.
+  doesn't throw off the sync), a "Statistik" tab (word/character/paragraph
+  counts, estimated reading time), and a "Chat" tab for a Gemini-backed
+  writing assistant (message bubbles, configurable system prompt).
 - **Gutenberg block engine** (`crates/gutenberg`) — a standalone, unit-tested
   library that parses Markdown into a block tree and renders it as
   block-comment-annotated HTML (`<!-- wp:paragraph -->...`), independent of
@@ -40,11 +41,13 @@ blocks. Implemented so far:
   tags are resolved from ids back to names, and the post's id carries over
   so exporting afterward updates that same post instead of creating a
   duplicate.
-- **Einstellungen dialog** (`Adw.PreferencesDialog`, Ctrl+,) — currently a
-  WordPress-connection page: site URL/username stored in a small config
-  file, the Application Password stored in the Secret Service (GNOME
-  Keyring) via [`oo7`](https://crates.io/crates/oo7), never written to disk
-  in plain text.
+- **Einstellungen dialog** (`Adw.PreferencesDialog`, Ctrl+,) — a
+  WordPress-connection page (site URL/username in a small config file, the
+  Application Password in the Secret Service via
+  [`oo7`](https://crates.io/crates/oo7), never written to disk in plain
+  text) and a "KI-Chat" page (Gemini API key, likewise in the Secret
+  Service; model id; and a fully editable, resettable system prompt for
+  the chat tab).
 - **Publishing** — an "Artikel exportieren" dialog shows the generated
   Gutenberg HTML, then creates/updates the WordPress post via its REST API
   on a background thread, uploading any locally-referenced images to the

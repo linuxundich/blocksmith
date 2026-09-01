@@ -38,6 +38,28 @@ pub async fn load_app_password(url: &str, username: &str) -> oo7::Result<Option<
     Ok(Some(String::from_utf8_lossy(&secret).to_string()))
 }
 
+fn gemini_attributes() -> HashMap<&'static str, &'static str> {
+    HashMap::from([("service", SERVICE_ATTR), ("kind", "gemini-api-key")])
+}
+
+pub async fn store_gemini_api_key(key: &str) -> oo7::Result<()> {
+    let keyring = oo7::Keyring::new().await?;
+    keyring.unlock().await?;
+    keyring.create_item("Blocksmith Gemini API Key", &gemini_attributes(), key, true).await
+}
+
+pub async fn load_gemini_api_key() -> oo7::Result<Option<String>> {
+    let keyring = oo7::Keyring::new().await?;
+    keyring.unlock().await?;
+    let items = keyring.search_items(&gemini_attributes()).await?;
+    let Some(item) = items.first() else {
+        return Ok(None);
+    };
+    item.unlock().await?;
+    let secret = item.secret().await?;
+    Ok(Some(String::from_utf8_lossy(&secret).to_string()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -66,6 +88,23 @@ mod tests {
                 .expect("cleanup delete failed");
 
             let after_delete = load_app_password(url, username).await.expect("load after delete failed");
+            assert_eq!(after_delete, None);
+        });
+    }
+
+    #[test]
+    #[ignore]
+    fn gemini_api_key_round_trip_against_real_keyring() {
+        futures_lite::future::block_on(async {
+            let key = "test-gemini-api-key-not-real";
+            store_gemini_api_key(key).await.expect("store failed");
+            let loaded = load_gemini_api_key().await.expect("load failed");
+            assert_eq!(loaded.as_deref(), Some(key));
+
+            let keyring = oo7::Keyring::new().await.expect("keyring open failed");
+            keyring.delete(&gemini_attributes()).await.expect("cleanup delete failed");
+
+            let after_delete = load_gemini_api_key().await.expect("load after delete failed");
             assert_eq!(after_delete, None);
         });
     }

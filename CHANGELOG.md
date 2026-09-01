@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-09-01
+
+### Added
+
+- Gemini-backed chat in a third "Chat" tab (next to "Vorschau"/"Statistik"),
+  with message bubbles (`src/chat.rs`) - user messages right-aligned,
+  Gemini's replies left-aligned, styled via libadwaita's named theme
+  colors so they adapt to light/dark mode. Sends run on a background
+  thread (`src/gemini.rs`, blocking `ureq` client for the Generative
+  Language API, same rationale as `wpclient` for not using `reqwest`/
+  `tokio`), keeping the full conversation history as context for each
+  request.
+- A "KI-Chat" page in Einstellungen (`src/chatsettings.rs`): Gemini API key
+  (stored in the Secret Service via `secrets.rs`, never in plain text) and
+  model id, plus a full editable/resettable system prompt
+  (`src/chatconfig.rs`) - auto-saved as you type, with a "Zurücksetzen"
+  button (enabled only when the prompt has actually been customized) that
+  reverts to the built-in default. That default (`src/default_prompt.rs`)
+  is a full editorial style guide for an anonymous German-language Linux/
+  Open-Source tech writer, provided by the user.
+
 ## [0.6.0] - 2026-09-01
 
 ### Added
@@ -154,7 +175,8 @@ to WordPress.
   Service (GNOME Keyring, or the portal equivalent under Flatpak) via `oo7`,
   never written to disk in plain text.
 
-[Unreleased]: https://github.com/linuxundich/blocksmith/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/linuxundich/blocksmith/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/linuxundich/blocksmith/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/linuxundich/blocksmith/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/linuxundich/blocksmith/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/linuxundich/blocksmith/compare/v0.3.0...v0.4.0
