@@ -1,0 +1,20 @@
+[workspace]
+members = ["crates/gutenberg"]
+resolver = "2"
+
+[package]
+name = "blocksmith"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "blocksmith"
+path = "src/main.rs"
+
+[dependencies]
+gtk4 = { version = "0.11", features = ["v4_14"] }
+adw = { package = "libadwaita", version = "0.9", features = ["v1_5"] }
+sourceview5 = "0.11"
+webkit6 = "0.6"
+pulldown-cmark = "0.13"
+gutenberg = { path = "crates/gutenberg" }

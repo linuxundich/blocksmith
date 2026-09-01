@@ -1,0 +1,37 @@
+//! The left-hand Markdown editing pane: a `GtkSourceView` with markdown
+//! syntax highlighting inside a scrolled window.
+
+use gtk4::prelude::*;
+use sourceview5::prelude::*;
+
+pub fn build() -> (gtk4::ScrolledWindow, sourceview5::View, sourceview5::Buffer) {
+    let buffer = sourceview5::Buffer::new(None::<&gtk4::TextTagTable>);
+
+    if let Some(lang) = sourceview5::LanguageManager::default().language("markdown") {
+        buffer.set_language(Some(&lang));
+    }
+    buffer.set_highlight_syntax(true);
+
+    if let Some(scheme) = sourceview5::StyleSchemeManager::default().scheme("Adwaita") {
+        buffer.set_style_scheme(Some(&scheme));
+    }
+
+    let view = sourceview5::View::with_buffer(&buffer);
+    view.set_show_line_numbers(true);
+    view.set_wrap_mode(gtk4::WrapMode::WordChar);
+    view.set_monospace(true);
+    view.set_top_margin(8);
+    view.set_bottom_margin(8);
+    view.set_left_margin(12);
+    view.set_right_margin(12);
+    view.set_hexpand(true);
+    view.set_vexpand(true);
+
+    let scroller = gtk4::ScrolledWindow::builder()
+        .hexpand(true)
+        .vexpand(true)
+        .child(&view)
+        .build();
+
+    (scroller, view, buffer)
+}

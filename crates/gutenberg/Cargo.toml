@@ -1,0 +1,8 @@
+[package]
+name = "gutenberg"
+version = "0.1.0"
+edition = "2021"
+description = "Markdown to WordPress Gutenberg block-comment HTML conversion"
+
+[dependencies]
+pulldown-cmark = "0.13"
