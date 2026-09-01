@@ -45,21 +45,25 @@ pub fn build(app: &adw::Application) -> adw::ApplicationWindow {
     }
     // `Adw.InlineViewSwitcher` renders all tabs as one seamless linked pill
     // (unlike `Adw.ViewSwitcher`, which only highlights the active tab and
-    // leaves the others as loose, ungrouped buttons) - packed at the start
-    // rather than used as the header bar's centered title widget, so it
-    // sits left-aligned the same way it does in the reference design.
+    // leaves the others as loose, ungrouped buttons). Held in a plain
+    // `Gtk.Box` with the exact same margins/spacing as `formatting::build`'s
+    // toolbar - not an `Adw.HeaderBar`, which carries its own themed
+    // background and height that never quite matched the editor's toolbar
+    // (and differently so across themes/styles) - so the two toolbar rows
+    // above each pane read as one consistent design regardless of theme.
     let view_switcher = adw::InlineViewSwitcher::builder().stack(&view_stack).build();
-    let switcher_header = adw::HeaderBar::new();
-    switcher_header.pack_start(&view_switcher);
-    switcher_header.set_show_start_title_buttons(false);
-    switcher_header.set_show_end_title_buttons(false);
-    // Without an explicit title widget, Adw.HeaderBar falls back to
-    // showing the window's own title ("Blocksmith") centered here, which
-    // then reads as a stray extra segment next to the pill switcher.
-    switcher_header.set_title_widget(Some(&gtk4::Label::new(None)));
+    let switcher_bar = gtk4::Box::builder()
+        .orientation(gtk4::Orientation::Horizontal)
+        .spacing(8)
+        .margin_top(6)
+        .margin_bottom(6)
+        .margin_start(6)
+        .margin_end(6)
+        .build();
+    switcher_bar.append(&view_switcher);
 
     let right_pane = gtk4::Box::builder().orientation(gtk4::Orientation::Vertical).build();
-    right_pane.append(&switcher_header);
+    right_pane.append(&switcher_bar);
     right_pane.append(&gtk4::Separator::new(gtk4::Orientation::Horizontal));
     right_pane.append(&view_stack);
     view_stack.set_vexpand(true);

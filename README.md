@@ -25,9 +25,9 @@ blocks. Implemented so far:
   editor (matched by source line, not scroll percentage, so a tall image
   doesn't throw off the sync), and a footer status bar with word count and
   reading time for the whole article - plus the same two numbers for the
-  current selection, whenever one is active. The right pane's tabs (hosted
-  in an `Adw.HeaderBar`-based `Adw.InlineViewSwitcher`, rendering all tabs
-  as one seamless linked pill) are "Vorschau" (follows the app's light/dark
+  current selection, whenever one is active. The right pane's tabs (an
+  `Adw.InlineViewSwitcher`, rendering all tabs as one seamless linked
+  pill, in a toolbar row matching the editor's) are "Vorschau" (follows the app's light/dark
   mode, with a choice of Modern/Klassisch/Sepia typographic styles picked
   in Einstellungen), "Gutenberg-Code" (the exact block HTML that would be published),
   "Statistik" (word/character/paragraph counts, estimated reading time),

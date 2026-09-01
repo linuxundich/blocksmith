@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.10.3] - 2026-09-01
+
+### Fixed
+
+- The toolbar row above the preview tabs didn't match the one above the
+  editor - it used `Adw.HeaderBar` (its own themed background and height)
+  while the editor's is a plain `Gtk.Box`, so the two never quite lined up
+  (background color, row height, and the separator line beneath each) and
+  the mismatch varied by theme/style. Replaced the `Adw.HeaderBar` with a
+  plain `Gtk.Box` using the exact same margins as the editor's toolbar, so
+  both rows are now visually identical in every theme.
+
 ## [0.10.2] - 2026-09-01
 
 ### Fixed
