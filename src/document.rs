@@ -66,6 +66,12 @@ pub struct Frontmatter {
     /// Set once the document has been published/updated via the WordPress
     /// REST API (see M5), so re-exporting updates the same post.
     pub wp_post_id: Option<u64>,
+    /// The WordPress media id of the post's *current* featured image, when
+    /// the document was opened from an existing post (`importer.rs`) - not
+    /// user-editable. `featured_image` is a local path to *upload as a new*
+    /// featured image; this carries the existing remote one through
+    /// unchanged on re-export until the user actually sets `featured_image`.
+    pub featured_media_id: Option<u64>,
 }
 
 impl Frontmatter {
@@ -130,6 +136,7 @@ pub fn parse(input: &str) -> Document {
                 frontmatter.featured_image = (!value.is_empty()).then(|| unquote(value));
             }
             "wp_post_id" => frontmatter.wp_post_id = value.parse::<u64>().ok(),
+            "wp_featured_media_id" => frontmatter.featured_media_id = value.parse::<u64>().ok(),
             _ => {}
         }
     }
@@ -163,6 +170,9 @@ pub fn serialize(doc: &Document) -> String {
     }
     if let Some(id) = fm.wp_post_id {
         out.push_str(&format!("wp_post_id: {id}\n"));
+    }
+    if let Some(id) = fm.featured_media_id {
+        out.push_str(&format!("wp_featured_media_id: {id}\n"));
     }
     out.push_str("---\n\n");
     out.push_str(&doc.body);
@@ -228,6 +238,7 @@ mod tests {
                      tags: [\"gtk\", \"wordpress\"]\n\
                      featured_image: \"/tmp/cat.png\"\n\
                      wp_post_id: 42\n\
+                     wp_featured_media_id: 7\n\
                      ---\n\
                      \n\
                      Body text here.\n";
@@ -239,6 +250,7 @@ mod tests {
         assert_eq!(doc.frontmatter.tags, vec!["gtk", "wordpress"]);
         assert_eq!(doc.frontmatter.featured_image.as_deref(), Some("/tmp/cat.png"));
         assert_eq!(doc.frontmatter.wp_post_id, Some(42));
+        assert_eq!(doc.frontmatter.featured_media_id, Some(7));
         assert_eq!(doc.body, "Body text here.\n");
     }
 
@@ -262,6 +274,7 @@ mod tests {
                 tags: vec!["one".to_string()],
                 featured_image: None,
                 wp_post_id: Some(7),
+                featured_media_id: Some(99),
             },
             body: "Some **body**.\n".to_string(),
         };

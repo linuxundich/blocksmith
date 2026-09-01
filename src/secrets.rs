@@ -38,20 +38,25 @@ pub async fn load_app_password(url: &str, username: &str) -> oo7::Result<Option<
     Ok(Some(String::from_utf8_lossy(&secret).to_string()))
 }
 
-fn gemini_attributes() -> HashMap<&'static str, &'static str> {
-    HashMap::from([("service", SERVICE_ATTR), ("kind", "gemini-api-key")])
+fn llm_attributes(provider_id: &str) -> HashMap<&'static str, &str> {
+    HashMap::from([("service", SERVICE_ATTR), ("kind", "llm-api-key"), ("provider", provider_id)])
 }
 
-pub async fn store_gemini_api_key(key: &str) -> oo7::Result<()> {
+/// Stores the API key for one chat provider (`llm::Provider::id()`) -
+/// Gemini, ChatGPT, and Claude each get their own keyring entry, since a
+/// user might have accounts (and keys) with more than one.
+pub async fn store_llm_api_key(provider_id: &str, key: &str) -> oo7::Result<()> {
     let keyring = oo7::Keyring::new().await?;
     keyring.unlock().await?;
-    keyring.create_item("Blocksmith Gemini API Key", &gemini_attributes(), key, true).await
+    keyring
+        .create_item(&format!("Blocksmith {provider_id} API Key"), &llm_attributes(provider_id), key, true)
+        .await
 }
 
-pub async fn load_gemini_api_key() -> oo7::Result<Option<String>> {
+pub async fn load_llm_api_key(provider_id: &str) -> oo7::Result<Option<String>> {
     let keyring = oo7::Keyring::new().await?;
     keyring.unlock().await?;
-    let items = keyring.search_items(&gemini_attributes()).await?;
+    let items = keyring.search_items(&llm_attributes(provider_id)).await?;
     let Some(item) = items.first() else {
         return Ok(None);
     };
@@ -94,17 +99,21 @@ mod tests {
 
     #[test]
     #[ignore]
-    fn gemini_api_key_round_trip_against_real_keyring() {
+    fn llm_api_key_round_trip_against_real_keyring() {
         futures_lite::future::block_on(async {
-            let key = "test-gemini-api-key-not-real";
-            store_gemini_api_key(key).await.expect("store failed");
-            let loaded = load_gemini_api_key().await.expect("load failed");
+            let key = "test-llm-api-key-not-real";
+            store_llm_api_key("gemini", key).await.expect("store failed");
+            let loaded = load_llm_api_key("gemini").await.expect("load failed");
             assert_eq!(loaded.as_deref(), Some(key));
 
-            let keyring = oo7::Keyring::new().await.expect("keyring open failed");
-            keyring.delete(&gemini_attributes()).await.expect("cleanup delete failed");
+            // A different provider's key is a separate keyring entry.
+            let no_openai_key = load_llm_api_key("openai").await.expect("load failed");
+            assert_eq!(no_openai_key, None);
 
-            let after_delete = load_gemini_api_key().await.expect("load after delete failed");
+            let keyring = oo7::Keyring::new().await.expect("keyring open failed");
+            keyring.delete(&llm_attributes("gemini")).await.expect("cleanup delete failed");
+
+            let after_delete = load_llm_api_key("gemini").await.expect("load after delete failed");
             assert_eq!(after_delete, None);
         });
     }

@@ -23,9 +23,13 @@ blocks. Implemented so far:
   strikethrough with Ctrl+B/I; heading/quote/code/code block; lists; link
   with Ctrl+K), a debounced live HTML preview kept in scroll-sync with the
   editor (matched by source line, not scroll percentage, so a tall image
-  doesn't throw off the sync), a "Statistik" tab (word/character/paragraph
-  counts, estimated reading time), and a "Chat" tab for a Gemini-backed
-  writing assistant (message bubbles, configurable system prompt).
+  doesn't throw off the sync). The right pane's tabs (hosted in a proper
+  `Adw.HeaderBar`-based `ViewSwitcher`, GNOME's standard grouped-pill
+  pattern) are "Vorschau", "Gutenberg-Code" (the exact block HTML that
+  would be published), "Statistik" (word/character/paragraph counts,
+  estimated reading time), and "Chat" - a writing assistant with message
+  bubbles, backed by Gemini, ChatGPT, Claude, or Ollama (self-hosted, no
+  API key), switchable per-provider in Einstellungen.
 - **Gutenberg block engine** (`crates/gutenberg`) — a standalone, unit-tested
   library that parses Markdown into a block tree and renders it as
   block-comment-annotated HTML (`<!-- wp:paragraph -->...`), independent of
@@ -41,13 +45,17 @@ blocks. Implemented so far:
   tags are resolved from ids back to names, and the post's id carries over
   so exporting afterward updates that same post instead of creating a
   duplicate.
-- **Einstellungen dialog** (`Adw.PreferencesDialog`, Ctrl+,) — a
-  WordPress-connection page (site URL/username in a small config file, the
-  Application Password in the Secret Service via
-  [`oo7`](https://crates.io/crates/oo7), never written to disk in plain
-  text) and a "KI-Chat" page (Gemini API key, likewise in the Secret
-  Service; model id; and a fully editable, resettable system prompt for
-  the chat tab).
+- **Einstellungen dialog** (`Adw.PreferencesDialog`, Ctrl+,) — an
+  "Erscheinungsbild" page (light/dark/follow-system, and an editor
+  color-scheme picker using GtkSourceView's own swatch-grid widget, the
+  same one GNOME Builder uses), a WordPress-connection page (site
+  URL/username in a small config file, the Application Password in the
+  Secret Service via [`oo7`](https://crates.io/crates/oo7), never written
+  to disk in plain text), and a "KI-Chat" page (a provider picker for
+  Gemini/ChatGPT/Claude/Ollama, each with its own API key in the Secret
+  Service and its own model id, Ollama additionally getting a
+  configurable base URL; plus a fully editable, resettable system prompt
+  shared across all providers).
 - **Publishing** — an "Artikel exportieren" dialog shows the generated
   Gutenberg HTML, then creates/updates the WordPress post via its REST API
   on a background thread, uploading any locally-referenced images to the

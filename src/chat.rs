@@ -1,7 +1,8 @@
-//! The "Chat" tab: a Gemini-backed chat pane with message bubbles. Sends
-//! run on a background thread (see `gemini.rs`'s module docs for why),
-//! polled back via the same thread+mpsc-channel+`glib::timeout_add_local`
-//! pattern used throughout this app's WordPress-facing dialogs.
+//! The "Chat" tab: an LLM-backed chat pane (Gemini/ChatGPT/Claude/Ollama,
+//! whichever is active in the KI-Chat settings) with message bubbles. Sends
+//! run on a background thread (see `llm.rs`'s module docs for why), polled
+//! back via the same thread+mpsc-channel+`glib::timeout_add_local` pattern
+//! used throughout this app's WordPress-facing dialogs.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -11,7 +12,8 @@ use std::time::Duration;
 use adw::prelude::*;
 use gtk4::glib;
 
-use crate::{chatconfig, gemini, secrets};
+use crate::llm;
+use crate::{chatconfig, secrets};
 
 pub struct ChatView {
     pub widget: gtk4::Widget,
@@ -29,7 +31,7 @@ impl ChatView {
             .build();
         let scroller = gtk4::ScrolledWindow::builder().child(&messages_box).vexpand(true).build();
 
-        let entry = gtk4::Entry::builder().placeholder_text("Nachricht an Gemini …").hexpand(true).build();
+        let entry = gtk4::Entry::builder().placeholder_text("Nachricht an die KI …").hexpand(true).build();
         let send_button = gtk4::Button::from_icon_name("mail-send-symbolic");
         send_button.add_css_class("suggested-action");
         send_button.set_tooltip_text(Some("Senden (Enter)"));
@@ -57,7 +59,7 @@ impl ChatView {
         root.append(&status_label);
         root.append(&input_row);
 
-        let history: Rc<RefCell<Vec<gemini::ChatMessage>>> = Rc::new(RefCell::new(Vec::new()));
+        let history: Rc<RefCell<Vec<llm::ChatMessage>>> = Rc::new(RefCell::new(Vec::new()));
 
         let send: Rc<dyn Fn()> = {
             let entry = entry.clone();
@@ -74,30 +76,42 @@ impl ChatView {
                 entry.set_text("");
                 append_bubble(&messages_box, &text, true);
                 scroll_to_bottom(&scroller);
-                history.borrow_mut().push(gemini::ChatMessage {
-                    role: gemini::Role::User,
+                history.borrow_mut().push(llm::ChatMessage {
+                    role: llm::Role::User,
                     text,
                 });
 
                 entry.set_sensitive(false);
                 send_button.set_sensitive(false);
-                status_label.set_label("Gemini denkt nach …");
-                status_label.set_visible(true);
 
-                let model = chatconfig::load_model();
+                let config = chatconfig::load_provider_config();
+                let provider = config.active;
+                let model = config.model_for(provider).to_string();
+                let base_url = config.ollama_base_url.clone();
                 let system_prompt = chatconfig::load_system_prompt();
                 let history_snapshot = history.borrow().clone();
 
+                status_label.set_label(&format!("{} denkt nach …", provider.label()));
+                status_label.set_visible(true);
+
                 let (tx, rx) = mpsc::channel::<Result<String, String>>();
                 std::thread::spawn(move || {
-                    let outcome = futures_lite::future::block_on(secrets::load_gemini_api_key())
-                        .map_err(|err| err.to_string())
-                        .and_then(|maybe_key| {
-                            maybe_key.ok_or_else(|| "Kein Gemini API-Key in den Einstellungen hinterlegt.".to_string())
-                        })
-                        .and_then(|key| {
-                            gemini::Client::new(&key, &model).send(&system_prompt, &history_snapshot).map_err(|err| err.to_string())
-                        });
+                    let outcome = if provider.needs_api_key() {
+                        futures_lite::future::block_on(secrets::load_llm_api_key(provider.id()))
+                            .map_err(|err| err.to_string())
+                            .and_then(|maybe_key| {
+                                maybe_key.ok_or_else(|| format!("Kein {}-API-Key in den Einstellungen hinterlegt.", provider.label()))
+                            })
+                            .and_then(|key| {
+                                llm::Client::new(provider, &key, &model, &base_url)
+                                    .send(&system_prompt, &history_snapshot)
+                                    .map_err(|err| err.to_string())
+                            })
+                    } else {
+                        llm::Client::new(provider, "", &model, &base_url)
+                            .send(&system_prompt, &history_snapshot)
+                            .map_err(|err| err.to_string())
+                    };
                     let _ = tx.send(outcome);
                 });
 
@@ -111,8 +125,8 @@ impl ChatView {
                     Ok(Ok(reply)) => {
                         append_bubble(&messages_box, &reply, false);
                         scroll_to_bottom(&scroller);
-                        history.borrow_mut().push(gemini::ChatMessage {
-                            role: gemini::Role::Model,
+                        history.borrow_mut().push(llm::ChatMessage {
+                            role: llm::Role::Model,
                             text: reply,
                         });
                         status_label.set_visible(false);

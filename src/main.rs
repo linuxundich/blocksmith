@@ -1,15 +1,17 @@
+mod appearance;
 mod autocomplete;
 mod chat;
 mod chatconfig;
 mod chatsettings;
+mod codeview;
 mod connection;
 mod default_prompt;
 mod document;
 mod editor;
 mod export;
 mod formatting;
-mod gemini;
 mod importer;
+mod llm;
 mod preview;
 mod properties;
 mod secrets;
@@ -36,6 +38,7 @@ fn main() -> glib::ExitCode {
     app.set_accels_for_action("win.publish", &["<Ctrl><Shift>p"]);
 
     app.connect_activate(|app| {
+        appearance::apply_saved_color_scheme();
         load_chat_bubble_css();
         let win = window::build(app);
         win.present();

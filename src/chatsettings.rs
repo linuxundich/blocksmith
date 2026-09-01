@@ -1,6 +1,7 @@
-//! The "KI-Chat" page of the Einstellungen dialog: Gemini API key (a
-//! secret, stored via `secrets.rs`), model id, and the editable/resettable
-//! system prompt (persisted via `chatconfig.rs`).
+//! The "KI-Chat" page of the Einstellungen dialog: provider selection
+//! (Gemini/ChatGPT/Claude/Ollama), that provider's API key (a secret,
+//! stored via `secrets.rs`) and model id, Ollama's base URL, and the
+//! editable/resettable system prompt (persisted via `chatconfig.rs`).
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -9,20 +10,34 @@ use std::time::Duration;
 use adw::prelude::*;
 use gtk4::glib;
 
+use crate::llm::Provider;
 use crate::{chatconfig, secrets};
 
 pub fn build_page() -> adw::PreferencesPage {
-    let api_key_row = adw::PasswordEntryRow::builder().title("Gemini API-Key").build();
-    let model_row = adw::EntryRow::builder().title("Modell").text(chatconfig::load_model().as_str()).build();
+    let state: Rc<RefCell<chatconfig::ProviderConfig>> = Rc::new(RefCell::new(chatconfig::load_provider_config()));
+
+    let provider_labels: Vec<&str> = Provider::ALL.iter().map(|p| p.label()).collect();
+    let provider_row = adw::ComboRow::builder()
+        .title("Anbieter")
+        .model(&gtk4::StringList::new(&provider_labels))
+        .build();
+    let active_index = Provider::ALL.iter().position(|p| *p == state.borrow().active).unwrap_or(0);
+    provider_row.set_selected(active_index as u32);
+
+    let api_key_row = adw::PasswordEntryRow::builder().title("API-Key").build();
+    let base_url_row = adw::EntryRow::builder().title("Basis-URL").build();
+    let model_row = adw::EntryRow::builder().title("Modell").build();
 
     let connection_save_button = gtk4::Button::from_icon_name("document-save-symbolic");
     connection_save_button.set_tooltip_text(Some("Speichern"));
     connection_save_button.add_css_class("flat");
 
-    let connection_group = adw::PreferencesGroup::builder().title("Gemini-Verbindung").build();
+    let connection_group = adw::PreferencesGroup::builder().title("KI-Verbindung").build();
     connection_group.set_description(Some("Der API-Key wird im Schlüsselbund gespeichert, nicht als Klartext."));
     connection_group.set_header_suffix(Some(&connection_save_button));
+    connection_group.add(&provider_row);
     connection_group.add(&api_key_row);
+    connection_group.add(&base_url_row);
     connection_group.add(&model_row);
 
     let connection_status = gtk4::Label::builder().label("").xalign(0.0).build();
@@ -32,25 +47,76 @@ pub fn build_page() -> adw::PreferencesPage {
     let connection_status_group = adw::PreferencesGroup::new();
     connection_status_group.add(&connection_status);
 
-    {
+    fn load_api_key_into_row(provider: Provider, api_key_row: &adw::PasswordEntryRow) {
+        api_key_row.set_text("");
         let api_key_row = api_key_row.clone();
         glib::MainContext::default().spawn_local(async move {
-            if let Ok(Some(key)) = secrets::load_gemini_api_key().await {
+            if let Ok(Some(key)) = secrets::load_llm_api_key(provider.id()).await {
                 api_key_row.set_text(&key);
             }
         });
     }
 
+    fn apply_provider_to_fields(
+        provider: Provider,
+        config: &chatconfig::ProviderConfig,
+        api_key_row: &adw::PasswordEntryRow,
+        base_url_row: &adw::EntryRow,
+        model_row: &adw::EntryRow,
+    ) {
+        api_key_row.set_visible(provider.needs_api_key());
+        base_url_row.set_visible(provider.needs_base_url());
+        model_row.set_text(config.model_for(provider));
+        base_url_row.set_text(&config.ollama_base_url);
+        load_api_key_into_row(provider, api_key_row);
+    }
+
+    apply_provider_to_fields(state.borrow().active, &state.borrow(), &api_key_row, &base_url_row, &model_row);
+
+    {
+        let state = state.clone();
+        let api_key_row = api_key_row.clone();
+        let base_url_row = base_url_row.clone();
+        let model_row = model_row.clone();
+        provider_row.connect_selected_notify(move |row| {
+            // Persist whatever was typed for the *previous* provider before
+            // switching the visible fields to the new one, so quick back-
+            // and-forth between providers doesn't lose in-progress edits.
+            {
+                let mut config = state.borrow_mut();
+                let previous = config.active;
+                config.set_model_for(previous, model_row.text().to_string());
+                config.ollama_base_url = base_url_row.text().to_string();
+            }
+            let provider = Provider::ALL[row.selected() as usize];
+            state.borrow_mut().active = provider;
+            apply_provider_to_fields(provider, &state.borrow(), &api_key_row, &base_url_row, &model_row);
+        });
+    }
+
     connection_save_button.connect_clicked(move |_| {
-        if let Err(err) = chatconfig::save_model(&model_row.text()) {
-            connection_status.set_label(&format!("Fehler beim Speichern des Modells: {err}"));
+        let provider = {
+            let mut config = state.borrow_mut();
+            let provider = Provider::ALL[provider_row.selected() as usize];
+            config.active = provider;
+            config.set_model_for(provider, model_row.text().to_string());
+            config.ollama_base_url = base_url_row.text().to_string();
+            provider
+        };
+        if let Err(err) = chatconfig::save_provider_config(&state.borrow()) {
+            connection_status.set_label(&format!("Fehler beim Speichern: {err}"));
+            connection_status.set_visible(true);
+            return;
+        }
+        if !provider.needs_api_key() {
+            connection_status.set_label("Gespeichert.");
             connection_status.set_visible(true);
             return;
         }
         let key = api_key_row.text().to_string();
         let connection_status = connection_status.clone();
         glib::MainContext::default().spawn_local(async move {
-            match secrets::store_gemini_api_key(&key).await {
+            match secrets::store_llm_api_key(provider.id(), &key).await {
                 Ok(()) => {
                     connection_status.set_label("Gespeichert.");
                     connection_status.set_visible(true);
@@ -153,7 +219,7 @@ pub fn build_page() -> adw::PreferencesPage {
     let prompt_group = adw::PreferencesGroup::new();
     prompt_group.add(&prompt_box);
 
-    let page = adw::PreferencesPage::builder().title("KI-Chat").icon_name("chat-symbolic").build();
+    let page = adw::PreferencesPage::builder().title("KI-Chat").icon_name("chat-message-new-symbolic").build();
     page.add(&connection_group);
     page.add(&connection_status_group);
     page.add(&prompt_group);

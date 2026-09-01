@@ -8,7 +8,7 @@ use gtk4::{gio, glib};
 use webkit6::prelude::*;
 
 use crate::document::{Document, Frontmatter};
-use crate::{chat, document, editor, export, formatting, importer, preview, properties, settings, stats, termcache};
+use crate::{chat, codeview, document, editor, export, formatting, importer, preview, properties, settings, stats, termcache};
 
 const DEBOUNCE_MS: u64 = 250;
 
@@ -26,22 +26,26 @@ pub fn build(app: &adw::Application) -> adw::ApplicationWindow {
     editor_scroller.set_vexpand(true);
 
     let chat_view = chat::ChatView::new();
+    let code_view = Rc::new(codeview::CodeView::new());
 
     let view_stack = adw::ViewStack::new();
     view_stack.add_titled_with_icon(&web_view, Some("preview"), "Vorschau", "view-reveal-symbolic");
+    view_stack.add_titled_with_icon(&code_view.widget, Some("code"), "Gutenberg-Code", "text-x-generic-symbolic");
     view_stack.add_titled_with_icon(&stats_view.widget, Some("stats"), "Statistik", "view-list-symbolic");
-    view_stack.add_titled_with_icon(&chat_view.widget, Some("chat"), "Chat", "chat-symbolic");
+    view_stack.add_titled_with_icon(&chat_view.widget, Some("chat"), "Chat", "chat-message-new-symbolic");
+    // A proper (title-button-less) header bar for the switcher, mirroring
+    // the standard GNOME pattern for Adw.ViewSwitcher (e.g. GNOME Builder,
+    // GNOME Text Editor put it in exactly this spot) rather than a plain
+    // row - the header bar's own chrome is what makes the pill/segmented
+    // tabs read as one cohesive group instead of loose buttons.
     let view_switcher = adw::ViewSwitcher::builder().stack(&view_stack).policy(adw::ViewSwitcherPolicy::Wide).build();
-    let switcher_bar = gtk4::Box::builder()
-        .orientation(gtk4::Orientation::Horizontal)
-        .margin_top(6)
-        .margin_bottom(6)
-        .margin_start(6)
-        .build();
-    switcher_bar.append(&view_switcher);
+    let switcher_header = adw::HeaderBar::new();
+    switcher_header.set_title_widget(Some(&view_switcher));
+    switcher_header.set_show_start_title_buttons(false);
+    switcher_header.set_show_end_title_buttons(false);
 
     let preview_pane = gtk4::Box::builder().orientation(gtk4::Orientation::Vertical).build();
-    preview_pane.append(&switcher_bar);
+    preview_pane.append(&switcher_header);
     preview_pane.append(&gtk4::Separator::new(gtk4::Orientation::Horizontal));
     preview_pane.append(&view_stack);
     view_stack.set_vexpand(true);
@@ -121,14 +125,14 @@ pub fn build(app: &adw::Application) -> adw::ApplicationWindow {
     let tag_terms: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(cached_terms.tags));
     termcache::spawn_refresh(category_terms.clone(), tag_terms.clone());
 
-    wire_live_preview(&buffer, &web_view, &stats_view);
-    wire_scroll_sync(&editor_scroller, &view, &web_view);
+    wire_live_preview(&buffer, &web_view, &stats_view, &code_view);
+    wire_scroll_sync(&editor_scroller, &buffer, &web_view);
     wire_new_action(&window, &buffer, &current_path, &frontmatter, &title);
     wire_open_action(&window, &buffer, &current_path, &frontmatter, &title, &toast_overlay);
     wire_open_from_wordpress_action(&window, &buffer, &current_path, &frontmatter, &title);
     wire_save_action(&window, &buffer, &current_path, &frontmatter, &title, &toast_overlay);
     wire_properties_action(&window, &frontmatter, &category_terms, &tag_terms);
-    wire_settings_action(&window);
+    wire_settings_action(&window, &buffer);
     wire_publish_action(&window, &buffer, &current_path, &frontmatter);
 
     window
@@ -147,11 +151,17 @@ fn subtitle_for(path: Option<&Path>, frontmatter: &Frontmatter) -> String {
         .unwrap_or_else(|| "Unbenannt".to_string())
 }
 
-fn wire_live_preview(buffer: &sourceview5::Buffer, web_view: &webkit6::WebView, stats_view: &Rc<stats::StatsView>) {
+fn wire_live_preview(
+    buffer: &sourceview5::Buffer,
+    web_view: &webkit6::WebView,
+    stats_view: &Rc<stats::StatsView>,
+    code_view: &Rc<codeview::CodeView>,
+) {
     let debounce: Rc<RefCell<Option<glib::SourceId>>> = Rc::new(RefCell::new(None));
 
     let web_view_clone = web_view.clone();
     let stats_view_clone = stats_view.clone();
+    let code_view_clone = code_view.clone();
     let debounce_clone = debounce.clone();
     buffer.connect_changed(move |buf| {
         if let Some(id) = debounce_clone.borrow_mut().take() {
@@ -160,10 +170,12 @@ fn wire_live_preview(buffer: &sourceview5::Buffer, web_view: &webkit6::WebView, 
         let text = buf.text(&buf.start_iter(), &buf.end_iter(), false).to_string();
         let web_view = web_view_clone.clone();
         let stats_view = stats_view_clone.clone();
+        let code_view = code_view_clone.clone();
         let debounce_inner = debounce_clone.clone();
         let id = glib::timeout_add_local(Duration::from_millis(DEBOUNCE_MS), move || {
             web_view.load_html(&preview::render_html(&text), None);
             stats_view.update(&text);
+            code_view.update(&text);
             *debounce_inner.borrow_mut() = None;
             glib::ControlFlow::Break
         });
@@ -172,45 +184,66 @@ fn wire_live_preview(buffer: &sourceview5::Buffer, web_view: &webkit6::WebView, 
 
     web_view.load_html(&preview::render_html(""), None);
     stats_view.update("");
+    code_view.update("");
 }
 
 const SCROLL_SYNC_DEBOUNCE_MS: u64 = 80;
 
 /// Drives the preview's scroll position from the editor's: on every editor
-/// scroll, finds the source line currently at the top of the editor's
+/// scroll, estimates the source line currently at the top of the editor's
 /// viewport and asks the preview (via `preview::render_html`'s embedded
 /// `scrollToLine`) to bring the block starting at or before that line to
-/// its own top - matching by source line rather than by scroll percentage,
-/// since a block's rendered height doesn't correspond to its line count
-/// (an image is one source line but can render far taller than that).
-fn wire_scroll_sync(scroller: &gtk4::ScrolledWindow, view: &sourceview5::View, web_view: &webkit6::WebView) {
+/// its own top.
+///
+/// The editor-side estimate is scroll-fraction-based (`adjustment position
+/// / scrollable range` times total line count) rather than pixel-based:
+/// `TextView::iter_at_location` at the buffer-coordinate left edge (`x=0`)
+/// turned out to unreliably return `None` once the line-number gutter is
+/// showing (verified with `examples/scroll_sync_debug.rs`), and nudging the
+/// x by a few pixels "worked" in one manual check but isn't a principled
+/// fix. A fraction-based estimate is fine *here* because editor lines are
+/// plain, uniformly-tall text (unlike the preview's rendered blocks, where
+/// an image can be many times taller than one source line) - that height
+/// mismatch is handled entirely on the preview side via `data-line`
+/// block-boundary snapping, so the editor side never needs pixel-perfect
+/// line detection to get the overall sync right.
+fn wire_scroll_sync(scroller: &gtk4::ScrolledWindow, buffer: &sourceview5::Buffer, web_view: &webkit6::WebView) {
     let debounce: Rc<RefCell<Option<glib::SourceId>>> = Rc::new(RefCell::new(None));
-    let view = view.clone();
+    let buffer = buffer.clone();
     let web_view = web_view.clone();
-    scroller.vadjustment().connect_value_changed(move |_| {
+    scroller.vadjustment().connect_value_changed(move |adjustment| {
         if let Some(id) = debounce.borrow_mut().take() {
             id.remove();
         }
-        let view = view.clone();
+        let adjustment = adjustment.clone();
+        let buffer = buffer.clone();
         let web_view = web_view.clone();
         let debounce_inner = debounce.clone();
         let id = glib::timeout_add_local(Duration::from_millis(SCROLL_SYNC_DEBOUNCE_MS), move || {
-            let rect = view.visible_rect();
-            if let Some(iter) = view.iter_at_location(rect.x(), rect.y()) {
-                let line = iter.line() + 1;
-                web_view.evaluate_javascript(
-                    &format!("window.scrollToLine && window.scrollToLine({line});"),
-                    None,
-                    None,
-                    gio::Cancellable::NONE,
-                    |_| {},
-                );
-            }
+            let total_lines = buffer.end_iter().line() + 1;
+            let line = estimate_visible_line(adjustment.value(), adjustment.upper(), adjustment.page_size(), total_lines);
+            web_view.evaluate_javascript(
+                &format!("window.scrollToLine && window.scrollToLine({line});"),
+                None,
+                None,
+                gio::Cancellable::NONE,
+                |_| {},
+            );
             *debounce_inner.borrow_mut() = None;
             glib::ControlFlow::Break
         });
         *debounce.borrow_mut() = Some(id);
     });
+}
+
+/// Pure scroll-fraction-to-line estimate backing `wire_scroll_sync` - see
+/// that function's doc comment for why fraction-based is the right call
+/// here specifically (editor lines are uniform height, unlike the
+/// preview's rendered blocks).
+fn estimate_visible_line(value: f64, upper: f64, page_size: f64, total_lines: i32) -> i32 {
+    let scrollable_range = (upper - page_size).max(1.0);
+    let fraction = (value / scrollable_range).clamp(0.0, 1.0);
+    ((fraction * f64::from(total_lines)).round() as i32 + 1).clamp(1, total_lines.max(1))
 }
 
 fn wire_new_action(
@@ -391,12 +424,13 @@ fn wire_properties_action(
     window.add_action(&action);
 }
 
-fn wire_settings_action(window: &adw::ApplicationWindow) {
+fn wire_settings_action(window: &adw::ApplicationWindow, buffer: &sourceview5::Buffer) {
     let action = gio::SimpleAction::new("settings", None);
+    let buffer = buffer.clone();
     let window_weak = window.downgrade();
     action.connect_activate(move |_, _| {
         if let Some(window) = window_weak.upgrade() {
-            settings::open(&window);
+            settings::open(&window, &buffer);
         }
     });
     window.add_action(&action);
@@ -422,4 +456,33 @@ fn wire_publish_action(
         export::open(&window, body, frontmatter.clone(), doc_dir);
     });
     window.add_action(&action);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn estimate_visible_line_at_top_is_line_one() {
+        assert_eq!(estimate_visible_line(0.0, 4020.0, 261.0, 200), 1);
+    }
+
+    #[test]
+    fn estimate_visible_line_at_bottom_is_last_line() {
+        assert_eq!(estimate_visible_line(3759.0, 4020.0, 261.0, 200), 200);
+    }
+
+    #[test]
+    fn estimate_visible_line_partway_scales_proportionally() {
+        // Matches the manually-verified diagnostic run: value=300 out of a
+        // 3759 scrollable range in a 200-line buffer landed on line 15/16
+        // via pixel-based iter_at_location.
+        let line = estimate_visible_line(300.0, 4020.0, 261.0, 200);
+        assert!((14..=17).contains(&line), "expected line near 15-16, got {line}");
+    }
+
+    #[test]
+    fn estimate_visible_line_handles_short_document_without_dividing_by_zero() {
+        assert_eq!(estimate_visible_line(0.0, 0.0, 0.0, 1), 1);
+    }
 }

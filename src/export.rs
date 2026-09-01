@@ -260,8 +260,15 @@ fn run_export(
         payload["slug"] = serde_json::Value::String(frontmatter.slug.clone());
     }
     if let Some(path) = &frontmatter.featured_image {
+        // A newly set local image always takes priority: upload it and use
+        // the resulting media id.
         let media = upload_image_file(&client, path, doc_dir).map_err(|err| err.to_string())?;
         payload["featured_media"] = serde_json::json!(media.id);
+    } else if let Some(id) = frontmatter.featured_media_id {
+        // Nothing new was set, but the document carries an existing
+        // featured image from importing this post (see `importer.rs`) -
+        // keep it rather than silently clearing it on re-export.
+        payload["featured_media"] = serde_json::json!(id);
     }
 
     let result = match frontmatter.wp_post_id {
@@ -354,6 +361,7 @@ mod tests {
             tags: vec!["blocksmith-test".to_string()],
             featured_image: None,
             wp_post_id: None,
+            featured_media_id: None,
         };
 
         let created = run_export(&site, &password, &frontmatter, body, Some(&doc_dir)).expect("run_export failed");

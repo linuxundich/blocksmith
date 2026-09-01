@@ -7,6 +7,8 @@ use gtk4::prelude::*;
 use libspelling as spelling;
 use sourceview5::prelude::*;
 
+use crate::appearance;
+
 pub fn build() -> (gtk4::ScrolledWindow, sourceview5::View, sourceview5::Buffer) {
     let buffer = sourceview5::Buffer::new(None::<&gtk4::TextTagTable>);
 
@@ -15,7 +17,7 @@ pub fn build() -> (gtk4::ScrolledWindow, sourceview5::View, sourceview5::Buffer)
     }
     buffer.set_highlight_syntax(true);
 
-    if let Some(scheme) = sourceview5::StyleSchemeManager::default().scheme("Adwaita") {
+    if let Some(scheme) = sourceview5::StyleSchemeManager::default().scheme(&appearance::load_source_scheme_id()) {
         buffer.set_style_scheme(Some(&scheme));
     }
 

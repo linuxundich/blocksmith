@@ -7,6 +7,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-09-01
+
+### Added
+
+- **Multiple LLM providers for the Chat tab**: alongside Gemini, the chat
+  can now use ChatGPT (OpenAI), Claude (Anthropic), or Ollama (self-hosted,
+  no API key). `src/gemini.rs` was replaced by `src/llm.rs`, a single
+  blocking client (`llm::Client`) that speaks each provider's REST shape
+  (Gemini's `generateContent`, OpenAI's `chat/completions`, Anthropic's
+  `messages`, Ollama's `api/chat`). The "KI-Chat" settings page gained a
+  provider picker; API keys are stored per-provider in the Secret Service
+  (`secrets::store_llm_api_key`/`load_llm_api_key`, keyed by provider id),
+  and each provider keeps its own model id, with Ollama additionally
+  getting a configurable base URL (default `http://localhost:11434`). The
+  shared system prompt is unaffected - it still applies regardless of which
+  provider is active.
+- A **Gutenberg-Code tab** (`src/codeview.rs`) next to "Vorschau", showing
+  the exact block-comment-annotated HTML that would be published, updated
+  live from the same debounced pipeline as the preview and statistics tabs.
+- **GNOME Builder-style appearance settings** (`src/appearance.rs`): a new
+  "Erscheinungsbild" page with a light/dark/follow-system toggle
+  (`Adw.StyleManager`) and an editor color-scheme picker using
+  GtkSourceView's own `StyleSchemeChooserWidget` (the same swatch-grid
+  widget Builder itself uses) - both persisted under
+  `~/.config/blocksmith/`.
+
+### Fixed
+
+- Scroll-sync between the editor and the preview never actually moved the
+  preview. Root cause: `sourceview5::View::iter_at_location()` unreliably
+  returns `None` at the buffer's left edge once the line-number gutter is
+  shown. Replaced pixel-based line detection on the editor side with a
+  fraction-based estimate (`estimate_visible_line`, unit-tested) - correct
+  here because editor lines are uniform height, unlike the preview side
+  (where the image-height mismatch this feature originally cared about is
+  already handled separately via `data-line` snapping).
+- Opening an existing WordPress post left its featured image blank on
+  re-export. `Frontmatter` gained a `featured_media_id` field (the post's
+  *current* featured media id, distinct from `featured_image`'s "upload
+  this new local file" meaning) so importing a post and exporting it again
+  without touching the featured image keeps the original one instead of
+  silently dropping it.
+- The placeholder chat tab icon (a nonexistent `chat-symbolic`) is now the
+  real `chat-message-new-symbolic`; a full audit of every `-symbolic` icon
+  name in the codebase against the installed Adwaita icon theme turned up
+  no other placeholders.
+- The right-hand tab switcher (Vorschau/Gutenberg-Code/Statistik/Chat) is
+  now hosted in a real `Adw.HeaderBar`, the standard GNOME pattern (also
+  used by Builder and Text Editor) for a properly grouped pill switcher,
+  instead of a loose `Adw.ViewSwitcher` next to the pane.
+
 ## [0.7.0] - 2026-09-01
 
 ### Added
