@@ -179,6 +179,22 @@ fn insert_link(buffer: &sourceview5::Buffer) {
     }
 }
 
+/// CommonMark's plain `(destination)` link/image syntax breaks on raw
+/// whitespace or unbalanced parentheses - the parser stops at the first
+/// unescaped one, so e.g. `![](my photo.png)` from a file picked via "Bild
+/// einfügen" wouldn't be recognized as an image at all, just literal text.
+/// Wrapping the destination in `<...>` is also valid CommonMark and is
+/// stripped back off by any compliant parser (including `crates/gutenberg`'s
+/// own forward converter), so it round-trips such a path without needing to
+/// percent-encode or otherwise alter it.
+fn markdown_destination(path: &str) -> String {
+    if path.chars().any(char::is_whitespace) || path.contains('(') || path.contains(')') {
+        format!("<{path}>")
+    } else {
+        path.to_string()
+    }
+}
+
 /// Inserts a Markdown image reference for an already-picked file `path`
 /// (relative to the document if possible - see `window.rs`'s
 /// `wire_insert_image_action`). An existing selection becomes the alt text,
@@ -187,17 +203,18 @@ fn insert_link(buffer: &sourceview5::Buffer) {
 /// also valid - Markdown alone can't yet express "deliberately no alt text",
 /// see `media.rs`, but leaving it blank here is a fine starting point).
 pub fn insert_image(buffer: &sourceview5::Buffer, path: &str) {
+    let destination = markdown_destination(path);
     if let Some((mut start, mut end)) = buffer.selection_bounds() {
         let selected = buffer.text(&start, &end, false).to_string();
         buffer.delete(&mut start, &mut end);
         let pos = start.offset();
-        buffer.insert(&mut start, &format!("![{selected}]({path})"));
-        let cursor = pos + 2 + selected.chars().count() as i32 + 2 + path.chars().count() as i32;
+        buffer.insert(&mut start, &format!("![{selected}]({destination})"));
+        let cursor = pos + 2 + selected.chars().count() as i32 + 2 + destination.chars().count() as i32;
         buffer.place_cursor(&buffer.iter_at_offset(cursor));
     } else {
         let mut iter = buffer.iter_at_mark(&buffer.get_insert());
         let pos = iter.offset();
-        buffer.insert(&mut iter, &format!("![]({path})"));
+        buffer.insert(&mut iter, &format!("![]({destination})"));
         buffer.place_cursor(&buffer.iter_at_offset(pos + 2));
     }
 }
@@ -206,4 +223,24 @@ fn select(buffer: &sourceview5::Buffer, start_offset: i32, end_offset: i32) {
     let start = buffer.iter_at_offset(start_offset);
     let end = buffer.iter_at_offset(end_offset);
     buffer.select_range(&end, &start);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn markdown_destination_wraps_a_path_containing_a_space_in_angle_brackets() {
+        assert_eq!(markdown_destination("my photo.png"), "<my photo.png>");
+    }
+
+    #[test]
+    fn markdown_destination_leaves_a_plain_path_unchanged() {
+        assert_eq!(markdown_destination("photo.png"), "photo.png");
+    }
+
+    #[test]
+    fn markdown_destination_wraps_a_path_containing_parentheses() {
+        assert_eq!(markdown_destination("photo(1).png"), "<photo(1).png>");
+    }
 }

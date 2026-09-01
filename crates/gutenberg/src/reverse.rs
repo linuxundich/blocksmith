@@ -404,13 +404,31 @@ fn render_block_markdown(block: &Block) -> String {
             .collect::<Vec<_>>()
             .join("\n"),
         Block::CodeBlock { lang, text } => format!("```{}\n{text}\n```", lang.clone().unwrap_or_default()),
-        Block::Image { url, alt, title } => match title {
-            Some(title) => format!("![{alt}]({url} \"{title}\")"),
-            None => format!("![{alt}]({url})"),
-        },
+        Block::Image { url, alt, title } => {
+            let destination = markdown_destination(url);
+            match title {
+                Some(title) => format!("![{alt}]({destination} \"{title}\")"),
+                None => format!("![{alt}]({destination})"),
+            }
+        }
         Block::ThematicBreak => "---".to_string(),
         Block::Table { alignments, header, rows } => render_table_markdown(alignments, header, rows),
         Block::RawHtml { html } => html.clone(),
+    }
+}
+
+/// CommonMark's plain `(destination)` link/image syntax breaks on raw
+/// whitespace or unbalanced parentheses (the parser stops at the first
+/// unescaped one, so `![alt](my photo.png)` isn't recognized as an image at
+/// all) - wrapping the destination in `<...>` is also valid CommonMark and
+/// is stripped back off by any compliant parser, so it round-trips a
+/// space-containing local path or URL without needing to percent-encode or
+/// otherwise alter it.
+fn markdown_destination(url: &str) -> String {
+    if url.chars().any(char::is_whitespace) || url.contains('(') || url.contains(')') {
+        format!("<{url}>")
+    } else {
+        url.to_string()
     }
 }
 
@@ -508,6 +526,17 @@ mod tests {
             round_trip("![a cat](https://example.com/cat.png)"),
             "![a cat](https://example.com/cat.png)"
         );
+    }
+
+    #[test]
+    fn image_with_space_in_url_is_wrapped_in_angle_brackets() {
+        let block = Block::Image { url: "my cat.png".to_string(), alt: "a cat".to_string(), title: None };
+        assert_eq!(render_block_markdown(&block), "![a cat](<my cat.png>)");
+    }
+
+    #[test]
+    fn image_with_space_in_url_round_trips_via_angle_brackets() {
+        assert_eq!(round_trip("![a cat](<my cat.png>)"), "![a cat](<my cat.png>)");
     }
 
     #[test]

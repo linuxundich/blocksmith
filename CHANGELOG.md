@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.13.2] - 2026-09-01
+
+### Fixed
+
+- Images whose filename or path contains a space were silently invisible
+  everywhere: not recognized as an image in the preview, not picked up by
+  Medienverwaltung, and not converted to a `wp:image` block on export -
+  plain Markdown's `![alt](destination)` syntax stops parsing at the first
+  unescaped space, so `![](my photo.png)` was just literal text. Fixed by
+  wrapping such a destination in `<...>` (equally valid CommonMark, and
+  transparently stripped back off by any compliant parser) wherever
+  Blocksmith writes an image reference itself: "Bild einfügen"'s file
+  picker, and the WordPress-import reverse converter.
+
 ## [0.13.1] - 2026-09-01
 
 ### Added
