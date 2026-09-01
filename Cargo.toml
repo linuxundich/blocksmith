@@ -4,7 +4,7 @@ resolver = "2"
 
 [package]
 name = "blocksmith"
-version = "0.9.1"
+version = "0.9.2"
 edition = "2021"
 license = "GPL-3.0-or-later"
 
@@ -15,7 +15,7 @@ path = "src/main.rs"
 [dependencies]
 gtk4 = { version = "0.11", features = ["v4_14"] }
 adw = { package = "libadwaita", version = "0.9", features = ["v1_5"] }
-sourceview5 = "0.11"
+sourceview5 = { version = "0.11", features = ["v5_4", "gtk_v4_10"] }
 webkit6 = "0.6"
 pulldown-cmark = "0.13"
 oo7 = { version = "0.6", default-features = false, features = ["async-std", "native_crypto"] }

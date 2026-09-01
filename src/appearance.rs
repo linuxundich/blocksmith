@@ -1,14 +1,19 @@
-//! "Erscheinungsbild" (Appearance) page in Einstellungen, modeled after
-//! GNOME Builder's: an interface color-scheme picker (follow system/light/
-//! dark) shown as mini window-mockup preview cards - the same visual
-//! language Builder, Settings, and Text Editor all use for this choice -
-//! plus a live syntax-highlighted code sample and a grid of GtkSourceView
-//! style-scheme swatches for the editor, using GtkSourceView's own
-//! `StyleSchemeChooserWidget` for the grid itself (the exact widget Builder
-//! uses there, so no need to hand-roll that part).
+//! "Erscheinungsbild" (Appearance) page in Einstellungen, adopted directly
+//! from GNOME Builder's own implementation (`gnome-builder.git`,
+//! `src/plugins/platformui/gbp-platformui-tweaks-addin.c` and
+//! `src/plugins/editorui/gbp-editorui-scheme-selector.c`):
+//!
+//! - The interface style picker (follow-system/light/dark) uses Builder's
+//!   own bundled preview illustrations (`data/icons/appearance-preview/`,
+//!   see `ATTRIBUTION.md` there) inside a `GtkPicture`, exactly like
+//!   `IdeStyleVariantPreview` does - not a hand-drawn approximation.
+//! - The color-scheme grid uses GtkSourceView's own `StyleSchemePreview`
+//!   widget (the same one Builder's `GbpEditoruiSchemeSelector` uses) laid
+//!   out in a `GtkFlowBox`, filtered to the schemes matching the current
+//!   light/dark mode (Builder's `update_style_schemes`/`is_dark` logic,
+//!   ported to Rust below) rather than showing every scheme at once.
 
 use std::path::PathBuf;
-use std::sync::Once;
 
 use adw::prelude::*;
 use gtk4::glib;
@@ -16,12 +21,9 @@ use sourceview5::prelude::*;
 
 const DEFAULT_SOURCE_SCHEME_ID: &str = "Adwaita";
 
-const PREVIEW_SAMPLE: &str = "\
-// Welche Wörter welche Farbe bekommen
-fn greet(name: &str) -> String {
-    format!(\"Hallo, {name}!\")
-}
-";
+const PREVIEW_LIGHT_SVG: &[u8] = include_bytes!("../data/icons/appearance-preview/preview-light.svg");
+const PREVIEW_DARK_SVG: &[u8] = include_bytes!("../data/icons/appearance-preview/preview-dark.svg");
+const PREVIEW_SYSTEM_SVG: &[u8] = include_bytes!("../data/icons/appearance-preview/preview-system.svg");
 
 fn config_dir() -> PathBuf {
     let mut dir = glib::user_config_dir();
@@ -79,13 +81,35 @@ pub fn apply_saved_color_scheme() {
     adw::StyleManager::default().set_color_scheme(load_color_scheme());
 }
 
-static CSS_INSTALLED: Once = Once::new();
+/// Port of Builder's `ide_source_style_scheme_is_dark()`
+/// (`src/libide/sourceview/ide-source-style-scheme.c`): prefer the
+/// scheme's own "variant" metadata or an "-dark" id suffix, and fall back
+/// to the perceived brightness (HSP) of its "text" style's background.
+fn scheme_is_dark(scheme: &sourceview5::StyleScheme) -> bool {
+    match scheme.metadata("variant").as_deref() {
+        Some("light") => return false,
+        Some("dark") => return true,
+        _ => {}
+    }
+    if scheme.id().contains("-dark") {
+        return true;
+    }
+    if let Some(style) = scheme.style("text") {
+        if style.is_background_set() {
+            if let Some(bg) = style.background() {
+                if let Ok(rgba) = gtk4::gdk::RGBA::parse(&bg) {
+                    let (r, g, b) = (f64::from(rgba.red()) * 255.0, f64::from(rgba.green()) * 255.0, f64::from(rgba.blue()) * 255.0);
+                    let hsp = (0.299 * r * r + 0.587 * g * g + 0.114 * b * b).sqrt();
+                    return hsp <= 127.5;
+                }
+            }
+        }
+    }
+    false
+}
 
-/// The theme-card visuals (mini window mockups, selection border) aren't
-/// covered by any built-in libadwaita widget - Builder, Settings, and Text
-/// Editor all hand-roll this exact look, usually from bundled thumbnail
-/// images. We draw it from plain boxes + CSS instead, so it needs no
-/// bundled assets and still reads clearly at this size.
+static CSS_INSTALLED: std::sync::Once = std::sync::Once::new();
+
 fn install_theme_card_css() {
     CSS_INSTALLED.call_once(|| {
         let Some(display) = gtk4::gdk::Display::default() else {
@@ -102,71 +126,27 @@ fn install_theme_card_css() {
             .theme-card:checked .theme-card-preview {
                 border: 2px solid @accent_bg_color;
             }
-            .theme-card-window-light { background-color: #ffffff; }
-            .theme-card-window-dark { background-color: #241f31; }
-            .theme-card-window-light .theme-card-header { background-color: alpha(#000000, 0.06); }
-            .theme-card-window-dark .theme-card-header { background-color: alpha(#ffffff, 0.08); }
-            .theme-card-window-light .theme-card-bar { background-color: alpha(#000000, 0.25); }
-            .theme-card-window-dark .theme-card-bar { background-color: alpha(#ffffff, 0.3); }
-            .theme-card-bar.accent { background-color: @accent_bg_color; }
-            .theme-card-dot { border-radius: 9999px; background-color: #e01b24; }
             ",
         );
         gtk4::style_context_add_provider_for_display(&display, &provider, gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION);
     });
 }
 
-fn bar(width: i32, accent: bool) -> gtk4::Box {
-    let b = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
-    b.add_css_class("theme-card-bar");
-    if accent {
-        b.add_css_class("accent");
-    }
-    b.set_size_request(width, 4);
-    b.set_halign(gtk4::Align::Start);
-    b
+fn picture_from_svg_bytes(bytes: &'static [u8]) -> gtk4::Picture {
+    let texture = gtk4::gdk::Texture::from_bytes(&glib::Bytes::from_static(bytes)).expect("bundled preview SVG should always parse");
+    let picture = gtk4::Picture::for_paintable(&texture);
+    picture.set_content_fit(gtk4::ContentFit::Fill);
+    picture.set_can_shrink(true);
+    picture.set_size_request(148, 81); // matches the SVGs' native 164:90 aspect ratio
+    picture
 }
 
-/// One mini "window" mockup: a header strip with a corner dot, plus a
-/// couple of bars standing in for a few lines of text - at `width` wide,
-/// so the same builder can make a full-size card or one half of the
-/// "follow system" split preview.
-fn mini_window(variant: &str, width: i32) -> gtk4::Box {
-    let header = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
-    header.add_css_class("theme-card-header");
-    header.set_size_request(-1, 12);
-    let dot = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
-    dot.add_css_class("theme-card-dot");
-    dot.set_size_request(5, 5);
-    dot.set_valign(gtk4::Align::Center);
-    dot.set_margin_start(5);
-    header.append(&dot);
-
-    let bars = gtk4::Box::builder().orientation(gtk4::Orientation::Vertical).spacing(4).margin_top(6).margin_start(6).margin_end(6).build();
-    bars.append(&bar(width - 24, false));
-    bars.append(&bar(width - 36, false));
-    bars.append(&bar(width - 44, true));
-
-    let window = gtk4::Box::builder().orientation(gtk4::Orientation::Vertical).build();
-    window.add_css_class(&format!("theme-card-window-{variant}"));
-    window.set_size_request(width, 72);
-    window.append(&header);
-    window.append(&bars);
-    window
-}
-
-fn build_theme_card(label_text: &str, variant: &str, group: Option<&gtk4::ToggleButton>) -> gtk4::ToggleButton {
-    let preview = if variant == "system" {
-        let split = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
-        split.append(&mini_window("light", 48));
-        split.append(&mini_window("dark", 48));
-        split.add_css_class("theme-card-preview");
-        split
-    } else {
-        let single = mini_window(variant, 96);
-        single.add_css_class("theme-card-preview");
-        single
-    };
+fn build_theme_card(label_text: &str, svg_bytes: &'static [u8], group: Option<&gtk4::ToggleButton>) -> gtk4::ToggleButton {
+    let picture = picture_from_svg_bytes(svg_bytes);
+    let preview = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
+    preview.add_css_class("theme-card-preview");
+    preview.set_overflow(gtk4::Overflow::Hidden);
+    preview.append(&picture);
 
     let label = gtk4::Label::new(Some(label_text));
 
@@ -184,14 +164,66 @@ fn build_theme_card(label_text: &str, variant: &str, group: Option<&gtk4::Toggle
     button
 }
 
+/// Rebuilds the scheme `flow_box`'s children from the schemes matching
+/// `is_dark` - Builder's `update_style_schemes()`, minus the light/dark
+/// "alternate variant" bookkeeping (Blocksmith doesn't offer per-scheme
+/// variant swapping, just the filtered list itself).
+fn populate_scheme_flow_box(flow_box: &gtk4::FlowBox, buffer: &sourceview5::Buffer) {
+    while let Some(child) = flow_box.first_child() {
+        flow_box.remove(&child);
+    }
+
+    let manager = sourceview5::StyleSchemeManager::default();
+    let is_dark = adw::StyleManager::default().is_dark();
+    let current_id = load_source_scheme_id();
+
+    let mut schemes: Vec<sourceview5::StyleScheme> = manager
+        .scheme_ids()
+        .iter()
+        .filter(|id| id.as_str() != "printing")
+        .filter_map(|id| manager.scheme(id))
+        .collect();
+    schemes.sort_by_key(|s| s.name().to_string());
+
+    for scheme in schemes {
+        if scheme_is_dark(&scheme) != is_dark && scheme.id() != current_id {
+            continue;
+        }
+
+        let preview = sourceview5::StyleSchemePreview::new(&scheme);
+        preview.set_selected(scheme.id() == current_id);
+
+        let buffer = buffer.clone();
+        let flow_box_weak = flow_box.downgrade();
+        preview.connect_activate(move |activated| {
+            let scheme = activated.scheme();
+            save_source_scheme_id(&scheme.id());
+            buffer.set_style_scheme(Some(&scheme));
+            if let Some(flow_box) = flow_box_weak.upgrade() {
+                let mut child = flow_box.first_child();
+                while let Some(c) = child {
+                    if let Some(flow_child) = c.downcast_ref::<gtk4::FlowBoxChild>() {
+                        if let Some(p) = flow_child.child().and_then(|w| w.downcast::<sourceview5::StyleSchemePreview>().ok()) {
+                            p.set_selected(p.scheme().id() == scheme.id());
+                        }
+                    }
+                    child = c.next_sibling();
+                }
+            }
+        });
+
+        flow_box.insert(&preview, -1);
+    }
+}
+
 pub fn build_page(buffer: &sourceview5::Buffer) -> adw::PreferencesPage {
     install_theme_card_css();
 
     let interface_group = adw::PreferencesGroup::builder().title("Schnittstelle").build();
 
-    let follow_button = build_theme_card("Dem System folgen", "system", None);
-    let light_button = build_theme_card("Hell", "light", Some(&follow_button));
-    let dark_button = build_theme_card("Dunkel", "dark", Some(&follow_button));
+    let follow_button = build_theme_card("Dem System folgen", PREVIEW_SYSTEM_SVG, None);
+    let light_button = build_theme_card("Hell", PREVIEW_LIGHT_SVG, Some(&follow_button));
+    let dark_button = build_theme_card("Dunkel", PREVIEW_DARK_SVG, Some(&follow_button));
 
     match load_color_scheme() {
         adw::ColorScheme::ForceLight => light_button.set_active(true),
@@ -227,54 +259,19 @@ pub fn build_page(buffer: &sourceview5::Buffer) -> adw::PreferencesPage {
 
     let color_group = adw::PreferencesGroup::builder().title("Farbe").build();
 
-    let initial_scheme = sourceview5::StyleSchemeManager::default().scheme(&load_source_scheme_id());
+    let flow_box = gtk4::FlowBox::builder().column_spacing(12).row_spacing(12).max_children_per_line(4).selection_mode(gtk4::SelectionMode::None).homogeneous(true).build();
+    flow_box.add_css_class("style-schemes");
+    populate_scheme_flow_box(&flow_box, buffer);
 
-    // A small live sample, styled with whatever scheme is currently
-    // selected - mirrors Builder's own "Farbe" page, where the code sample
-    // sits above the swatch grid so a pick's effect is visible immediately
-    // rather than only after closing the dialog.
-    let sample_buffer = sourceview5::Buffer::new(None::<&gtk4::TextTagTable>);
-    sample_buffer.set_text(PREVIEW_SAMPLE);
-    sample_buffer.set_highlight_syntax(true);
-    if let Some(lang) = sourceview5::LanguageManager::default().language("rust") {
-        sample_buffer.set_language(Some(&lang));
+    {
+        let flow_box = flow_box.clone();
+        let buffer = buffer.clone();
+        adw::StyleManager::default().connect_dark_notify(move |_| {
+            populate_scheme_flow_box(&flow_box, &buffer);
+        });
     }
-    if let Some(scheme) = &initial_scheme {
-        sample_buffer.set_style_scheme(Some(scheme));
-    }
-    let sample_view = sourceview5::View::with_buffer(&sample_buffer);
-    sample_view.set_editable(false);
-    sample_view.set_cursor_visible(false);
-    sample_view.set_monospace(true);
-    sample_view.set_top_margin(8);
-    sample_view.set_bottom_margin(8);
-    sample_view.set_left_margin(10);
-    sample_view.set_right_margin(10);
-    let sample_scroller = gtk4::ScrolledWindow::builder()
-        .child(&sample_view)
-        .height_request(110)
-        .hscrollbar_policy(gtk4::PolicyType::Never)
-        .vscrollbar_policy(gtk4::PolicyType::Never)
-        .build();
-    sample_scroller.add_css_class("card");
-    color_group.add(&sample_scroller);
 
-    let chooser = sourceview5::StyleSchemeChooserWidget::new();
-    if let Some(scheme) = &initial_scheme {
-        chooser.set_style_scheme(scheme);
-    }
-    chooser.set_vexpand(true);
-    chooser.set_height_request(320);
-
-    let buffer = buffer.clone();
-    chooser.connect_style_scheme_notify(move |chooser| {
-        let scheme = chooser.style_scheme();
-        save_source_scheme_id(&scheme.id());
-        buffer.set_style_scheme(Some(&scheme));
-        sample_buffer.set_style_scheme(Some(&scheme));
-    });
-
-    color_group.add(&chooser);
+    color_group.add(&flow_box);
 
     let page = adw::PreferencesPage::builder().title("Erscheinungsbild").icon_name("preferences-desktop-appearance-symbolic").build();
     page.add(&interface_group);

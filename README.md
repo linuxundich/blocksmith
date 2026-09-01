@@ -56,9 +56,12 @@ blocks. Implemented so far:
   so exporting afterward updates that same post instead of creating a
   duplicate.
 - **Einstellungen dialog** (`Adw.PreferencesDialog`, Ctrl+,) — an
-  "Erscheinungsbild" page (light/dark/follow-system, and an editor
-  color-scheme picker using GtkSourceView's own swatch-grid widget, the
-  same one GNOME Builder uses), a WordPress-connection page (site
+  "Erscheinungsbild" page adopted directly from GNOME Builder's own
+  implementation (light/dark/follow-system cards using Builder's bundled
+  preview illustrations, and an editor color-scheme grid using
+  GtkSourceView's `StyleSchemePreview` widget filtered to schemes matching
+  the current light/dark mode, the same widget and filtering Builder uses),
+  a WordPress-connection page (site
   URL/username in a small config file, the Application Password in the
   Secret Service via [`oo7`](https://crates.io/crates/oo7), never written
   to disk in plain text), a "KI-Chat" page (a provider picker for

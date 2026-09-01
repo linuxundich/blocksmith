@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.9.2] - 2026-09-01
+
+### Changed
+
+- The "Erscheinungsbild" page now adopts GNOME Builder's actual
+  implementation rather than an approximation of it: the interface-style
+  cards use Builder's own bundled preview illustrations
+  (`data/icons/appearance-preview/`, CC BY-SA 4.0, see the `ATTRIBUTION.md`
+  there) instead of a hand-drawn CSS mockup, and the color-scheme grid uses
+  GtkSourceView's `StyleSchemePreview` widget in a `GtkFlowBox` - the same
+  widget and layout Builder's own scheme selector uses - filtered to the
+  schemes matching the current light/dark mode (a Rust port of Builder's
+  `ide_source_style_scheme_is_dark()` heuristic) instead of showing every
+  installed scheme at once. The live code-sample preview added in 0.9.1 was
+  removed again at the user's request - not something Blocksmith needs.
+
 ## [0.9.1] - 2026-09-01
 
 ### Fixed
