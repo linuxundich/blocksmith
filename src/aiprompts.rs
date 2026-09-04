@@ -1,9 +1,9 @@
-//! Persistence for the editor context menu's AI actions: the six built-in
-//! prompt templates (editable/resettable, like the chat's system prompt),
-//! the user's own custom prompts, and the list of target languages offered
-//! under "Übersetzen …". All plain, non-sensitive text, so this is a single
-//! JSON file under `glib::user_config_dir()/blocksmith/ai_prompts.json` -
-//! no secrets involved here.
+//! Persistence for the editor context menu's AI actions: the five built-in
+//! prompt templates (editable/resettable, like the chat's system prompt)
+//! and the user's own custom prompts. All plain, non-sensitive text, so
+//! this is a single JSON file under
+//! `glib::user_config_dir()/blocksmith/ai_prompts.json` - no secrets
+//! involved here.
 
 use std::path::PathBuf;
 
@@ -16,16 +16,10 @@ pub struct BuiltinPrompt {
     pub default_template: &'static str,
 }
 
-/// The six built-in context-menu actions. `translate`'s template contains a
-/// `{language}` placeholder filled in from the chosen target language;
-/// `adjust-length`'s contains a `{length_instruction}` placeholder filled in
-/// from the "Länge anpassen" dialog's inputs.
+/// The five built-in context-menu actions. `adjust-length`'s template
+/// contains a `{length_instruction}` placeholder filled in from the "Länge
+/// anpassen" dialog's inputs.
 pub const BUILTIN_PROMPTS: &[BuiltinPrompt] = &[
-    BuiltinPrompt {
-        id: "translate",
-        title: "Übersetzen",
-        default_template: "Übersetze den folgenden Artikel bzw. Abschnitt ins {language}. Achte auf einen natürlichen, in der Zielsprache für einen Tech-/Open-Source-Blog üblichen Schreibstil, und erhalte die Markdown-Formatierung (Überschriften, Listen, Code-Blöcke, Links) unverändert. Übersetze Code, Befehle, Dateinamen, Paketnamen und Eigennamen NICHT. Gib ausschließlich die Übersetzung aus, ohne zusätzliche Erklärungen.",
-    },
     BuiltinPrompt {
         id: "check-content",
         title: "Inhalt prüfen",
@@ -154,27 +148,6 @@ pub fn new_custom_prompt_id() -> String {
     format!("custom-{}", glib::monotonic_time())
 }
 
-pub const DEFAULT_TRANSLATE_LANGUAGES: &[&str] = &["Englisch", "Französisch", "Spanisch"];
-
-pub fn load_translate_languages() -> Vec<String> {
-    let languages: Vec<String> = load_root()
-        .get("translate_languages")
-        .and_then(Value::as_array)
-        .map(|langs| langs.iter().filter_map(Value::as_str).map(str::to_string).collect())
-        .unwrap_or_default();
-    if languages.is_empty() {
-        DEFAULT_TRANSLATE_LANGUAGES.iter().map(|s| s.to_string()).collect()
-    } else {
-        languages
-    }
-}
-
-pub fn save_translate_languages(languages: &[String]) -> std::io::Result<()> {
-    let mut root = load_root();
-    root["translate_languages"] = serde_json::json!(languages);
-    save_root(&root)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -187,8 +160,7 @@ mod tests {
     }
 
     #[test]
-    fn translate_and_adjust_length_templates_carry_their_placeholders() {
-        assert!(default_template_for("translate").contains("{language}"));
+    fn adjust_length_template_carries_its_placeholder() {
         assert!(default_template_for("adjust-length").contains("{length_instruction}"));
     }
 
@@ -240,20 +212,6 @@ mod tests {
         assert_eq!(load_custom_prompts(), edited);
 
         save_custom_prompts(&original).expect("restore failed");
-    }
-
-    #[test]
-    fn translate_languages_round_trip_and_default_when_empty() {
-        let _guard = lock_guard();
-        let original = load_translate_languages();
-
-        save_translate_languages(&["Englisch".to_string(), "Italienisch".to_string()]).expect("save failed");
-        assert_eq!(load_translate_languages(), vec!["Englisch".to_string(), "Italienisch".to_string()]);
-
-        save_translate_languages(&[]).expect("save failed");
-        assert_eq!(load_translate_languages(), DEFAULT_TRANSLATE_LANGUAGES.to_vec());
-
-        save_translate_languages(&original).expect("restore failed");
     }
 
     #[test]

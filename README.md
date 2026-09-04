@@ -19,7 +19,9 @@ blocks. Implemented so far:
 
 - **Split-pane editor** — the window remembers its size (and whether it was
   maximized) across restarts, always opening with the editor/preview split
-  exactly 50/50 regardless of that size. Markdown editing pane (GtkSourceView, syntax
+  exactly 50/50 regardless of that size; a header-bar toggle button
+  collapses the whole right-hand pane for a full-width editor and restores
+  it again. Markdown editing pane (GtkSourceView, syntax
   highlighting, spell-checking via [`libspelling`](https://gitlab.gnome.org/GNOME/libspelling))
   with a grouped formatting toolbar (cut/copy/paste; bold/italic/
   strikethrough with Ctrl+B/I; heading/quote/code/code block; lists; table;
@@ -45,14 +47,13 @@ blocks. Implemented so far:
   no API key), with a provider/model picker both in the tab itself and in
   Einstellungen.
 - **AI actions in the editor's context menu** — right-click the editor for
-  "Übersetzen" (into any configured target language), "Inhalt prüfen",
-  "Stil & Formatierung prüfen", "Rechtschreibung prüfen", "Zeichensetzung
-  prüfen", and "Länge anpassen…"; each sends the selection (or the whole
-  article, if nothing's selected) to the Chat tab with a matching prompt.
-  All six built-in prompts are editable/resettable in a "KI-Prompts"
-  settings page, which also holds the target-language list and your own
-  custom prompts (kept separate from the built-ins), both reflected in the
-  context menu immediately as you edit them.
+  "Inhalt prüfen", "Stil & Formatierung prüfen", "Rechtschreibung prüfen",
+  "Zeichensetzung prüfen", and "Länge anpassen…"; each sends the selection
+  (or the whole article, if nothing's selected) to the Chat tab with a
+  matching prompt. All five built-in prompts are editable/resettable in a
+  "KI-Prompts" settings page, which also holds your own custom prompts
+  (kept separate from the built-ins), reflected in the context menu
+  immediately as you edit them.
 - **Gutenberg block engine** (`crates/gutenberg`) — a standalone, unit-tested
   library that parses Markdown into a block tree and renders it as
   block-comment-annotated HTML (`<!-- wp:paragraph -->...`), independent of

@@ -117,6 +117,10 @@ pub fn build(app: &adw::Application) -> adw::ApplicationWindow {
     settings_button.set_tooltip_text(Some("Einstellungen (Strg+,)"));
     settings_button.set_action_name(Some("win.settings"));
 
+    let preview_toggle_button = gtk4::ToggleButton::builder().icon_name("sidebar-show-right-symbolic").active(true).build();
+    preview_toggle_button.set_tooltip_text(Some("Vorschau ein-/ausblenden"));
+    preview_toggle_button.set_action_name(Some("win.toggle-preview"));
+
     let publish_button = gtk4::Button::from_icon_name("send-to-symbolic");
     publish_button.set_tooltip_text(Some("Artikel exportieren (Strg+Umschalt+P)"));
     publish_button.set_action_name(Some("win.publish"));
@@ -131,6 +135,7 @@ pub fn build(app: &adw::Application) -> adw::ApplicationWindow {
     header_bar.pack_end(&settings_button);
     header_bar.pack_end(&properties_button);
     header_bar.pack_end(&media_button);
+    header_bar.pack_end(&preview_toggle_button);
     header_bar.pack_end(&publish_button);
 
     let status_bar = Rc::new(statusbar::StatusBar::new());
@@ -161,6 +166,23 @@ pub fn build(app: &adw::Application) -> adw::ApplicationWindow {
         let _ = windowstate::save(&state);
         glib::Propagation::Proceed
     });
+
+    // A `Gtk.Paned` gives its other child the full width once one side is
+    // hidden (no stray empty gap or handle) - so collapsing the whole right
+    // pane is just a visibility toggle, not a position/size dance. Bound as
+    // a stateful action (rather than a plain signal handler) so the toggle
+    // button's own pressed-in state stays in sync automatically, the same
+    // way every other header-bar button here is wired through `win.*`.
+    let toggle_preview_action = gio::SimpleAction::new_stateful("toggle-preview", None, &true.to_variant());
+    {
+        let right_pane = right_pane.clone();
+        toggle_preview_action.connect_activate(move |action, _| {
+            let visible = !action.state().and_then(|state| state.get::<bool>()).unwrap_or(true);
+            action.set_state(&visible.to_variant());
+            right_pane.set_visible(visible);
+        });
+    }
+    window.add_action(&toggle_preview_action);
 
     let current_path: Rc<RefCell<Option<PathBuf>>> = Rc::new(RefCell::new(None));
     let frontmatter: Rc<RefCell<Frontmatter>> = Rc::new(RefCell::new(Frontmatter::default()));

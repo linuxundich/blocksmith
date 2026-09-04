@@ -50,7 +50,18 @@ pub fn open(
         .min_content_height(240)
         .build();
 
-    let preview_page = gtk4::Box::builder().orientation(gtk4::Orientation::Vertical).spacing(8).vexpand(true).build();
+    // Same spacing/margins as `mediapanel::build_content`'s own outer box,
+    // so switching between "Vorschau" and "Medien" doesn't visibly shift
+    // the content's inset within the dialog.
+    let preview_page = gtk4::Box::builder()
+        .orientation(gtk4::Orientation::Vertical)
+        .spacing(12)
+        .margin_top(18)
+        .margin_bottom(18)
+        .margin_start(18)
+        .margin_end(18)
+        .vexpand(true)
+        .build();
     preview_page.append(&preview_label);
     preview_page.append(&preview_scroller);
 

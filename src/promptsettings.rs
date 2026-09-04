@@ -1,14 +1,13 @@
-//! The "KI-Prompts" page of the Einstellungen dialog: target languages for
-//! "Übersetzen …", the six built-in context-menu prompts (editable,
-//! resettable to their defaults), and the user's own custom prompts
-//! (create/edit/delete), kept in a group of their own so built-in and
-//! custom prompts are never confused with each other.
+//! The "KI-Prompts" page of the Einstellungen dialog: the five built-in
+//! context-menu prompts (editable, resettable to their defaults), and the
+//! user's own custom prompts (create/edit/delete), kept in a group of
+//! their own so built-in and custom prompts are never confused with each
+//! other.
 //!
-//! The editor context menu's "Übersetzen" submenu and "eigene Prompts"
-//! section are live `gio::Menu`s built once in `aimenu.rs`; this page is
-//! handed clones of those same menu handles so editing a language or a
-//! custom prompt here updates the context menu immediately, without
-//! needing the app restarted.
+//! The editor context menu's "eigene Prompts" section is a live `gio::Menu`
+//! built once in `aimenu.rs`; this page is handed a clone of that same menu
+//! handle so editing a custom prompt here updates the context menu
+//! immediately, without needing the app restarted.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -19,43 +18,13 @@ use gtk4::{gio, glib};
 
 use crate::aiprompts::{self, CustomPrompt};
 
-pub fn build_page(translate_menu: gio::Menu, custom_prompts_menu: gio::Menu) -> adw::PreferencesPage {
+pub fn build_page(custom_prompts_menu: gio::Menu) -> adw::PreferencesPage {
     let page = adw::PreferencesPage::builder().title("KI-Prompts").icon_name("insert-text-symbolic").build();
 
-    page.add(&build_translate_languages_group(&translate_menu));
     page.add(&build_builtin_prompts_group());
     page.add(&build_custom_prompts_group(&custom_prompts_menu));
 
     page
-}
-
-fn build_translate_languages_group(translate_menu: &gio::Menu) -> adw::PreferencesGroup {
-    let languages_row = adw::EntryRow::builder().title("Zielsprachen (durch Komma getrennt)").build();
-    languages_row.set_text(&aiprompts::load_translate_languages().join(", "));
-
-    let debounce: Rc<RefCell<Option<glib::SourceId>>> = Rc::new(RefCell::new(None));
-    let translate_menu = translate_menu.clone();
-    languages_row.connect_changed(move |row| {
-        if let Some(id) = debounce.borrow_mut().take() {
-            id.remove();
-        }
-        let text = row.text().to_string();
-        let translate_menu = translate_menu.clone();
-        let debounce_inner = debounce.clone();
-        let id = glib::timeout_add_local(Duration::from_millis(500), move || {
-            let languages: Vec<String> = text.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
-            let _ = aiprompts::save_translate_languages(&languages);
-            crate::aimenu::rebuild_translate_menu(&translate_menu, &languages);
-            *debounce_inner.borrow_mut() = None;
-            glib::ControlFlow::Break
-        });
-        *debounce.borrow_mut() = Some(id);
-    });
-
-    let group = adw::PreferencesGroup::builder().title("Übersetzung").build();
-    group.set_description(Some("Diese Sprachen stehen im Editor-Kontextmenü unter „Übersetzen“ zur Auswahl."));
-    group.add(&languages_row);
-    group
 }
 
 fn build_builtin_prompts_group() -> adw::PreferencesGroup {

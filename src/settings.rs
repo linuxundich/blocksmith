@@ -21,6 +21,6 @@ pub fn open(parent: &adw::ApplicationWindow, buffer: &sourceview5::Buffer, ai_me
     dialog.add(&appearance::build_page(buffer, preview_pane.clone()));
     dialog.add(&connection::build_page());
     dialog.add(&chatsettings::build_page());
-    dialog.add(&promptsettings::build_page(ai_menu_handles.translate_menu.clone(), ai_menu_handles.custom_prompts_menu.clone()));
+    dialog.add(&promptsettings::build_page(ai_menu_handles.custom_prompts_menu.clone()));
     dialog.present(Some(parent));
 }

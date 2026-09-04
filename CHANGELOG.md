@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.24.0] - 2026-09-04
+
+### Added
+
+- A header-bar toggle button collapses the whole right-hand pane (Vorschau/
+  Gutenberg-Code/Statistik/Chat) for a full-width editor, and restores it
+  again.
+
+### Changed
+
+- Removed "Übersetzen" from the editor context menu's built-in AI actions,
+  along with its target-language settings ("KI-Prompts" now has five
+  built-in prompts instead of six).
+- The export dialog's "Vorschau" and "Medien" tabs now share the same
+  margins/spacing, so switching between them no longer visibly shifts the
+  content's inset within the dialog.
+
+### Fixed
+
+- The editor context menu showed two separator lines back to back between
+  "KI-Alternativtext generieren…" and "KI-Aktionen" - a `gio::Menu` nested
+  inside another section's contents draws its own separator on top of the
+  outer one. Flattened the menu structure so there's exactly one.
+
 ## [0.23.0] - 2026-09-04
 
 ### Added

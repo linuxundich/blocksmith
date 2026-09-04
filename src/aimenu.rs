@@ -1,17 +1,22 @@
 //! Wires the editor's right-click context menu with a "KI-Aktionen"
-//! section: predefined prompts (Übersetzen/Inhalt/Stil/Rechtschreibung/
-//! Zeichensetzung/Länge) plus the user's own custom prompts, each sending
-//! the current selection (or, if nothing is selected, the whole article)
-//! to the Chat tab together with the matching prompt from `aiprompts.rs`.
+//! section: predefined prompts (Inhalt/Stil/Rechtschreibung/Zeichensetzung/
+//! Länge) plus the user's own custom prompts, each sending the current
+//! selection (or, if nothing is selected, the whole article) to the Chat
+//! tab together with the matching prompt from `aiprompts.rs`.
 //!
 //! The menu is a single `gio::Menu` combining the editor's existing
 //! spelling-suggestions menu (built in `editor.rs`) with the AI actions
-//! built here, set once via `view.set_extra_menu`. The "Übersetzen"
-//! submenu and the custom-prompts section are kept as long-lived `gio::Menu`
-//! handles (`rebuild_translate_menu`/`rebuild_custom_prompts_menu`) so
-//! `promptsettings.rs` can update them live when the user edits languages
-//! or custom prompts, without needing the app restarted - `gio::Menu`
-//! mutations are reflected immediately by anything displaying the model.
+//! built here, set once via `view.set_extra_menu`. Every section is
+//! appended directly onto that one top-level menu (not nested inside an
+//! intermediate `gio::Menu` of its own) - `gio::Menu` renders a separator
+//! at every section boundary, including boundaries inside a menu that's
+//! itself used as another section's contents, so wrapping would have drawn
+//! two separators back to back between "KI-Alternativtext generieren…" and
+//! "KI-Aktionen" instead of one. The custom-prompts section is kept as a
+//! long-lived `gio::Menu` handle (`rebuild_custom_prompts_menu`) so
+//! `promptsettings.rs` can update it live when the user edits their custom
+//! prompts, without needing the app restarted - `gio::Menu` mutations are
+//! reflected immediately by anything displaying the model.
 
 use std::rc::Rc;
 
@@ -22,14 +27,12 @@ use crate::aiprompts::{self, CustomPrompt};
 use crate::chat::ChatView;
 
 pub struct AiMenuHandles {
-    pub translate_menu: gio::Menu,
     pub custom_prompts_menu: gio::Menu,
 }
 
 /// Builds the AI action group + context menu section and installs both on
-/// `view`. Returns the live menu handles `promptsettings.rs` needs to keep
-/// the "Übersetzen" and "Eigene Prompts" menu contents in sync with the
-/// settings dialog.
+/// `view`. Returns the live menu handle `promptsettings.rs` needs to keep
+/// the "Eigene Prompts" menu contents in sync with the settings dialog.
 pub fn install(
     view: &sourceview5::View,
     buffer: &sourceview5::Buffer,
@@ -38,17 +41,10 @@ pub fn install(
     spelling_menu: &gio::MenuModel,
     image_alt_menu: &gio::MenuModel,
 ) -> AiMenuHandles {
-    let translate_menu = gio::Menu::new();
-    rebuild_translate_menu(&translate_menu, &aiprompts::load_translate_languages());
-
     let custom_prompts_menu = gio::Menu::new();
     rebuild_custom_prompts_menu(&custom_prompts_menu, &aiprompts::load_custom_prompts());
 
-    let translate_item = gio::MenuItem::new(Some("Übersetzen"), None);
-    translate_item.set_submenu(Some(&translate_menu));
-
     let builtin_actions = gio::Menu::new();
-    builtin_actions.append_item(&translate_item);
     for prompt in aiprompts::BUILTIN_PROMPTS {
         if prompt.id == "adjust-length" {
             let item = gio::MenuItem::new(Some(&format!("{} …", prompt.title)), Some("ai.adjust-length"));
@@ -58,14 +54,11 @@ pub fn install(
         }
     }
 
-    let ai_menu = gio::Menu::new();
-    ai_menu.append_section(Some("KI-Aktionen"), &builtin_actions);
-    ai_menu.append_section(None, &custom_prompts_menu);
-
     let combined_extra_menu = gio::Menu::new();
     combined_extra_menu.append_section(None, spelling_menu);
     combined_extra_menu.append_section(None, image_alt_menu);
-    combined_extra_menu.append_section(None, &ai_menu);
+    combined_extra_menu.append_section(Some("KI-Aktionen"), &builtin_actions);
+    combined_extra_menu.append_section(None, &custom_prompts_menu);
     view.set_extra_menu(Some(&combined_extra_menu));
 
     let actions = gio::SimpleActionGroup::new();
@@ -81,18 +74,6 @@ pub fn install(
         });
     }
     actions.add_action(&run_action);
-
-    let translate_action = gio::SimpleAction::new("translate", Some(&String::static_variant_type()));
-    {
-        let buffer = buffer.clone();
-        let view_stack = view_stack.clone();
-        let chat_view = chat_view.clone();
-        translate_action.connect_activate(move |_, param| {
-            let Some(language) = param.and_then(glib::Variant::str) else { return };
-            trigger_translate(&buffer, &view_stack, &chat_view, language);
-        });
-    }
-    actions.add_action(&translate_action);
 
     let adjust_length_action = gio::SimpleAction::new("adjust-length", None);
     {
@@ -111,7 +92,7 @@ pub fn install(
 
     view.insert_action_group("ai", Some(&actions));
 
-    AiMenuHandles { translate_menu, custom_prompts_menu }
+    AiMenuHandles { custom_prompts_menu }
 }
 
 fn run_menu_item(label: &str, prompt_id: &str) -> gio::MenuItem {
@@ -120,22 +101,10 @@ fn run_menu_item(label: &str, prompt_id: &str) -> gio::MenuItem {
     item
 }
 
-/// Rebuilds `menu`'s contents in place from `languages` - called both at
-/// startup and live from `promptsettings.rs` whenever the user edits the
-/// language list, since mutating an already-installed `gio::Menu` updates
+/// Rebuilds `menu`'s contents in place from `prompts` - called both at
+/// startup and live from `promptsettings.rs` whenever the user edits their
+/// custom prompts, since mutating an already-installed `gio::Menu` updates
 /// any popover showing it immediately.
-pub fn rebuild_translate_menu(menu: &gio::Menu, languages: &[String]) {
-    menu.remove_all();
-    for language in languages {
-        let item = gio::MenuItem::new(Some(language), None);
-        item.set_action_and_target_value(Some("ai.translate"), Some(&language.to_variant()));
-        menu.append_item(&item);
-    }
-}
-
-/// Rebuilds `menu`'s contents in place from `prompts` - see
-/// `rebuild_translate_menu` for why this is an in-place mutation rather
-/// than swapping the menu object out.
 pub fn rebuild_custom_prompts_menu(menu: &gio::Menu, prompts: &[CustomPrompt]) {
     menu.remove_all();
     for prompt in prompts {
@@ -173,13 +142,6 @@ fn trigger_prompt_run(buffer: &sourceview5::Buffer, view_stack: &adw::ViewStack,
     };
     let full_prompt = format!("{template}\n\n---\n\n{content}");
     dispatch_to_chat(view_stack, chat_view, &title, full_prompt);
-}
-
-fn trigger_translate(buffer: &sourceview5::Buffer, view_stack: &adw::ViewStack, chat_view: &ChatView, language: &str) {
-    let content = selected_or_full_text(buffer);
-    let template = aiprompts::load_prompt_text("translate").replace("{language}", language);
-    let full_prompt = format!("{template}\n\n---\n\n{content}");
-    dispatch_to_chat(view_stack, chat_view, &format!("Übersetzen → {language}"), full_prompt);
 }
 
 fn open_adjust_length_dialog(window: &gtk4::Window, buffer: &sourceview5::Buffer, view_stack: &adw::ViewStack, chat_view: Rc<ChatView>) {
