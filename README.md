@@ -124,8 +124,8 @@ blocks. Implemented so far:
   models, Ollama additionally getting a configurable base URL; plus a
   fully editable, resettable system prompt shared across all providers),
   and a "KI-Prompts"
-  page (the context menu's six built-in prompts, target-language list, and
-  custom prompts - see above).
+  page (the context menu's five built-in prompts and custom prompts - see
+  above).
 - **Publishing** — an "Artikel exportieren" dialog shows the generated
   Gutenberg HTML, then creates/updates the WordPress post via its REST API
   on a background thread. "Veröffentlichen" and "Als Entwurf hochladen"
@@ -142,6 +142,11 @@ blocks. Implemented so far:
   superseded one cleaned up automatically, since WordPress can't replace
   an existing attachment's file in place. Once published, the same dialog
   offers a confirmed "Von WordPress löschen" to remove the post again.
+- **Primary menu** (the header bar's hamburger button) — "Einstellungen"
+  and "Über Blocksmith", the latter a native `Adw.AboutDialog` with the
+  version (always in sync with `Cargo.toml`), GPL-3.0-or-later license
+  text, issue tracker/repository links, and the full `CHANGELOG.md`
+  history as its browsable "Neuigkeiten" release notes.
 - **Flatpak packaging** — manifest, desktop entry, AppStream metainfo, and
   icon under `data/` and `build-aux/flatpak/`.
 

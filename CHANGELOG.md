@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.26.0] - 2026-09-04
+
+### Added
+
+- "Über Blocksmith" - a native About dialog reachable from a new primary
+  menu (the header bar's hamburger button, alongside "Einstellungen"),
+  showing the version (kept in sync with `Cargo.toml`), license, and
+  issue-tracker/repository links, plus the full version history from
+  `CHANGELOG.md` as its browsable "Neuigkeiten" release notes.
+
 ## [0.25.0] - 2026-09-04
 
 ### Added

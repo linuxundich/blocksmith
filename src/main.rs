@@ -1,8 +1,10 @@
+mod about;
 mod aialt;
 mod aimenu;
 mod aiprompts;
 mod appearance;
 mod autocomplete;
+mod changelog;
 mod chat;
 mod chatconfig;
 mod chatsettings;

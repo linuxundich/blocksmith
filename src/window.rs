@@ -8,8 +8,8 @@ use gtk4::{gio, glib};
 
 use crate::document::{Document, Frontmatter};
 use crate::{
-    aimenu, chat, codeview, document, editor, export, formatting, imagealt, importer, linkpicker, media, mediapanel, preview, properties, recentfiles,
-    settings, stats, statusbar, termcache, windowstate,
+    about, aimenu, chat, codeview, document, editor, export, formatting, imagealt, importer, linkpicker, media, mediapanel, preview, properties,
+    recentfiles, settings, stats, statusbar, termcache, windowstate,
 };
 
 const DEBOUNCE_MS: u64 = 250;
@@ -123,9 +123,20 @@ pub fn build(app: &adw::Application) -> adw::ApplicationWindow {
     media_button.set_tooltip_text(Some("Medienverwaltung (Strg+Umschalt+M)"));
     media_button.set_action_name(Some("win.media-manager"));
 
-    let settings_button = gtk4::Button::from_icon_name("open-menu-symbolic");
-    settings_button.set_tooltip_text(Some("Einstellungen (Strg+,)"));
-    settings_button.set_action_name(Some("win.settings"));
+    // A real primary menu (rather than the plain "win.settings"-bound
+    // button this used to be) - "open-menu-symbolic" is the conventional
+    // GNOME hamburger icon for exactly this, and "Über Blocksmith" needs
+    // *some* home now that it exists; Ctrl+, still opens Einstellungen
+    // directly, since that's the action-level shortcut, independent of
+    // how the button itself triggers it.
+    let primary_menu = gio::Menu::new();
+    primary_menu.append(Some("Einstellungen"), Some("win.settings"));
+    primary_menu.append(Some("Über Blocksmith"), Some("win.about"));
+
+    let settings_button = gtk4::MenuButton::new();
+    settings_button.set_icon_name("open-menu-symbolic");
+    settings_button.set_tooltip_text(Some("Hauptmenü (Strg+,)"));
+    settings_button.set_menu_model(Some(&primary_menu));
 
     let preview_toggle_button = gtk4::ToggleButton::builder().icon_name("sidebar-show-right-symbolic").active(true).build();
     preview_toggle_button.set_tooltip_text(Some("Vorschau ein-/ausblenden"));
@@ -223,6 +234,7 @@ pub fn build(app: &adw::Application) -> adw::ApplicationWindow {
     wire_recent_files_button(&recent_files_widgets, &buffer, &current_path, &frontmatter, &title, &toast_overlay, &preview_pane);
     wire_properties_action(&window, &frontmatter, &category_terms, &tag_terms, &current_path);
     wire_settings_action(&window, &buffer, ai_menu_handles, &preview_pane);
+    wire_about_action(&window);
     wire_publish_action(&window, &buffer, &current_path, &frontmatter, &preview_pane);
     wire_media_action(&window, &buffer, &current_path, &frontmatter, &preview_pane);
     wire_insert_image_action(&window, &buffer, &current_path);
@@ -718,6 +730,17 @@ fn wire_settings_action(
     action.connect_activate(move |_, _| {
         if let Some(window) = window_weak.upgrade() {
             settings::open(&window, &buffer, &ai_menu_handles, &preview_pane);
+        }
+    });
+    window.add_action(&action);
+}
+
+fn wire_about_action(window: &adw::ApplicationWindow) {
+    let action = gio::SimpleAction::new("about", None);
+    let window_weak = window.downgrade();
+    action.connect_activate(move |_, _| {
+        if let Some(window) = window_weak.upgrade() {
+            about::open(&window);
         }
     });
     window.add_action(&action);
