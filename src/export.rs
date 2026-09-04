@@ -17,7 +17,7 @@ use std::time::Duration;
 use adw::prelude::*;
 use gtk4::glib;
 
-use crate::document::Frontmatter;
+use crate::document::{Frontmatter, PostStatus};
 use crate::{media, secrets, wpclient, wpsite};
 
 pub fn open(
@@ -74,6 +74,9 @@ pub fn open(
     publish_button.add_css_class("suggested-action");
     publish_button.set_halign(gtk4::Align::End);
 
+    let draft_button = gtk4::Button::with_label("Als Entwurf hochladen");
+    draft_button.set_halign(gtk4::Align::End);
+
     let delete_button = gtk4::Button::with_label("Von WordPress löschen");
     delete_button.add_css_class("destructive-action");
     delete_button.set_halign(gtk4::Align::End);
@@ -81,15 +84,18 @@ pub fn open(
 
     let button_row = gtk4::Box::builder().orientation(gtk4::Orientation::Horizontal).spacing(6).halign(gtk4::Align::End).build();
     button_row.append(&delete_button);
+    button_row.append(&draft_button);
     button_row.append(&publish_button);
 
     if site.url.is_empty() {
         status_label.set_label("Keine WordPress-Verbindung eingerichtet - bitte zuerst über den Verbindungs-Dialog konfigurieren.");
         publish_button.set_sensitive(false);
+        draft_button.set_sensitive(false);
         delete_button.set_sensitive(false);
     } else if current_fm.title.is_empty() {
         status_label.set_label("Bitte zuerst einen Titel in den Artikel-Eigenschaften setzen.");
         publish_button.set_sensitive(false);
+        draft_button.set_sensitive(false);
     }
 
     content_box.append(&preview_label);
@@ -179,13 +185,45 @@ pub fn open(
         });
     }
 
-    let publish_button_for_click = publish_button.clone();
-    publish_button.connect_clicked(move |_| {
-        publish_button_for_click.set_sensitive(false);
+    wire_publish_button(&publish_button, &draft_button, PostStatus::Publish, &frontmatter, &body, &doc_dir, &status_label);
+    wire_publish_button(&draft_button, &publish_button, PostStatus::Draft, &frontmatter, &body, &doc_dir, &status_label);
+
+    dialog.present(Some(parent));
+}
+
+/// Wires one of the two publish-flow buttons ("Veröffentlichen" /
+/// "Als Entwurf hochladen") - `target_status` is sent regardless of
+/// whatever `Frontmatter.status` happens to currently hold (e.g. from the
+/// separate "Artikel-Eigenschaften" dialog), so clicking either button is
+/// an unambiguous, deterministic choice rather than depending on a status
+/// set somewhere else first. `other_button` is disabled alongside `button`
+/// while a request is in flight, so both can't race the same post/media at
+/// once; on success `Frontmatter.status` is updated to match, so
+/// "Artikel-Eigenschaften" reflects what was actually just sent.
+fn wire_publish_button(
+    button: &gtk4::Button,
+    other_button: &gtk4::Button,
+    target_status: PostStatus,
+    frontmatter: &Rc<RefCell<Frontmatter>>,
+    body: &str,
+    doc_dir: &Option<PathBuf>,
+    status_label: &gtk4::Label,
+) {
+    let other_button = other_button.clone();
+    let frontmatter = frontmatter.clone();
+    let body = body.to_string();
+    let doc_dir = doc_dir.clone();
+    let status_label = status_label.clone();
+
+    let button_for_click = button.clone();
+    button.connect_clicked(move |_| {
+        button_for_click.set_sensitive(false);
+        other_button.set_sensitive(false);
         status_label.set_label("Wird gesendet …");
 
         let site = wpsite::load();
         let mut current_fm = frontmatter.borrow().clone();
+        current_fm.status = target_status;
         let body = body.clone();
         let doc_dir = doc_dir.clone();
 
@@ -203,33 +241,36 @@ pub fn open(
 
         let frontmatter = frontmatter.clone();
         let status_label = status_label.clone();
-        let publish_button = publish_button_for_click.clone();
+        let button = button_for_click.clone();
+        let other_button = other_button.clone();
         glib::timeout_add_local(Duration::from_millis(150), move || match rx.try_recv() {
             Ok(Ok((post, media))) => {
                 {
                     let mut fm = frontmatter.borrow_mut();
                     fm.wp_post_id = Some(post.id);
                     fm.media = media;
+                    fm.status = target_status;
                 }
                 status_label.set_label(&format!("Erfolgreich gesendet: {}", post.link));
-                publish_button.set_sensitive(true);
+                button.set_sensitive(true);
+                other_button.set_sensitive(true);
                 glib::ControlFlow::Break
             }
             Ok(Err(err)) => {
                 status_label.set_label(&format!("Fehler: {err}"));
-                publish_button.set_sensitive(true);
+                button.set_sensitive(true);
+                other_button.set_sensitive(true);
                 glib::ControlFlow::Break
             }
             Err(mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
             Err(mpsc::TryRecvError::Disconnected) => {
                 status_label.set_label("Interner Fehler: Export-Thread hat kein Ergebnis geliefert.");
-                publish_button.set_sensitive(true);
+                button.set_sensitive(true);
+                other_button.set_sensitive(true);
                 glib::ControlFlow::Break
             }
         });
     });
-
-    dialog.present(Some(parent));
 }
 
 fn run_export(
@@ -357,6 +398,48 @@ pub(crate) fn mime_from_extension(filename: &str) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Exercises the "Als Entwurf hochladen" vs "Veröffentlichen" choice
+    /// directly: `run_export` must send whatever `frontmatter.status` holds
+    /// at the time of the call (the two export-dialog buttons each force
+    /// this to a specific value before calling it - see
+    /// `wire_publish_button`), and a later call with a different status on
+    /// the same `wp_post_id` must update it in place, not create a second
+    /// post.
+    #[test]
+    #[ignore]
+    fn run_export_respects_the_requested_post_status() {
+        let site = wpsite::load();
+        assert!(!site.url.is_empty(), "no WordPress site configured (run the connection dialog first)");
+        let password = futures_lite::future::block_on(secrets::load_app_password(&site.url, &site.username))
+            .expect("keyring lookup failed")
+            .expect("no application password stored for this site/user");
+        let client = wpclient::Client::new(&site.url, &site.username, &password);
+
+        let body = "Ein Testartikel für Entwurf/Veröffentlichen.\n";
+        let mut frontmatter = Frontmatter {
+            title: "Blocksmith draft/publish status test".to_string(),
+            slug: String::new(),
+            status: crate::document::PostStatus::Draft,
+            categories: Vec::new(),
+            tags: Vec::new(),
+            featured_image: None,
+            wp_post_id: None,
+            featured_media_id: None,
+            media: Vec::new(),
+        };
+
+        let created = run_export(&site, &password, &mut frontmatter, body, None).expect("draft export failed");
+        assert_eq!(client.get_post(created.id).expect("get_post failed").status, "draft");
+
+        frontmatter.wp_post_id = Some(created.id);
+        frontmatter.status = crate::document::PostStatus::Publish;
+        let updated = run_export(&site, &password, &mut frontmatter, body, None).expect("publish export failed");
+        assert_eq!(updated.id, created.id, "updating status must reuse the same post, not create a new one");
+        assert_eq!(client.get_post(updated.id).expect("get_post failed").status, "publish");
+
+        client.delete_post(created.id).expect("cleanup delete_post failed");
+    }
 
     /// Exercises `run_export`'s own composition (local image path
     /// resolution + upload, category/tag name resolution, frontmatter ->

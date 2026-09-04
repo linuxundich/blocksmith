@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-09-04
+
+### Added
+
+- A second button, "Als Entwurf hochladen", in the "Artikel exportieren"
+  dialog alongside "Veröffentlichen" - each sends its own status
+  (draft/publish) explicitly, regardless of whatever the separate
+  "Artikel-Eigenschaften" dialog's status field currently holds, so
+  publishing directly vs. uploading a draft first is now an unambiguous
+  choice made right in the publish dialog. Clicking either updates the
+  same WordPress post (via its already-tracked id) rather than creating a
+  new one, and both buttons are disabled together while a request is in
+  flight so they can't race each other.
+
 ## [0.15.0] - 2026-09-04
 
 ### Fixed

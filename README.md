@@ -102,8 +102,13 @@ blocks. Implemented so far:
   custom prompts - see above).
 - **Publishing** — an "Artikel exportieren" dialog shows the generated
   Gutenberg HTML, then creates/updates the WordPress post via its REST API
-  on a background thread, resolving category/tag names to WordPress term
-  ids (creating them if they don't exist yet). Locally-referenced images
+  on a background thread. "Veröffentlichen" and "Als Entwurf hochladen"
+  each send their own status explicitly, independent of whatever the
+  "Artikel-Eigenschaften" dialog's status field currently holds - so
+  publishing directly vs. uploading a draft first is an unambiguous choice
+  made right in this dialog, and either one updates the same tracked post
+  rather than creating a new one. Category/tag names are resolved to
+  WordPress term ids (creating them if they don't exist yet). Locally-referenced images
   are uploaded to the media library "bei Bedarf" (as needed), sharing the
   same tracked media list Medienverwaltung uses: an image whose content
   hash still matches what's already on the server is reused rather than
