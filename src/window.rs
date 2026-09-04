@@ -8,7 +8,7 @@ use gtk4::{gio, glib};
 
 use crate::document::{Document, Frontmatter};
 use crate::{
-    aimenu, chat, codeview, document, editor, export, formatting, imagealt, importer, linkpicker, mediapanel, preview, properties, settings,
+    aimenu, chat, codeview, document, editor, export, formatting, imagealt, importer, linkpicker, media, mediapanel, preview, properties, settings,
     stats, statusbar, termcache, windowstate,
 };
 
@@ -171,11 +171,11 @@ pub fn build(app: &adw::Application) -> adw::ApplicationWindow {
     termcache::spawn_refresh(category_terms.clone(), tag_terms.clone());
 
     let image_alt_menu = imagealt::menu_section();
-    imagealt::install(&view, &buffer, frontmatter.clone(), current_path.clone());
-    preview_pane.install_ai_alt_text_menu(&window, frontmatter.clone());
+    imagealt::install(&view, &buffer, frontmatter.clone(), current_path.clone(), preview_pane.clone());
+    preview::PreviewPane::install_ai_alt_text_menu(&preview_pane, &window, frontmatter.clone());
     let ai_menu_handles = aimenu::install(&view, &buffer, &view_stack, chat_view.clone(), &spelling_menu, image_alt_menu.upcast_ref());
 
-    wire_live_preview(&buffer, &preview_pane, &stats_view, &code_view);
+    wire_live_preview(&buffer, &preview_pane, &stats_view, &code_view, &frontmatter);
     wire_scroll_sync(&editor_scroller, &buffer, &preview_pane);
     wire_status_bar(&buffer, &status_bar);
     wire_new_action(&window, &buffer, &current_path, &frontmatter, &title, &preview_pane);
@@ -184,8 +184,8 @@ pub fn build(app: &adw::Application) -> adw::ApplicationWindow {
     wire_save_action(&window, &buffer, &current_path, &frontmatter, &title, &toast_overlay, &preview_pane);
     wire_properties_action(&window, &frontmatter, &category_terms, &tag_terms, &current_path);
     wire_settings_action(&window, &buffer, ai_menu_handles, &preview_pane);
-    wire_publish_action(&window, &buffer, &current_path, &frontmatter);
-    wire_media_action(&window, &buffer, &current_path, &frontmatter);
+    wire_publish_action(&window, &buffer, &current_path, &frontmatter, &preview_pane);
+    wire_media_action(&window, &buffer, &current_path, &frontmatter, &preview_pane);
     wire_insert_image_action(&window, &buffer, &current_path);
     wire_insert_post_link_action(&window, &buffer);
 
@@ -210,12 +210,14 @@ fn wire_live_preview(
     preview_pane: &Rc<preview::PreviewPane>,
     stats_view: &Rc<stats::StatsView>,
     code_view: &Rc<codeview::CodeView>,
+    frontmatter: &Rc<RefCell<Frontmatter>>,
 ) {
     let debounce: Rc<RefCell<Option<glib::SourceId>>> = Rc::new(RefCell::new(None));
 
     let preview_pane_clone = preview_pane.clone();
     let stats_view_clone = stats_view.clone();
     let code_view_clone = code_view.clone();
+    let frontmatter_clone = frontmatter.clone();
     let debounce_clone = debounce.clone();
     buffer.connect_changed(move |buf| {
         if let Some(id) = debounce_clone.borrow_mut().take() {
@@ -225,9 +227,20 @@ fn wire_live_preview(
         let preview_pane = preview_pane_clone.clone();
         let stats_view = stats_view_clone.clone();
         let code_view = code_view_clone.clone();
+        let frontmatter = frontmatter_clone.clone();
         let debounce_inner = debounce_clone.clone();
         let id = glib::timeout_add_local(Duration::from_millis(DEBOUNCE_MS), move || {
-            preview_pane.update(&text);
+            // Reconciled here (not just relying on whatever the media list
+            // already holds) so the badges the preview draws - and any
+            // other feature reading `frontmatter.media` afterward, like
+            // Medienverwaltung - see a brand-new `![]()` reference right
+            // away, not only once some other dialog happens to reconcile it.
+            let media_items = {
+                let mut fm = frontmatter.borrow_mut();
+                fm.media = media::reconcile(&fm.media, &text);
+                fm.media.clone()
+            };
+            preview_pane.update(&text, &media_items);
             stats_view.update(&text);
             code_view.update(&text);
             *debounce_inner.borrow_mut() = None;
@@ -236,7 +249,7 @@ fn wire_live_preview(
         *debounce_clone.borrow_mut() = Some(id);
     });
 
-    preview_pane.update("");
+    preview_pane.update("", &frontmatter.borrow().media.clone());
     stats_view.update("");
     code_view.update("");
 }
@@ -589,11 +602,13 @@ fn wire_publish_action(
     buffer: &sourceview5::Buffer,
     current_path: &Rc<RefCell<Option<PathBuf>>>,
     frontmatter: &Rc<RefCell<Frontmatter>>,
+    preview_pane: &Rc<preview::PreviewPane>,
 ) {
     let action = gio::SimpleAction::new("publish", None);
     let buffer = buffer.clone();
     let current_path = current_path.clone();
     let frontmatter = frontmatter.clone();
+    let preview_pane = preview_pane.clone();
     let window_weak = window.downgrade();
     action.connect_activate(move |_, _| {
         let Some(window) = window_weak.upgrade() else {
@@ -601,7 +616,7 @@ fn wire_publish_action(
         };
         let body = buffer.text(&buffer.start_iter(), &buffer.end_iter(), false).to_string();
         let doc_dir = current_path.borrow().as_ref().and_then(|p| p.parent().map(Path::to_path_buf));
-        export::open(&window, body, frontmatter.clone(), doc_dir);
+        export::open(&window, body, frontmatter.clone(), doc_dir, preview_pane.clone());
     });
     window.add_action(&action);
 }
@@ -653,11 +668,13 @@ fn wire_media_action(
     buffer: &sourceview5::Buffer,
     current_path: &Rc<RefCell<Option<PathBuf>>>,
     frontmatter: &Rc<RefCell<Frontmatter>>,
+    preview_pane: &Rc<preview::PreviewPane>,
 ) {
     let action = gio::SimpleAction::new("media-manager", None);
     let buffer = buffer.clone();
     let current_path = current_path.clone();
     let frontmatter = frontmatter.clone();
+    let preview_pane = preview_pane.clone();
     let window_weak = window.downgrade();
     action.connect_activate(move |_, _| {
         let Some(window) = window_weak.upgrade() else {
@@ -665,7 +682,7 @@ fn wire_media_action(
         };
         let body = buffer.text(&buffer.start_iter(), &buffer.end_iter(), false).to_string();
         let doc_dir = current_path.borrow().as_ref().and_then(|p| p.parent().map(Path::to_path_buf));
-        mediapanel::open(&window, body, frontmatter.clone(), doc_dir);
+        mediapanel::open(&window, body, frontmatter.clone(), doc_dir, preview_pane.clone());
     });
     window.add_action(&action);
 }

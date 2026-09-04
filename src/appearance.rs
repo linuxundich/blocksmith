@@ -482,7 +482,7 @@ fn build_preview_group(preview_pane: Rc<preview::PreviewPane>) -> adw::Preferenc
         let sample_view = sample_view.clone();
         Rc::new(move || {
             let dark = adw::StyleManager::default().is_dark();
-            sample_view.load_html(&preview::render_html(PREVIEW_STYLE_SAMPLE_MARKDOWN, preview_pane.style(), dark), None);
+            sample_view.load_html(&preview::render_html(PREVIEW_STYLE_SAMPLE_MARKDOWN, preview_pane.style(), dark, &[]), None);
         })
     };
     refresh_sample();

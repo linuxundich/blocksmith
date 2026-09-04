@@ -34,7 +34,11 @@ blocks. Implemented so far:
   `Adw.InlineViewSwitcher`, rendering all tabs as one seamless linked
   pill, in a toolbar row matching the editor's) are "Vorschau" (follows the app's light/dark
   mode, with a choice of Modern/Klassisch/Sepia typographic styles picked
-  in Einstellungen), "Gutenberg-Code" (the exact block HTML that would be published),
+  in Einstellungen; every image gets small badges in its bottom-right
+  corner - an upload arrow once it's on WordPress, "Alt" once its alt text
+  is defined, and its file format - in that fixed order whenever more than
+  one applies, updated live from Medienverwaltung/the alt-text dialogs, not
+  just on the next edit), "Gutenberg-Code" (the exact block HTML that would be published),
   "Statistik" (word/character/paragraph counts, estimated reading time),
   and "Chat" - a writing assistant with message bubbles (replies rendered
   as Markdown), backed by Gemini, ChatGPT, Claude, or Ollama (self-hosted,

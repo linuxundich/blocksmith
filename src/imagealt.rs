@@ -27,6 +27,7 @@ use gtk4::gio;
 use crate::aialt;
 use crate::document::Frontmatter;
 use crate::media::{self, AltText};
+use crate::preview;
 
 /// The context-menu section to merge into the editor's combined
 /// `extra-menu` (see `aimenu.rs`, the sole caller of `view.set_extra_menu`).
@@ -41,7 +42,13 @@ pub fn menu_section() -> gio::Menu {
 /// docs for why this can't just rely on default `Gtk.TextView` behavior),
 /// and wires the `imagealt.set` action activated by the menu item
 /// `menu_section` returns, which then reads the (now-accurate) cursor line.
-pub fn install(view: &sourceview5::View, buffer: &sourceview5::Buffer, frontmatter: Rc<RefCell<Frontmatter>>, current_path: Rc<RefCell<Option<PathBuf>>>) {
+pub fn install(
+    view: &sourceview5::View,
+    buffer: &sourceview5::Buffer,
+    frontmatter: Rc<RefCell<Frontmatter>>,
+    current_path: Rc<RefCell<Option<PathBuf>>>,
+    preview_pane: Rc<preview::PreviewPane>,
+) {
     let gesture = gtk4::GestureClick::new();
     gesture.set_button(3); // secondary/right button
     {
@@ -63,6 +70,7 @@ pub fn install(view: &sourceview5::View, buffer: &sourceview5::Buffer, frontmatt
     {
         let buffer = buffer.clone();
         let frontmatter = frontmatter.clone();
+        let preview_pane = preview_pane.clone();
         let view_weak = view.downgrade();
         set_action.connect_activate(move |_, _| {
             let Some(view) = view_weak.upgrade() else { return };
@@ -70,7 +78,7 @@ pub fn install(view: &sourceview5::View, buffer: &sourceview5::Buffer, frontmatt
                 return;
             };
             let line = buffer.iter_at_mark(&buffer.get_insert()).line();
-            open_for_line(&window, &buffer, &frontmatter, line);
+            open_for_line(&window, &buffer, &frontmatter, line, &preview_pane);
         });
     }
     actions.add_action(&set_action);
@@ -86,7 +94,7 @@ pub fn install(view: &sourceview5::View, buffer: &sourceview5::Buffer, frontmatt
             };
             let line = buffer.iter_at_mark(&buffer.get_insert()).line();
             let doc_dir = current_path.borrow().as_ref().and_then(|p| p.parent().map(|d| d.to_path_buf()));
-            generate_ai_for_line(&window, &buffer, &frontmatter, line, doc_dir);
+            generate_ai_for_line(&window, &buffer, &frontmatter, line, doc_dir, &preview_pane);
         });
     }
     actions.add_action(&generate_ai_action);
@@ -103,6 +111,7 @@ fn generate_ai_for_line(
     frontmatter: &Rc<RefCell<Frontmatter>>,
     line: i32,
     doc_dir: Option<PathBuf>,
+    preview_pane: &Rc<preview::PreviewPane>,
 ) {
     let body = buffer.text(&buffer.start_iter(), &buffer.end_iter(), false).to_string();
 
@@ -124,7 +133,7 @@ fn generate_ai_for_line(
         return;
     };
 
-    aialt::open(window, frontmatter.clone(), index, doc_dir);
+    aialt::open(window, frontmatter.clone(), index, doc_dir, preview_pane.clone());
 }
 
 /// Finds the `![alt](source)` reference starting on `line` (0-indexed,
@@ -134,7 +143,7 @@ fn generate_ai_for_line(
 /// text and caption - the same fields and wiring as `mediapanel.rs`'s row,
 /// minus the upload button, which isn't part of what a quick in-editor
 /// shortcut needs.
-fn open_for_line(window: &gtk4::Window, buffer: &sourceview5::Buffer, frontmatter: &Rc<RefCell<Frontmatter>>, line: i32) {
+fn open_for_line(window: &gtk4::Window, buffer: &sourceview5::Buffer, frontmatter: &Rc<RefCell<Frontmatter>>, line: i32, preview_pane: &Rc<preview::PreviewPane>) {
     let body = buffer.text(&buffer.start_iter(), &buffer.end_iter(), false).to_string();
 
     let Some(source) = image_source_on_line(&body, line) else {
@@ -171,6 +180,7 @@ fn open_for_line(window: &gtk4::Window, buffer: &sourceview5::Buffer, frontmatte
     {
         let frontmatter = frontmatter.clone();
         let alt_entry_row = alt_entry_row.clone();
+        let preview_pane = preview_pane.clone();
         alt_switch_row.connect_active_notify(move |row| {
             let active = row.is_active();
             alt_entry_row.set_visible(active);
@@ -182,11 +192,13 @@ fn open_for_line(window: &gtk4::Window, buffer: &sourceview5::Buffer, frontmatte
                     AltText::Undefined
                 };
             }
+            preview_pane.refresh_media(&frontmatter.borrow().media);
         });
     }
     {
         let frontmatter = frontmatter.clone();
         let alt_switch_row = alt_switch_row.clone();
+        let preview_pane = preview_pane.clone();
         alt_entry_row.connect_changed(move |row| {
             if !alt_switch_row.is_active() {
                 return;
@@ -195,6 +207,7 @@ fn open_for_line(window: &gtk4::Window, buffer: &sourceview5::Buffer, frontmatte
             if let Some(item) = frontmatter.borrow_mut().media.get_mut(index) {
                 item.alt = if text.is_empty() { AltText::Empty } else { AltText::Text(text) };
             }
+            preview_pane.refresh_media(&frontmatter.borrow().media);
         });
     }
 

@@ -118,6 +118,11 @@ pub struct PreviewPane {
     web_view: webkit6::WebView,
     style: Rc<Cell<PreviewStyle>>,
     last_markdown: Rc<RefCell<String>>,
+    /// The document's current per-image metadata (alt text, upload state),
+    /// already reconciled against `last_markdown` by the caller - used to
+    /// draw the upload-status/alt/format badges in each image's bottom-right
+    /// corner (see `wrap_images_with_badges`).
+    last_media: Rc<RefCell<Vec<MediaItem>>>,
     /// The current article's own directory, if it has one (an unsaved or
     /// WordPress-imported-but-not-yet-saved document has none) - passed to
     /// the `WebView` as its base URI so a relative `<img src="photo.png">`
@@ -150,15 +155,17 @@ impl PreviewPane {
 
         let style = Rc::new(Cell::new(load_preview_style()));
         let last_markdown: Rc<RefCell<String>> = Rc::new(RefCell::new(String::new()));
+        let last_media: Rc<RefCell<Vec<MediaItem>>> = Rc::new(RefCell::new(Vec::new()));
         let doc_dir: Rc<RefCell<Option<PathBuf>>> = Rc::new(RefCell::new(None));
 
         {
             let web_view = web_view.clone();
             let style = style.clone();
             let last_markdown = last_markdown.clone();
+            let last_media = last_media.clone();
             let doc_dir = doc_dir.clone();
             adw::StyleManager::default().connect_dark_notify(move |style_manager| {
-                let html = render_html(&last_markdown.borrow(), style.get(), style_manager.is_dark());
+                let html = render_html(&last_markdown.borrow(), style.get(), style_manager.is_dark(), &last_media.borrow());
                 web_view.load_html(&html, base_uri(doc_dir.borrow().as_deref()).as_deref());
             });
         }
@@ -168,12 +175,28 @@ impl PreviewPane {
             web_view,
             style,
             last_markdown,
+            last_media,
             doc_dir,
         }
     }
 
-    pub fn update(&self, markdown: &str) {
+    /// `media` should already be reconciled against `markdown` (see
+    /// `media::reconcile`) - the caller owns the canonical `Frontmatter`,
+    /// this pane only needs a snapshot to draw badges from.
+    pub fn update(&self, markdown: &str, media: &[MediaItem]) {
         *self.last_markdown.borrow_mut() = markdown.to_string();
+        *self.last_media.borrow_mut() = media.to_vec();
+        self.rerender();
+    }
+
+    /// Re-renders with a fresh media snapshot without touching the last
+    /// rendered Markdown - for callers that mutate `Frontmatter.media`
+    /// directly (Medienverwaltung's upload button, the manual/AI alt-text
+    /// dialogs) rather than by editing the article text, so the badges
+    /// this pane draws don't go stale until the next keystroke happens to
+    /// re-trigger `update`.
+    pub fn refresh_media(&self, media: &[MediaItem]) {
+        *self.last_media.borrow_mut() = media.to_vec();
         self.rerender();
     }
 
@@ -195,11 +218,17 @@ impl PreviewPane {
     /// (which only trims the default navigation items), since `frontmatter`
     /// isn't available yet at construction time - both handlers run against
     /// the same `ContextMenu` on every right-click.
-    pub fn install_ai_alt_text_menu(&self, window: &impl IsA<gtk4::Window>, frontmatter: Rc<RefCell<Frontmatter>>) {
+    ///
+    /// Takes `&Rc<Self>` rather than `&self` - `aialt::open` needs to hold
+    /// onto this same pane (as an owned `Rc`) to refresh its badges once the
+    /// dialog applies a new alt text, and a plain `&self` has no `Rc` of
+    /// itself to hand out.
+    pub fn install_ai_alt_text_menu(preview_pane: &Rc<Self>, window: &impl IsA<gtk4::Window>, frontmatter: Rc<RefCell<Frontmatter>>) {
         let window: gtk4::Window = window.clone().upcast();
-        let doc_dir = self.doc_dir.clone();
-        let last_markdown = self.last_markdown.clone();
-        self.web_view.connect_context_menu(move |_web_view, context_menu, hit_test_result| {
+        let doc_dir = preview_pane.doc_dir.clone();
+        let last_markdown = preview_pane.last_markdown.clone();
+        let preview_pane = preview_pane.clone();
+        preview_pane.web_view.clone().connect_context_menu(move |_web_view, context_menu, hit_test_result| {
             if !hit_test_result.context_is_image() {
                 return false;
             }
@@ -223,8 +252,9 @@ impl PreviewPane {
                 let frontmatter = frontmatter.clone();
                 let window = window.clone();
                 let doc_dir_value = doc_dir_value.clone();
+                let preview_pane = preview_pane.clone();
                 action.connect_activate(move |_, _| {
-                    crate::aialt::open(&window, frontmatter.clone(), index, doc_dir_value.clone());
+                    crate::aialt::open(&window, frontmatter.clone(), index, doc_dir_value.clone(), preview_pane.clone());
                 });
             }
             let item = webkit6::ContextMenuItem::from_gaction(&action, "KI-Alternativtext generieren…", None);
@@ -273,7 +303,7 @@ impl PreviewPane {
 
     fn rerender(&self) {
         let dark = adw::StyleManager::default().is_dark();
-        let html = render_html(&self.last_markdown.borrow(), self.style.get(), dark);
+        let html = render_html(&self.last_markdown.borrow(), self.style.get(), dark, &self.last_media.borrow());
         self.web_view.load_html(&html, base_uri(self.doc_dir.borrow().as_deref()).as_deref());
     }
 }
@@ -370,8 +400,8 @@ fn style_css(style: PreviewStyle, dark: bool) -> &'static str {
     }
 }
 
-pub fn render_html(markdown: &str, style: PreviewStyle, dark: bool) -> String {
-    let body = render_body_with_line_anchors(markdown);
+pub fn render_html(markdown: &str, style: PreviewStyle, dark: bool, media: &[MediaItem]) -> String {
+    let body = render_body_with_line_anchors(markdown, media);
     let css = style_css(style, dark);
     // A user-picked font (if any) overrides just the two font properties,
     // applied after the style's own block so the cascade lets it win
@@ -389,6 +419,7 @@ pub fn render_html(markdown: &str, style: PreviewStyle, dark: bool) -> String {
 img {{ max-width: 100%; }}
 table {{ border-collapse: collapse; }}
 th, td {{ border: 1px solid #ccc; padding: .4rem .6rem; }}
+{BADGE_CSS}
 </style></head><body>{body}<script>
 window.scrollToLine = function(line) {{
   const blocks = document.querySelectorAll('[data-line]');
@@ -406,7 +437,7 @@ window.scrollToLine = function(line) {{
 /// wrappers, one per top-level Markdown block, using pulldown-cmark's own
 /// HTML renderer for each block's inner content so output stays consistent
 /// with plain rendering.
-fn render_body_with_line_anchors(markdown: &str) -> String {
+fn render_body_with_line_anchors(markdown: &str, media: &[MediaItem]) -> String {
     let options = Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TASKLISTS;
     let events: Vec<(Event, std::ops::Range<usize>)> = Parser::new_ext(markdown, options).into_offset_iter().collect();
 
@@ -439,7 +470,101 @@ fn render_body_with_line_anchors(markdown: &str) -> String {
             _ => i += 1,
         }
     }
+    wrap_images_with_badges(&out, media)
+}
+
+const BADGE_CSS: &str = ".img-wrap { position: relative; display: inline-block; max-width: 100%; }
+.img-wrap img { display: block; }
+.img-badges { position: absolute; right: 6px; bottom: 6px; display: flex; gap: 4px; }
+.img-badge { background: rgba(0, 0, 0, 0.65); color: #fff; font: 11px/1.4 -apple-system, Cantarell, sans-serif; font-weight: 600; letter-spacing: .02em; padding: 2px 6px; border-radius: 4px; }";
+
+/// Wraps every `<img ...>` tag in `html` with a `.img-wrap` container and,
+/// when the image matches a tracked `MediaItem`, a bottom-right badge
+/// cluster (see `badges_html`) - a lightweight string-level pass rather
+/// than a full HTML parser dependency, matching this module's existing
+/// preference for direct string manipulation over pulling in another
+/// crate for something this narrow.
+fn wrap_images_with_badges(html: &str, media: &[MediaItem]) -> String {
+    let mut out = String::with_capacity(html.len());
+    let mut rest = html;
+    while let Some(start) = rest.find("<img ") {
+        out.push_str(&rest[..start]);
+        let Some(tag_end_rel) = rest[start..].find('>') else {
+            out.push_str(&rest[start..]);
+            return out;
+        };
+        let tag_end = start + tag_end_rel + 1;
+        let tag = &rest[start..tag_end];
+        let src = extract_attr(tag, "src").map(|s| unescape_html_attr(&s)).unwrap_or_default();
+
+        out.push_str("<span class=\"img-wrap\">");
+        out.push_str(tag);
+        out.push_str(&badges_html(&src, media));
+        out.push_str("</span>");
+        rest = &rest[tag_end..];
+    }
+    out.push_str(rest);
     out
+}
+
+/// Pulls `attr="value"` out of a single HTML tag's source text - pulldown-
+/// cmark always quotes attribute values with `"`, so this doesn't need to
+/// handle the unquoted/single-quoted forms a general HTML parser would.
+fn extract_attr(tag: &str, attr: &str) -> Option<String> {
+    let needle = format!("{attr}=\"");
+    let start = tag.find(&needle)? + needle.len();
+    let end = start + tag[start..].find('"')?;
+    Some(tag[start..end].to_string())
+}
+
+/// Undoes pulldown-cmark's HTML-entity escaping of the `src` attribute, so
+/// it can be compared against a plain `MediaItem.source` string again.
+fn unescape_html_attr(value: &str) -> String {
+    value.replace("&amp;", "&").replace("&quot;", "\"").replace("&lt;", "<").replace("&gt;", ">")
+}
+
+/// The badge cluster for one image, in the fixed order Upload-Status → Alt
+/// → Bildformat whenever more than one applies - empty (no wrapper span at
+/// all) if none of the three apply, e.g. an image with no matching
+/// `MediaItem` or an unrecognized/missing file extension.
+fn badges_html(src: &str, media: &[MediaItem]) -> String {
+    let Some(item) = media.iter().find(|item| item.source == src) else {
+        return String::new();
+    };
+
+    let mut badges: Vec<(String, &str)> = Vec::new();
+    if item.wordpress.is_some() {
+        badges.push(("↑".to_string(), "Bereits zu WordPress hochgeladen"));
+    }
+    if !item.alt.is_undefined() {
+        badges.push(("Alt".to_string(), "Alternativtext ist definiert"));
+    }
+    if let Some(format) = image_format_label(&item.filename) {
+        badges.push((format, "Bildformat"));
+    }
+    if badges.is_empty() {
+        return String::new();
+    }
+
+    let mut html = String::from("<span class=\"img-badges\">");
+    for (label, title) in badges {
+        html.push_str(&format!(
+            "<span class=\"img-badge\" title=\"{}\">{}</span>",
+            glib::markup_escape_text(title),
+            glib::markup_escape_text(&label)
+        ));
+    }
+    html.push_str("</span>");
+    html
+}
+
+/// The uppercased file extension (`"cat.png"` → `"PNG"`), or `None` for a
+/// filename with no extension to show at all.
+fn image_format_label(filename: &str) -> Option<String> {
+    if !filename.contains('.') {
+        return None;
+    }
+    filename.rsplit('.').next().map(str::to_uppercase)
 }
 
 /// Fenced/indented code blocks can span dozens of lines - if the whole
@@ -512,14 +637,14 @@ mod tests {
 
     #[test]
     fn single_paragraph_is_tagged_with_its_line() {
-        let out = render_body_with_line_anchors("Hello world.\n");
+        let out = render_body_with_line_anchors("Hello world.\n", &[]);
         assert_eq!(out, "<div data-line=\"1\"><p>Hello world.</p>\n</div>\n");
     }
 
     #[test]
     fn blocks_separated_by_blank_lines_get_their_own_starting_line() {
         let markdown = "# Title\n\nSecond paragraph.\n\nThird paragraph.\n";
-        let out = render_body_with_line_anchors(markdown);
+        let out = render_body_with_line_anchors(markdown, &[]);
         assert_eq!(
             out,
             "<div data-line=\"1\"><h1>Title</h1>\n</div>\n\
@@ -535,15 +660,71 @@ mod tests {
         // but renders far taller than a text line - scroll-sync must still
         // key off "line 3", not some fraction of the document's line count.
         let markdown = "Intro text.\n\n![a cat](cat.png)\n\nOutro text.\n";
-        let out = render_body_with_line_anchors(markdown);
+        let out = render_body_with_line_anchors(markdown, &[]);
         assert!(out.contains("<div data-line=\"1\"><p>Intro text.</p>"));
-        assert!(out.contains("<div data-line=\"3\"><p><img src=\"cat.png\" alt=\"a cat\""));
+        assert!(out.contains("<div data-line=\"3\"><p><span class=\"img-wrap\"><img src=\"cat.png\" alt=\"a cat\""), "{out}");
         assert!(out.contains("<div data-line=\"5\"><p>Outro text.</p>"));
+    }
+
+    fn media_item(source: &str, filename: &str, alt: crate::media::AltText, uploaded: bool) -> MediaItem {
+        MediaItem {
+            id: "media-001".to_string(),
+            filename: filename.to_string(),
+            source: source.to_string(),
+            alt,
+            caption: None,
+            wordpress: uploaded.then_some(crate::media::WordPressMediaRef {
+                media_id: 1,
+                url: "https://example.com/cat.png".to_string(),
+                content_hash: "abc".to_string(),
+            }),
+        }
+    }
+
+    #[test]
+    fn an_image_with_no_matching_media_item_gets_no_badges() {
+        let markdown = "![a cat](cat.png)\n";
+        let out = render_body_with_line_anchors(markdown, &[]);
+        assert!(!out.contains("img-badges"), "{out}");
+    }
+
+    #[test]
+    fn badges_appear_in_upload_alt_format_order_when_all_three_apply() {
+        let item = media_item("cat.png", "cat.png", crate::media::AltText::Text("a cat".into()), true);
+        let out = render_body_with_line_anchors("![a cat](cat.png)\n", std::slice::from_ref(&item));
+        let badges_start = out.find("img-badges").expect("expected a badge cluster");
+        let upload_pos = out.find('↑').expect("expected the upload badge");
+        let alt_pos = out.find(">Alt<").expect("expected the alt badge");
+        let format_pos = out.find(">PNG<").expect("expected the format badge");
+        assert!(badges_start < upload_pos && upload_pos < alt_pos && alt_pos < format_pos, "{out}");
+    }
+
+    #[test]
+    fn only_the_applicable_badges_are_shown() {
+        let item = media_item("cat.png", "cat.png", crate::media::AltText::Undefined, false);
+        let out = render_body_with_line_anchors("![a cat](cat.png)\n", std::slice::from_ref(&item));
+        assert!(!out.contains('↑'), "{out}");
+        assert!(!out.contains(">Alt<"), "{out}");
+        assert!(out.contains(">PNG<"), "{out}");
+    }
+
+    #[test]
+    fn deliberately_empty_alt_still_counts_as_defined() {
+        let item = media_item("cat.png", "cat.png", crate::media::AltText::Empty, false);
+        let out = render_body_with_line_anchors("![](cat.png)\n", std::slice::from_ref(&item));
+        assert!(out.contains(">Alt<"), "{out}");
+    }
+
+    #[test]
+    fn image_format_label_uppercases_the_extension() {
+        assert_eq!(image_format_label("photo.webp"), Some("WEBP".to_string()));
+        assert_eq!(image_format_label("photo.PNG"), Some("PNG".to_string()));
+        assert_eq!(image_format_label("no-extension"), None);
     }
 
     #[test]
     fn thematic_break_is_tagged() {
-        let out = render_body_with_line_anchors("Text.\n\n---\n\nMore text.\n");
+        let out = render_body_with_line_anchors("Text.\n\n---\n\nMore text.\n", &[]);
         assert!(out.contains("<div data-line=\"3\"><hr/></div>"));
     }
 
@@ -554,7 +735,7 @@ mod tests {
         // moved the preview at all until you scrolled past the block
         // entirely. Each line inside it needs its own `data-line` now.
         let markdown = "Intro.\n\n```bash\nfirst\nsecond\nthird\n```\n\nOutro.\n";
-        let out = render_body_with_line_anchors(markdown);
+        let out = render_body_with_line_anchors(markdown, &[]);
         assert!(out.contains("<div data-line=\"3\">"), "{out}");
         assert!(out.contains("<span data-line=\"4\">first</span>"), "{out}");
         assert!(out.contains("<span data-line=\"5\">second</span>"), "{out}");
@@ -564,20 +745,20 @@ mod tests {
 
     #[test]
     fn fenced_code_block_language_becomes_a_css_class() {
-        let out = render_body_with_line_anchors("```rust\nfn main() {}\n```\n");
+        let out = render_body_with_line_anchors("```rust\nfn main() {}\n```\n", &[]);
         assert!(out.contains("class=\"language-rust\""), "{out}");
     }
 
     #[test]
     fn code_block_content_is_html_escaped() {
-        let out = render_body_with_line_anchors("```\n<script>alert(1)</script>\n```\n");
+        let out = render_body_with_line_anchors("```\n<script>alert(1)</script>\n```\n", &[]);
         assert!(out.contains("&lt;script&gt;"), "{out}");
         assert!(!out.contains("<script>"), "{out}");
     }
 
     #[test]
     fn full_html_embeds_the_scroll_to_line_script() {
-        let html = render_html("Hello", PreviewStyle::Modern, false);
+        let html = render_html("Hello", PreviewStyle::Modern, false, &[]);
         assert!(html.contains("window.scrollToLine = function(line)"));
         assert!(html.contains("data-line=\"1\""));
     }

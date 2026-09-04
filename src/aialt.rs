@@ -24,7 +24,7 @@ use gtk4::glib;
 
 use crate::document::Frontmatter;
 use crate::media::AltText;
-use crate::{chatconfig, export, llm, secrets};
+use crate::{chatconfig, export, llm, preview, secrets};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DetailLevel {
@@ -78,7 +78,7 @@ impl DetailLevel {
 /// responsible for having already reconciled the media list against the
 /// current document body (see `imagealt.rs`/`preview.rs`), so `index` is
 /// guaranteed valid at the moment this is called.
-pub fn open(window: &gtk4::Window, frontmatter: Rc<RefCell<Frontmatter>>, index: usize, doc_dir: Option<PathBuf>) {
+pub fn open(window: &gtk4::Window, frontmatter: Rc<RefCell<Frontmatter>>, index: usize, doc_dir: Option<PathBuf>, preview_pane: Rc<preview::PreviewPane>) {
     let Some(item) = frontmatter.borrow().media.get(index).cloned() else { return };
 
     let level_labels: Vec<&str> = DetailLevel::ALL.iter().map(DetailLevel::label).collect();
@@ -159,6 +159,7 @@ pub fn open(window: &gtk4::Window, frontmatter: Rc<RefCell<Frontmatter>>, index:
             if let Some(item) = frontmatter.borrow_mut().media.get_mut(index) {
                 item.alt = if text.is_empty() { AltText::Empty } else { AltText::Text(text) };
             }
+            preview_pane.refresh_media(&frontmatter.borrow().media);
             dialog.close();
         });
     }

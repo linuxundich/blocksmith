@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.23.0] - 2026-09-04
+
+### Added
+
+- Every image in the Vorschau now shows small badges in its bottom-right
+  corner: an upload arrow (↑) once it's on WordPress, "Alt" once its alt
+  text is defined, and its file format (PNG/WEBP/…) - in that fixed order
+  (Upload-Status, Alt, Bildformat) whenever more than one applies. Updates
+  immediately from Medienverwaltung's upload button and the manual/AI
+  alt-text dialogs, not only on the next edit to the article text.
+
 ## [0.22.0] - 2026-09-04
 
 ### Added

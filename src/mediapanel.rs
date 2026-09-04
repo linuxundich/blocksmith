@@ -21,10 +21,16 @@ use gtk4::glib;
 
 use crate::document::Frontmatter;
 use crate::media::{self, AltText, UploadStatus};
-use crate::{export, secrets, wpclient, wpsite};
+use crate::{export, preview, secrets, wpclient, wpsite};
 
-pub fn open(parent: &adw::ApplicationWindow, body: String, frontmatter: Rc<RefCell<Frontmatter>>, doc_dir: Option<PathBuf>) {
-    let content = build_content(frontmatter, &body, doc_dir);
+pub fn open(
+    parent: &adw::ApplicationWindow,
+    body: String,
+    frontmatter: Rc<RefCell<Frontmatter>>,
+    doc_dir: Option<PathBuf>,
+    preview_pane: Rc<preview::PreviewPane>,
+) {
+    let content = build_content(frontmatter, &body, doc_dir, preview_pane);
 
     let header = adw::HeaderBar::new();
     let toolbar_view = adw::ToolbarView::new();
@@ -46,7 +52,7 @@ pub fn open(parent: &adw::ApplicationWindow, body: String, frontmatter: Rc<RefCe
 /// `export.rs`, which embeds this same content as a tab in the publish
 /// dialog so alt text/captions/uploads can be checked right before
 /// publishing, not just from a separate dialog.
-pub fn build_content(frontmatter: Rc<RefCell<Frontmatter>>, body: &str, doc_dir: Option<PathBuf>) -> gtk4::Widget {
+pub fn build_content(frontmatter: Rc<RefCell<Frontmatter>>, body: &str, doc_dir: Option<PathBuf>, preview_pane: Rc<preview::PreviewPane>) -> gtk4::Widget {
     // Re-scan so images added/removed since the last reconcile (a save, or
     // opening this panel before) are reflected immediately - metadata for
     // still-referenced images is preserved (see `media::reconcile`).
@@ -55,6 +61,7 @@ pub fn build_content(frontmatter: Rc<RefCell<Frontmatter>>, body: &str, doc_dir:
         fm.media = media::reconcile(&fm.media, body);
     }
     let item_count = frontmatter.borrow().media.len();
+    preview_pane.refresh_media(&frontmatter.borrow().media);
 
     let content_box = gtk4::Box::builder()
         .orientation(gtk4::Orientation::Vertical)
@@ -73,7 +80,7 @@ pub fn build_content(frontmatter: Rc<RefCell<Frontmatter>>, body: &str, doc_dir:
     let list_box = gtk4::ListBox::new();
     list_box.add_css_class("boxed-list");
     for index in 0..item_count {
-        let row = build_row(index, frontmatter.clone(), doc_dir.clone(), status_label.clone());
+        let row = build_row(index, frontmatter.clone(), doc_dir.clone(), status_label.clone(), preview_pane.clone());
         list_box.append(&row);
     }
 
@@ -116,6 +123,7 @@ fn build_row(
     frontmatter: Rc<RefCell<Frontmatter>>,
     doc_dir: Option<PathBuf>,
     status_label: gtk4::Label,
+    preview_pane: Rc<preview::PreviewPane>,
 ) -> adw::ExpanderRow {
     let item = frontmatter.borrow().media[index].clone();
 
@@ -138,6 +146,7 @@ fn build_row(
         let frontmatter = frontmatter.clone();
         let alt_entry_row = alt_entry_row.clone();
         let status_label = status_label.clone();
+        let preview_pane = preview_pane.clone();
         alt_switch_row.connect_active_notify(move |row| {
             let active = row.is_active();
             alt_entry_row.set_visible(active);
@@ -154,12 +163,14 @@ fn build_row(
                 };
             }
             status_label.set_label(&summary_text(&frontmatter));
+            preview_pane.refresh_media(&frontmatter.borrow().media);
         });
     }
     {
         let frontmatter = frontmatter.clone();
         let alt_switch_row = alt_switch_row.clone();
         let status_label = status_label.clone();
+        let preview_pane = preview_pane.clone();
         alt_entry_row.connect_changed(move |row| {
             if !alt_switch_row.is_active() {
                 return;
@@ -169,6 +180,7 @@ fn build_row(
                 item.alt = if text.is_empty() { AltText::Empty } else { AltText::Text(text) };
             }
             status_label.set_label(&summary_text(&frontmatter));
+            preview_pane.refresh_media(&frontmatter.borrow().media);
         });
     }
 
@@ -250,12 +262,14 @@ fn build_row(
             let expander = expander.clone();
             let upload_button = upload_button_for_click.clone();
             let upload_status_label = upload_status_label.clone();
+            let preview_pane = preview_pane.clone();
             glib::timeout_add_local(Duration::from_millis(150), move || match rx.try_recv() {
                 Ok(Ok((media_result, content_hash))) => {
                     let reference = media::WordPressMediaRef { media_id: media_result.id, url: media_result.source_url.clone(), content_hash };
                     if let Some(item) = frontmatter.borrow_mut().media.get_mut(index) {
                         item.wordpress = Some(reference.clone());
                     }
+                    preview_pane.refresh_media(&frontmatter.borrow().media);
                     expander.set_subtitle(&upload_status_text(&UploadStatus::Uploaded(reference)));
                     upload_status_label.set_label("Erfolgreich hochgeladen.");
                     upload_button.set_label("Erneut hochladen");

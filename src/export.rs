@@ -18,13 +18,14 @@ use adw::prelude::*;
 use gtk4::glib;
 
 use crate::document::{Frontmatter, PostStatus};
-use crate::{media, mediapanel, secrets, wpclient, wpsite};
+use crate::{media, mediapanel, preview, secrets, wpclient, wpsite};
 
 pub fn open(
     parent: &adw::ApplicationWindow,
     body: String,
     frontmatter: Rc<RefCell<Frontmatter>>,
     doc_dir: Option<PathBuf>,
+    preview_pane: Rc<preview::PreviewPane>,
 ) {
     let site = wpsite::load();
     let current_fm = frontmatter.borrow().clone();
@@ -58,7 +59,7 @@ pub fn open(
     // fixed right before publishing, in the same dialog - `build_content`
     // does its own `media::reconcile`, so this tab is always in sync with
     // the current body even if Medienverwaltung was never opened before.
-    let media_page = mediapanel::build_content(frontmatter.clone(), &body, doc_dir.clone());
+    let media_page = mediapanel::build_content(frontmatter.clone(), &body, doc_dir.clone(), preview_pane.clone());
 
     let view_stack = adw::ViewStack::new();
     view_stack.add_titled_with_icon(&preview_page, Some("preview"), "Vorschau", "view-reveal-symbolic");
