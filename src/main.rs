@@ -30,6 +30,7 @@ mod stats;
 mod statusbar;
 mod termcache;
 mod window;
+mod windowstate;
 mod wpclient;
 mod wpsite;
 

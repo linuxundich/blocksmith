@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.22.0] - 2026-09-04
+
+### Added
+
+- The main window now remembers its size (and maximized state) across
+  restarts instead of always reopening at a fixed 1280×800 - saved on
+  close, restored on the next launch. The editor/preview split always
+  opens exactly 50/50, whatever size the window opens at.
+
 ## [0.21.0] - 2026-09-04
 
 ### Added

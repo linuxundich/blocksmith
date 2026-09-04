@@ -9,12 +9,14 @@ use gtk4::{gio, glib};
 use crate::document::{Document, Frontmatter};
 use crate::{
     aimenu, chat, codeview, document, editor, export, formatting, imagealt, importer, linkpicker, mediapanel, preview, properties, settings,
-    stats, statusbar, termcache,
+    stats, statusbar, termcache, windowstate,
 };
 
 const DEBOUNCE_MS: u64 = 250;
 
 pub fn build(app: &adw::Application) -> adw::ApplicationWindow {
+    let saved_window_state = windowstate::load();
+
     let (editor_scroller, view, buffer, spelling_menu) = editor::build();
     let preview_pane = Rc::new(preview::PreviewPane::new());
     let stats_view = Rc::new(stats::StatsView::new());
@@ -79,7 +81,10 @@ pub fn build(app: &adw::Application) -> adw::ApplicationWindow {
         .resize_end_child(true)
         .shrink_start_child(false)
         .shrink_end_child(false)
-        .position(650)
+        // Half of whatever width the window is about to open at (restored
+        // or default, see `saved_window_state` above) - not a fixed pixel
+        // value, so the 50/50 split holds regardless of the actual size.
+        .position(saved_window_state.width / 2)
         .build();
 
     let title = adw::WindowTitle::new("Blocksmith", "Unbenannt");
@@ -141,10 +146,21 @@ pub fn build(app: &adw::Application) -> adw::ApplicationWindow {
     let window = adw::ApplicationWindow::builder()
         .application(app)
         .title("Blocksmith")
-        .default_width(1280)
-        .default_height(800)
+        .default_width(saved_window_state.width)
+        .default_height(saved_window_state.height)
+        .maximized(saved_window_state.maximized)
         .content(&toast_overlay)
         .build();
+
+    window.connect_close_request(|window| {
+        let state = windowstate::WindowState {
+            width: window.width(),
+            height: window.height(),
+            maximized: window.is_maximized(),
+        };
+        let _ = windowstate::save(&state);
+        glib::Propagation::Proceed
+    });
 
     let current_path: Rc<RefCell<Option<PathBuf>>> = Rc::new(RefCell::new(None));
     let frontmatter: Rc<RefCell<Frontmatter>> = Rc::new(RefCell::new(Frontmatter::default()));

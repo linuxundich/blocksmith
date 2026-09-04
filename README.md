@@ -17,7 +17,9 @@ Functionally complete for its core purpose - write Markdown, review a live
 preview, and publish/update a real WordPress post as native Gutenberg
 blocks. Implemented so far:
 
-- **Split-pane editor** — Markdown editing pane (GtkSourceView, syntax
+- **Split-pane editor** — the window remembers its size (and whether it was
+  maximized) across restarts, always opening with the editor/preview split
+  exactly 50/50 regardless of that size. Markdown editing pane (GtkSourceView, syntax
   highlighting, spell-checking via [`libspelling`](https://gitlab.gnome.org/GNOME/libspelling))
   with a grouped formatting toolbar (cut/copy/paste; bold/italic/
   strikethrough with Ctrl+B/I; heading/quote/code/code block; lists; table;
