@@ -33,15 +33,10 @@ pub fn build_page() -> adw::PreferencesPage {
     let model_row = adw::ComboRow::builder().title("Modell").build();
     model_row.set_enable_search(true);
 
-    let connection_save_button = gtk4::Button::from_icon_name("document-save-symbolic");
-    connection_save_button.set_tooltip_text(Some("Speichern"));
-    connection_save_button.add_css_class("flat");
-
     let connection_group = adw::PreferencesGroup::builder().title("KI-Verbindung").build();
     connection_group.set_description(Some(
-        "Der API-Key wird im Schlüsselbund gespeichert, nicht als Klartext. Er wird nach der Eingabe direkt gegen die API des Anbieters geprüft.",
+        "Der API-Key wird im Schlüsselbund gespeichert, nicht als Klartext. Er wird nach der Eingabe direkt gegen die API des Anbieters geprüft und bei Erfolg automatisch gespeichert.",
     ));
-    connection_group.set_header_suffix(Some(&connection_save_button));
     connection_group.add(&provider_row);
     connection_group.add(&api_key_row);
     connection_group.add(&base_url_row);
@@ -79,7 +74,10 @@ pub fn build_page() -> adw::PreferencesPage {
     /// Calls the provider's models endpoint on a background thread and
     /// reports the outcome - this is both the "is this API key valid?"
     /// check and the source of the model picker's contents, since a
-    /// successful models list *is* the proof the key works.
+    /// successful models list *is* the proof the key works. That success is
+    /// also the save trigger: the key is only ever written to the keyring
+    /// once it's been confirmed to actually work, never while it's still
+    /// being typed or known to be wrong.
     fn spawn_verify(
         provider: Provider,
         api_key: String,
@@ -96,6 +94,7 @@ pub fn build_page() -> adw::PreferencesPage {
         status_label.set_label(if provider.needs_api_key() { "API-Key wird geprüft …" } else { "Verbindung wird geprüft …" });
         status_label.set_visible(true);
 
+        let key_to_store = api_key.clone();
         let (tx, rx) = mpsc::channel::<Result<Vec<String>, String>>();
         std::thread::spawn(move || {
             let client = llm::Client::new(provider, &api_key, "unused", &base_url);
@@ -106,8 +105,21 @@ pub fn build_page() -> adw::PreferencesPage {
             Ok(Ok(models)) => {
                 let _ = chatconfig::save_cached_models(provider, &models);
                 populate_model_row(&model_row, &models, &current_model);
-                status_label.set_label(&format!("✓ Verbindung erfolgreich - {} Modelle gefunden.", models.len()));
-                status_label.set_visible(true);
+                let verified_message = format!("✓ Verbindung erfolgreich - {} Modelle gefunden.", models.len());
+                if provider.needs_api_key() {
+                    let key = key_to_store.clone();
+                    let status_label = status_label.clone();
+                    glib::MainContext::default().spawn_local(async move {
+                        match secrets::store_llm_api_key(provider.id(), &key).await {
+                            Ok(()) => status_label.set_label(&format!("{verified_message} Gespeichert.")),
+                            Err(err) => status_label.set_label(&format!("{verified_message} Fehler beim Speichern: {err}")),
+                        }
+                        status_label.set_visible(true);
+                    });
+                } else {
+                    status_label.set_label(&verified_message);
+                    status_label.set_visible(true);
+                }
                 glib::ControlFlow::Break
             }
             Ok(Err(err)) => {
@@ -152,6 +164,7 @@ pub fn build_page() -> adw::PreferencesPage {
         let api_key_row = api_key_row.clone();
         let base_url_row = base_url_row.clone();
         let model_row = model_row.clone();
+        let connection_status = connection_status.clone();
         provider_row.connect_selected_notify(move |row| {
             // Persist whatever was picked/typed for the *previous* provider
             // before switching the visible fields to the new one, so quick
@@ -164,7 +177,28 @@ pub fn build_page() -> adw::PreferencesPage {
             }
             let provider = Provider::ALL[row.selected() as usize];
             state.borrow_mut().active = provider;
+            if let Err(err) = chatconfig::save_provider_config(&state.borrow()) {
+                connection_status.set_label(&format!("Fehler beim Speichern: {err}"));
+                connection_status.set_visible(true);
+            }
             apply_provider_to_fields(provider, &state.borrow(), &api_key_row, &base_url_row, &model_row);
+        });
+    }
+
+    // The model picker's own choice needs saving independently of the
+    // provider switch above (which only preserves the *previous*
+    // provider's pick when navigating away from it) - this is what
+    // actually persists picking a different model for the *current* one.
+    {
+        let state = state.clone();
+        let connection_status = connection_status.clone();
+        model_row.connect_selected_notify(move |row| {
+            let provider = state.borrow().active;
+            state.borrow_mut().set_model_for(provider, combo_row_selected_string(row));
+            if let Err(err) = chatconfig::save_provider_config(&state.borrow()) {
+                connection_status.set_label(&format!("Fehler beim Speichern: {err}"));
+                connection_status.set_visible(true);
+            }
         });
     }
 
@@ -198,12 +232,38 @@ pub fn build_page() -> adw::PreferencesPage {
         let state = state.clone();
         let model_row = model_row.clone();
         let connection_status = connection_status.clone();
-        let debounce: Rc<RefCell<Option<glib::SourceId>>> = Rc::new(RefCell::new(None));
+        let verify_debounce: Rc<RefCell<Option<glib::SourceId>>> = Rc::new(RefCell::new(None));
+        let save_debounce: Rc<RefCell<Option<glib::SourceId>>> = Rc::new(RefCell::new(None));
         base_url_row.connect_changed(move |row| {
-            if let Some(id) = debounce.borrow_mut().take() {
+            let base_url = row.text().to_string();
+
+            // Persists independently of the verify check below, so a base
+            // URL is remembered even before (or without) a successful
+            // connection - unlike the API key, there's nothing here that
+            // could be "wrong" in a way worth withholding the save for.
+            if let Some(id) = save_debounce.borrow_mut().take() {
                 id.remove();
             }
-            let base_url = row.text().to_string();
+            {
+                let state = state.clone();
+                let connection_status = connection_status.clone();
+                let base_url = base_url.clone();
+                let save_debounce_inner = save_debounce.clone();
+                let id = glib::timeout_add_local(Duration::from_millis(500), move || {
+                    state.borrow_mut().ollama_base_url = base_url.clone();
+                    if let Err(err) = chatconfig::save_provider_config(&state.borrow()) {
+                        connection_status.set_label(&format!("Fehler beim Speichern: {err}"));
+                        connection_status.set_visible(true);
+                    }
+                    *save_debounce_inner.borrow_mut() = None;
+                    glib::ControlFlow::Break
+                });
+                *save_debounce.borrow_mut() = Some(id);
+            }
+
+            if let Some(id) = verify_debounce.borrow_mut().take() {
+                id.remove();
+            }
             let provider = state.borrow().active;
             if provider.needs_api_key() {
                 // Base-URL changes only trigger a live check for providers
@@ -214,50 +274,15 @@ pub fn build_page() -> adw::PreferencesPage {
             let current_model = state.borrow().model_for(provider).to_string();
             let status_label = connection_status.clone();
             let model_row = model_row.clone();
-            let debounce_inner = debounce.clone();
+            let verify_debounce_inner = verify_debounce.clone();
             let id = glib::timeout_add_local(Duration::from_millis(700), move || {
                 spawn_verify(provider, String::new(), base_url.clone(), status_label.clone(), model_row.clone(), current_model.clone());
-                *debounce_inner.borrow_mut() = None;
+                *verify_debounce_inner.borrow_mut() = None;
                 glib::ControlFlow::Break
             });
-            *debounce.borrow_mut() = Some(id);
+            *verify_debounce.borrow_mut() = Some(id);
         });
     }
-
-    connection_save_button.connect_clicked(move |_| {
-        let provider = {
-            let mut config = state.borrow_mut();
-            let provider = Provider::ALL[provider_row.selected() as usize];
-            config.active = provider;
-            config.set_model_for(provider, combo_row_selected_string(&model_row));
-            config.ollama_base_url = base_url_row.text().to_string();
-            provider
-        };
-        if let Err(err) = chatconfig::save_provider_config(&state.borrow()) {
-            connection_status.set_label(&format!("Fehler beim Speichern: {err}"));
-            connection_status.set_visible(true);
-            return;
-        }
-        if !provider.needs_api_key() {
-            connection_status.set_label("Gespeichert.");
-            connection_status.set_visible(true);
-            return;
-        }
-        let key = api_key_row.text().to_string();
-        let connection_status = connection_status.clone();
-        glib::MainContext::default().spawn_local(async move {
-            match secrets::store_llm_api_key(provider.id(), &key).await {
-                Ok(()) => {
-                    connection_status.set_label("Gespeichert.");
-                    connection_status.set_visible(true);
-                }
-                Err(err) => {
-                    connection_status.set_label(&format!("Fehler beim Speichern des API-Keys: {err}"));
-                    connection_status.set_visible(true);
-                }
-            }
-        });
-    });
 
     let prompt_buffer = gtk4::TextBuffer::new(None::<&gtk4::TextTagTable>);
     prompt_buffer.set_text(&chatconfig::load_system_prompt());

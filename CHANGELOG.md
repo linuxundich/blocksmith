@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-09-04
+
+### Changed
+
+- "KI-Chat" settings: removed the "Speichern" button - it was easy to miss,
+  which meant the API key, provider, model, and Ollama base URL could look
+  entered but silently not be saved. Each now persists on its own trigger
+  instead: the API key saves automatically right after it verifies
+  successfully against the provider's live API (a failed check is never
+  saved), provider/model choice save the moment you pick them, and the
+  Ollama base URL saves as you type (debounced).
+
 ## [0.19.0] - 2026-09-04
 
 ### Added

@@ -100,10 +100,12 @@ blocks. Implemented so far:
   Secret Service via [`oo7`](https://crates.io/crates/oo7), never written
   to disk in plain text), a "KI-Chat" page (a provider picker for
   Gemini/ChatGPT/Claude/Ollama, each with its own API key - verified live
-  against the provider's API as soon as it's entered - and a model picker
-  populated from that account's actual available models, Ollama
-  additionally getting a configurable base URL; plus a fully editable,
-  resettable system prompt shared across all providers), and a "KI-Prompts"
+  against the provider's API as soon as it's entered, and saved
+  automatically once that check succeeds, with no separate save button -
+  and a model picker populated from that account's actual available
+  models, Ollama additionally getting a configurable base URL; plus a
+  fully editable, resettable system prompt shared across all providers),
+  and a "KI-Prompts"
   page (the context menu's six built-in prompts, target-language list, and
   custom prompts - see above).
 - **Publishing** — an "Artikel exportieren" dialog shows the generated
