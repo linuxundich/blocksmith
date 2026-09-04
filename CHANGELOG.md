@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-09-04
+
+### Fixed
+
+- Local images referenced in the article (`![alt](photo.png)`) never
+  rendered in the preview - the `WebView` had no base URI to resolve a
+  relative path against, so it simply couldn't find the file. The preview
+  now defaults to searching for it in the article's own folder, updated
+  automatically whenever the article is opened, saved for the first time,
+  or reset ("Neu"/opened from WordPress).
+- Removed "Zurück", "Vor", and "Anhalten" from the preview's right-click
+  context menu - navigation history controls that never applied to a
+  rendered article preview in the first place.
+
 ## [0.17.0] - 2026-09-04
 
 ### Added

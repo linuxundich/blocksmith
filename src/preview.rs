@@ -17,7 +17,7 @@
 //! whole document on every change anyway.
 
 use std::cell::{Cell, RefCell};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use adw::prelude::*;
@@ -116,6 +116,15 @@ pub struct PreviewPane {
     web_view: webkit6::WebView,
     style: Rc<Cell<PreviewStyle>>,
     last_markdown: Rc<RefCell<String>>,
+    /// The current article's own directory, if it has one (an unsaved or
+    /// WordPress-imported-but-not-yet-saved document has none) - passed to
+    /// the `WebView` as its base URI so a relative `<img src="photo.png">`
+    /// resolves against it, matching where "Bild einfügen"/Medienverwaltung
+    /// already expect a local image to live (see
+    /// `document::image_reference`). Without this the image reference is
+    /// technically correct but the preview simply can't load it - a
+    /// `WebView` has no other way to know which folder "here" means.
+    doc_dir: Rc<RefCell<Option<PathBuf>>>,
 }
 
 impl PreviewPane {
@@ -124,15 +133,31 @@ impl PreviewPane {
         web_view.set_hexpand(true);
         web_view.set_vexpand(true);
 
+        // This is a rendered article preview, not a browsing session - the
+        // navigation-history items WebKit puts in its default context menu
+        // (Zurück/Vor/Anhalten) never apply to anything here and would
+        // just be confusing dead controls.
+        web_view.connect_context_menu(|_web_view, context_menu, _hit_test_result| {
+            for item in context_menu.items() {
+                if matches!(item.stock_action(), webkit6::ContextMenuAction::GoBack | webkit6::ContextMenuAction::GoForward | webkit6::ContextMenuAction::Stop) {
+                    context_menu.remove(&item);
+                }
+            }
+            false
+        });
+
         let style = Rc::new(Cell::new(load_preview_style()));
         let last_markdown: Rc<RefCell<String>> = Rc::new(RefCell::new(String::new()));
+        let doc_dir: Rc<RefCell<Option<PathBuf>>> = Rc::new(RefCell::new(None));
 
         {
             let web_view = web_view.clone();
             let style = style.clone();
             let last_markdown = last_markdown.clone();
+            let doc_dir = doc_dir.clone();
             adw::StyleManager::default().connect_dark_notify(move |style_manager| {
-                web_view.load_html(&render_html(&last_markdown.borrow(), style.get(), style_manager.is_dark()), None);
+                let html = render_html(&last_markdown.borrow(), style.get(), style_manager.is_dark());
+                web_view.load_html(&html, base_uri(doc_dir.borrow().as_deref()).as_deref());
             });
         }
 
@@ -141,11 +166,22 @@ impl PreviewPane {
             web_view,
             style,
             last_markdown,
+            doc_dir,
         }
     }
 
     pub fn update(&self, markdown: &str) {
         *self.last_markdown.borrow_mut() = markdown.to_string();
+        self.rerender();
+    }
+
+    /// Called whenever the article's own file location changes (opened,
+    /// saved for the first time, reset by "Neu"/importing from WordPress) -
+    /// re-renders immediately so a folder that just became known (or just
+    /// stopped being known) takes effect right away, not only on the next
+    /// edit.
+    pub fn set_doc_dir(&self, doc_dir: Option<PathBuf>) {
+        *self.doc_dir.borrow_mut() = doc_dir;
         self.rerender();
     }
 
@@ -189,8 +225,19 @@ impl PreviewPane {
 
     fn rerender(&self) {
         let dark = adw::StyleManager::default().is_dark();
-        self.web_view.load_html(&render_html(&self.last_markdown.borrow(), self.style.get(), dark), None);
+        let html = render_html(&self.last_markdown.borrow(), self.style.get(), dark);
+        self.web_view.load_html(&html, base_uri(self.doc_dir.borrow().as_deref()).as_deref());
     }
+}
+
+/// A `file://` URI for `dir`, suitable as a `WebView` base URI - built via
+/// `gio::File` rather than a hand-formatted `format!("file://{}", ...)` so
+/// a directory path containing characters that need percent-encoding is
+/// still handled correctly.
+fn base_uri(dir: Option<&Path>) -> Option<String> {
+    let dir = dir?;
+    let uri = gio::File::for_path(dir).uri();
+    Some(if uri.ends_with('/') { uri.to_string() } else { format!("{uri}/") })
 }
 
 /// One typographic style's CSS, in its light and dark variant. Baked

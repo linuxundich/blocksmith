@@ -159,10 +159,10 @@ pub fn build(app: &adw::Application) -> adw::ApplicationWindow {
     wire_live_preview(&buffer, &preview_pane, &stats_view, &code_view);
     wire_scroll_sync(&editor_scroller, &buffer, &preview_pane);
     wire_status_bar(&buffer, &status_bar);
-    wire_new_action(&window, &buffer, &current_path, &frontmatter, &title);
-    wire_open_action(&window, &buffer, &current_path, &frontmatter, &title, &toast_overlay);
-    wire_open_from_wordpress_action(&window, &buffer, &current_path, &frontmatter, &title);
-    wire_save_action(&window, &buffer, &current_path, &frontmatter, &title, &toast_overlay);
+    wire_new_action(&window, &buffer, &current_path, &frontmatter, &title, &preview_pane);
+    wire_open_action(&window, &buffer, &current_path, &frontmatter, &title, &toast_overlay, &preview_pane);
+    wire_open_from_wordpress_action(&window, &buffer, &current_path, &frontmatter, &title, &preview_pane);
+    wire_save_action(&window, &buffer, &current_path, &frontmatter, &title, &toast_overlay, &preview_pane);
     wire_properties_action(&window, &frontmatter, &category_terms, &tag_terms, &current_path);
     wire_settings_action(&window, &buffer, ai_menu_handles, &preview_pane);
     wire_publish_action(&window, &buffer, &current_path, &frontmatter);
@@ -355,17 +355,20 @@ fn wire_new_action(
     current_path: &Rc<RefCell<Option<PathBuf>>>,
     frontmatter: &Rc<RefCell<Frontmatter>>,
     title: &adw::WindowTitle,
+    preview_pane: &Rc<preview::PreviewPane>,
 ) {
     let action = gio::SimpleAction::new("new", None);
     let buffer = buffer.clone();
     let current_path = current_path.clone();
     let frontmatter = frontmatter.clone();
     let title = title.clone();
+    let preview_pane = preview_pane.clone();
     action.connect_activate(move |_, _| {
         buffer.set_text("");
         *current_path.borrow_mut() = None;
         *frontmatter.borrow_mut() = Frontmatter::default();
         title.set_subtitle("Unbenannt");
+        preview_pane.set_doc_dir(None);
     });
     window.add_action(&action);
 }
@@ -377,6 +380,7 @@ fn wire_open_action(
     frontmatter: &Rc<RefCell<Frontmatter>>,
     title: &adw::WindowTitle,
     toast_overlay: &adw::ToastOverlay,
+    preview_pane: &Rc<preview::PreviewPane>,
 ) {
     let action = gio::SimpleAction::new("open", None);
     let buffer = buffer.clone();
@@ -384,6 +388,7 @@ fn wire_open_action(
     let frontmatter = frontmatter.clone();
     let title = title.clone();
     let toast_overlay = toast_overlay.clone();
+    let preview_pane = preview_pane.clone();
     let window_weak = window.downgrade();
     action.connect_activate(move |_, _| {
         let Some(window) = window_weak.upgrade() else {
@@ -406,6 +411,7 @@ fn wire_open_action(
         let frontmatter = frontmatter.clone();
         let title = title.clone();
         let toast_overlay = toast_overlay.clone();
+        let preview_pane = preview_pane.clone();
         dialog.open(Some(&window), gio::Cancellable::NONE, move |result| {
             let Ok(file) = result else { return };
             let Some(path) = file.path() else { return };
@@ -414,7 +420,9 @@ fn wire_open_action(
                     buffer.set_text(&doc.body);
                     title.set_subtitle(&subtitle_for(Some(&path), &doc.frontmatter));
                     *frontmatter.borrow_mut() = doc.frontmatter;
+                    let doc_dir = path.parent().map(Path::to_path_buf);
                     *current_path.borrow_mut() = Some(path);
+                    preview_pane.set_doc_dir(doc_dir);
                 }
                 Err(err) => show_toast(&toast_overlay, &format!("Öffnen fehlgeschlagen: {err}")),
             }
@@ -429,12 +437,14 @@ fn wire_open_from_wordpress_action(
     current_path: &Rc<RefCell<Option<PathBuf>>>,
     frontmatter: &Rc<RefCell<Frontmatter>>,
     title: &adw::WindowTitle,
+    preview_pane: &Rc<preview::PreviewPane>,
 ) {
     let action = gio::SimpleAction::new("open-from-wordpress", None);
     let buffer = buffer.clone();
     let current_path = current_path.clone();
     let frontmatter = frontmatter.clone();
     let title = title.clone();
+    let preview_pane = preview_pane.clone();
     let window_weak = window.downgrade();
     action.connect_activate(move |_, _| {
         let Some(window) = window_weak.upgrade() else {
@@ -444,11 +454,13 @@ fn wire_open_from_wordpress_action(
         let current_path = current_path.clone();
         let frontmatter = frontmatter.clone();
         let title = title.clone();
+        let preview_pane = preview_pane.clone();
         importer::open(&window, move |imported| {
             buffer.set_text(&imported.body);
             title.set_subtitle(&subtitle_for(None, &imported.frontmatter));
             *frontmatter.borrow_mut() = imported.frontmatter;
             *current_path.borrow_mut() = None;
+            preview_pane.set_doc_dir(None);
         });
     });
     window.add_action(&action);
@@ -461,6 +473,7 @@ fn wire_save_action(
     frontmatter: &Rc<RefCell<Frontmatter>>,
     title: &adw::WindowTitle,
     toast_overlay: &adw::ToastOverlay,
+    preview_pane: &Rc<preview::PreviewPane>,
 ) {
     let action = gio::SimpleAction::new("save", None);
     let buffer = buffer.clone();
@@ -468,6 +481,7 @@ fn wire_save_action(
     let frontmatter = frontmatter.clone();
     let title = title.clone();
     let toast_overlay = toast_overlay.clone();
+    let preview_pane = preview_pane.clone();
     let window_weak = window.downgrade();
     action.connect_activate(move |_, _| {
         let Some(window) = window_weak.upgrade() else {
@@ -494,6 +508,7 @@ fn wire_save_action(
         let current_path = current_path.clone();
         let title = title.clone();
         let toast_overlay = toast_overlay.clone();
+        let preview_pane = preview_pane.clone();
         dialog.save(Some(&window), gio::Cancellable::NONE, move |result| {
             let Ok(file) = result else { return };
             let Some(path) = file.path() else { return };
@@ -502,7 +517,9 @@ fn wire_save_action(
                 return;
             }
             title.set_subtitle(&subtitle_for(Some(&path), &doc.frontmatter));
+            let doc_dir = path.parent().map(Path::to_path_buf);
             *current_path.borrow_mut() = Some(path);
+            preview_pane.set_doc_dir(doc_dir);
         });
     });
     window.add_action(&action);
