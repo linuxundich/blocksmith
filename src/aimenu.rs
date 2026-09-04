@@ -116,14 +116,6 @@ pub fn rebuild_custom_prompts_menu(menu: &gio::Menu, prompts: &[CustomPrompt]) {
     }
 }
 
-fn selected_or_full_text(buffer: &sourceview5::Buffer) -> String {
-    if let Some((start, end)) = buffer.selection_bounds() {
-        buffer.text(&start, &end, false).to_string()
-    } else {
-        buffer.text(&buffer.start_iter(), &buffer.end_iter(), false).to_string()
-    }
-}
-
 fn dispatch_to_chat(view_stack: &adw::ViewStack, chat_view: &ChatView, display_label: &str, full_prompt: String) {
     view_stack.set_visible_child_name("chat");
     chat_view.refresh();
@@ -131,7 +123,7 @@ fn dispatch_to_chat(view_stack: &adw::ViewStack, chat_view: &ChatView, display_l
 }
 
 fn trigger_prompt_run(buffer: &sourceview5::Buffer, view_stack: &adw::ViewStack, chat_view: &ChatView, id: &str) {
-    let content = selected_or_full_text(buffer);
+    let content = crate::editor::selected_or_full_text(buffer);
     let (title, template) = if let Some(custom_id) = id.strip_prefix("custom:") {
         let Some(prompt) = aiprompts::load_custom_prompts().into_iter().find(|p| p.id == custom_id) else {
             return;
@@ -192,7 +184,7 @@ fn open_adjust_length_dialog(window: &gtk4::Window, buffer: &sourceview5::Buffer
         let precision = if exact_toggle.is_active() { "genau" } else { "etwa" };
         let length_instruction = format!("auf {precision} {amount} {unit}");
 
-        let content = selected_or_full_text(&buffer);
+        let content = crate::editor::selected_or_full_text(&buffer);
         let template = aiprompts::load_prompt_text("adjust-length").replace("{length_instruction}", &length_instruction);
         let full_prompt = format!("{template}\n\n---\n\n{content}");
         dispatch_to_chat(&view_stack, &chat_view, &format!("Länge anpassen ({length_instruction})"), full_prompt);

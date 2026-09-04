@@ -21,7 +21,9 @@ blocks. Implemented so far:
   maximized) across restarts, always opening with the editor/preview split
   exactly 50/50 regardless of that size; a header-bar toggle button
   collapses the whole right-hand pane for a full-width editor and restores
-  it again. Markdown editing pane (GtkSourceView, syntax
+  it again. A "Zuletzt geöffnet" button next to "Öffnen" lists the most
+  recently opened/saved articles (most-recent-first) for one-click
+  reopening. Markdown editing pane (GtkSourceView, syntax
   highlighting, spell-checking via [`libspelling`](https://gitlab.gnome.org/GNOME/libspelling))
   with a grouped formatting toolbar (cut/copy/paste; bold/italic/
   strikethrough with Ctrl+B/I; heading/quote/code/code block; lists; table;
@@ -45,7 +47,10 @@ blocks. Implemented so far:
   and "Chat" - a writing assistant with message bubbles (replies rendered
   as Markdown), backed by Gemini, ChatGPT, Claude, or Ollama (self-hosted,
   no API key), with a provider/model picker both in the tab itself and in
-  Einstellungen.
+  Einstellungen. A message typed here gets the editor's current selection -
+  or, if nothing's selected, the whole article - appended before it's sent,
+  the same rule the context menu's AI actions below already follow, so the
+  model always has the article as context without pasting it in by hand.
 - **AI actions in the editor's context menu** — right-click the editor for
   "Inhalt prüfen", "Stil & Formatierung prüfen", "Rechtschreibung prüfen",
   "Zeichensetzung prüfen", and "Länge anpassen…"; each sends the selection

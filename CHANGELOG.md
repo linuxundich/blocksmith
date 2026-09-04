@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.25.0] - 2026-09-04
+
+### Added
+
+- "Zuletzt geöffnet" - a header-bar button next to "Öffnen" listing the ten
+  most recently opened/saved articles (most-recent-first), for one-click
+  reopening without navigating the file picker again.
+- A message typed into the Chat tab now gets the editor's current selection
+  - or, if nothing's selected, the whole article - appended before it's
+  sent, matching the rule the context menu's AI actions (built-in and
+  custom) already followed. Only the typed message itself shows in the
+  chat bubble.
+
 ## [0.24.0] - 2026-09-04
 
 ### Added

@@ -8,8 +8,8 @@ use gtk4::{gio, glib};
 
 use crate::document::{Document, Frontmatter};
 use crate::{
-    aimenu, chat, codeview, document, editor, export, formatting, imagealt, importer, linkpicker, media, mediapanel, preview, properties, settings,
-    stats, statusbar, termcache, windowstate,
+    aimenu, chat, codeview, document, editor, export, formatting, imagealt, importer, linkpicker, media, mediapanel, preview, properties, recentfiles,
+    settings, stats, statusbar, termcache, windowstate,
 };
 
 const DEBOUNCE_MS: u64 = 250;
@@ -29,7 +29,7 @@ pub fn build(app: &adw::Application) -> adw::ApplicationWindow {
     editor_pane.append(&editor_scroller);
     editor_scroller.set_vexpand(true);
 
-    let chat_view = Rc::new(chat::ChatView::new());
+    let chat_view = Rc::new(chat::ChatView::new(&buffer));
     let code_view = Rc::new(codeview::CodeView::new());
 
     let view_stack = adw::ViewStack::new();
@@ -97,6 +97,16 @@ pub fn build(app: &adw::Application) -> adw::ApplicationWindow {
     open_button.set_tooltip_text(Some("Öffnen (Strg+O)"));
     open_button.set_action_name(Some("win.open"));
 
+    let recent_button = gtk4::MenuButton::new();
+    recent_button.set_icon_name("document-open-recent-symbolic");
+    recent_button.set_tooltip_text(Some("Zuletzt geöffnet"));
+    let recent_list = gtk4::ListBox::new();
+    recent_list.add_css_class("boxed-list");
+    let recent_scroller = gtk4::ScrolledWindow::builder().child(&recent_list).min_content_width(320).max_content_height(360).propagate_natural_height(true).build();
+    let recent_popover = gtk4::Popover::new();
+    recent_popover.set_child(Some(&recent_scroller));
+    recent_button.set_popover(Some(&recent_popover));
+
     let open_from_wp_button = gtk4::Button::from_icon_name("folder-remote-symbolic");
     open_from_wp_button.set_tooltip_text(Some("Von WordPress öffnen (Strg+Umschalt+O)"));
     open_from_wp_button.set_action_name(Some("win.open-from-wordpress"));
@@ -130,6 +140,7 @@ pub fn build(app: &adw::Application) -> adw::ApplicationWindow {
     header_bar.set_title_widget(Some(&title));
     header_bar.pack_start(&new_button);
     header_bar.pack_start(&open_button);
+    header_bar.pack_start(&recent_button);
     header_bar.pack_start(&open_from_wp_button);
     header_bar.pack_start(&save_button);
     header_bar.pack_end(&settings_button);
@@ -204,6 +215,12 @@ pub fn build(app: &adw::Application) -> adw::ApplicationWindow {
     wire_open_action(&window, &buffer, &current_path, &frontmatter, &title, &toast_overlay, &preview_pane);
     wire_open_from_wordpress_action(&window, &buffer, &current_path, &frontmatter, &title, &preview_pane);
     wire_save_action(&window, &buffer, &current_path, &frontmatter, &title, &toast_overlay, &preview_pane);
+    let recent_files_widgets = RecentFilesWidgets {
+        button: recent_button,
+        popover: recent_popover,
+        list: recent_list,
+    };
+    wire_recent_files_button(&recent_files_widgets, &buffer, &current_path, &frontmatter, &title, &toast_overlay, &preview_pane);
     wire_properties_action(&window, &frontmatter, &category_terms, &tag_terms, &current_path);
     wire_settings_action(&window, &buffer, ai_menu_handles, &preview_pane);
     wire_publish_action(&window, &buffer, &current_path, &frontmatter, &preview_pane);
@@ -469,20 +486,106 @@ fn wire_open_action(
         dialog.open(Some(&window), gio::Cancellable::NONE, move |result| {
             let Ok(file) = result else { return };
             let Some(path) = file.path() else { return };
-            match document::read(&path) {
-                Ok(doc) => {
-                    buffer.set_text(&doc.body);
-                    title.set_subtitle(&subtitle_for(Some(&path), &doc.frontmatter));
-                    *frontmatter.borrow_mut() = doc.frontmatter;
-                    let doc_dir = path.parent().map(Path::to_path_buf);
-                    *current_path.borrow_mut() = Some(path);
-                    preview_pane.set_doc_dir(doc_dir);
-                }
-                Err(err) => show_toast(&toast_overlay, &format!("Öffnen fehlgeschlagen: {err}")),
-            }
+            open_document_at_path(path, &buffer, &current_path, &frontmatter, &title, &toast_overlay, &preview_pane);
         });
     });
     window.add_action(&action);
+}
+
+/// Loads the article at `path` into the editor - shared by the "Öffnen"
+/// file-dialog callback and every "Zuletzt geöffnet" popover row, since
+/// both need to do exactly the same thing with a path once they have one.
+/// Records the path into `recentfiles` on success, so opening the same
+/// article twice keeps it at the front of that list rather than piling up
+/// a duplicate entry.
+fn open_document_at_path(
+    path: PathBuf,
+    buffer: &sourceview5::Buffer,
+    current_path: &Rc<RefCell<Option<PathBuf>>>,
+    frontmatter: &Rc<RefCell<Frontmatter>>,
+    title: &adw::WindowTitle,
+    toast_overlay: &adw::ToastOverlay,
+    preview_pane: &Rc<preview::PreviewPane>,
+) {
+    match document::read(&path) {
+        Ok(doc) => {
+            buffer.set_text(&doc.body);
+            title.set_subtitle(&subtitle_for(Some(&path), &doc.frontmatter));
+            *frontmatter.borrow_mut() = doc.frontmatter;
+            let doc_dir = path.parent().map(Path::to_path_buf);
+            let _ = recentfiles::record(&path);
+            *current_path.borrow_mut() = Some(path);
+            preview_pane.set_doc_dir(doc_dir);
+        }
+        Err(err) => show_toast(toast_overlay, &format!("Öffnen fehlgeschlagen: {err}")),
+    }
+}
+
+/// The three widgets making up the "Zuletzt geöffnet" popover - bundled
+/// into one struct purely to keep `wire_recent_files_button`'s parameter
+/// count down, since they're always constructed and passed together.
+struct RecentFilesWidgets {
+    button: gtk4::MenuButton,
+    popover: gtk4::Popover,
+    list: gtk4::ListBox,
+}
+
+/// Rebuilds the "Zuletzt geöffnet" popover's row list every time the button
+/// becomes active (about to show its popover) - simpler than tracking
+/// whether the list changed since it was last shown, and cheap enough that
+/// rebuilding a ten-entry list on every click is not worth avoiding.
+fn wire_recent_files_button(
+    widgets: &RecentFilesWidgets,
+    buffer: &sourceview5::Buffer,
+    current_path: &Rc<RefCell<Option<PathBuf>>>,
+    frontmatter: &Rc<RefCell<Frontmatter>>,
+    title: &adw::WindowTitle,
+    toast_overlay: &adw::ToastOverlay,
+    preview_pane: &Rc<preview::PreviewPane>,
+) {
+    let buffer = buffer.clone();
+    let current_path = current_path.clone();
+    let frontmatter = frontmatter.clone();
+    let title = title.clone();
+    let toast_overlay = toast_overlay.clone();
+    let preview_pane = preview_pane.clone();
+    let recent_list = widgets.list.clone();
+    let recent_popover = widgets.popover.clone();
+    widgets.button.connect_active_notify(move |button| {
+        if !button.is_active() {
+            return;
+        }
+        while let Some(child) = recent_list.first_child() {
+            recent_list.remove(&child);
+        }
+
+        let entries = recentfiles::load();
+        if entries.is_empty() {
+            let row = adw::ActionRow::builder().title("Keine zuletzt geöffneten Artikel").activatable(false).build();
+            recent_list.append(&row);
+            return;
+        }
+
+        for path in entries {
+            let filename = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| path.display().to_string());
+            let parent = path.parent().map(|p| p.display().to_string()).unwrap_or_default();
+            let row = adw::ActionRow::builder().title(filename).subtitle(parent).activatable(true).use_markup(false).build();
+            {
+                let buffer = buffer.clone();
+                let current_path = current_path.clone();
+                let frontmatter = frontmatter.clone();
+                let title = title.clone();
+                let toast_overlay = toast_overlay.clone();
+                let preview_pane = preview_pane.clone();
+                let recent_popover = recent_popover.clone();
+                row.connect_activated(move |_| {
+                    recent_popover.popdown();
+                    open_document_at_path(path.clone(), &buffer, &current_path, &frontmatter, &title, &toast_overlay, &preview_pane);
+                });
+            }
+            recent_list.append(&row);
+        }
+    });
 }
 
 fn wire_open_from_wordpress_action(
@@ -572,6 +675,7 @@ fn wire_save_action(
             }
             title.set_subtitle(&subtitle_for(Some(&path), &doc.frontmatter));
             let doc_dir = path.parent().map(Path::to_path_buf);
+            let _ = recentfiles::record(&path);
             *current_path.borrow_mut() = Some(path);
             preview_pane.set_doc_dir(doc_dir);
         });

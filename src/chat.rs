@@ -5,6 +5,14 @@
 //! used throughout this app's WordPress-facing dialogs. The model's replies
 //! are rendered as Markdown (`mdpango`) so headings/lists/code/links show up
 //! formatted instead of as raw Markdown source.
+//!
+//! A free-form message typed here gets the editor's current selection (or,
+//! if nothing's selected, the whole article) appended after it before it's
+//! sent - the same "what should this apply to" rule the context menu's AI
+//! actions already use (see `editor::selected_or_full_text`), so the model
+//! always has the article as context without the user having to paste it
+//! in by hand. Only the typed message itself is shown in the chat bubble -
+//! the appended context would make the transcript unreadable otherwise.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -14,6 +22,7 @@ use std::time::Duration;
 use adw::prelude::*;
 use gtk4::glib;
 
+use crate::editor;
 use crate::llm;
 use crate::mdpango;
 use crate::{chatconfig, secrets};
@@ -27,7 +36,8 @@ pub struct ChatView {
 }
 
 impl ChatView {
-    pub fn new() -> Self {
+    pub fn new(buffer: &sourceview5::Buffer) -> Self {
+        let buffer = buffer.clone();
         let messages_box = gtk4::Box::builder()
             .orientation(gtk4::Orientation::Vertical)
             .spacing(8)
@@ -186,25 +196,31 @@ impl ChatView {
         {
             let send_fn = send_fn.clone();
             let entry_for_activate = entry.clone();
+            let buffer = buffer.clone();
             entry.connect_activate(move |_| {
                 let text = entry_for_activate.text().trim().to_string();
                 if text.is_empty() {
                     return;
                 }
                 entry_for_activate.set_text("");
-                send_fn(text.clone(), text);
+                let context = editor::selected_or_full_text(&buffer);
+                let full_prompt = format!("{text}\n\n---\n\n{context}");
+                send_fn(text, full_prompt);
             });
         }
         {
             let send_fn = send_fn.clone();
             let entry = entry.clone();
+            let buffer = buffer.clone();
             send_button.connect_clicked(move |_| {
                 let text = entry.text().trim().to_string();
                 if text.is_empty() {
                     return;
                 }
                 entry.set_text("");
-                send_fn(text.clone(), text);
+                let context = editor::selected_or_full_text(&buffer);
+                let full_prompt = format!("{text}\n\n---\n\n{context}");
+                send_fn(text, full_prompt);
             });
         }
 

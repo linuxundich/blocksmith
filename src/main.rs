@@ -24,6 +24,7 @@ mod mediapanel;
 mod preview;
 mod promptsettings;
 mod properties;
+mod recentfiles;
 mod secrets;
 mod settings;
 mod stats;

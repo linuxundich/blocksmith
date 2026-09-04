@@ -53,3 +53,18 @@ pub fn build() -> (gtk4::ScrolledWindow, sourceview5::View, sourceview5::Buffer,
 
     (scroller, view, buffer, spelling_menu)
 }
+
+/// The current selection if there is one, otherwise the whole document -
+/// the shared "what should this AI action apply to" rule used both by the
+/// editor context menu's prompts (`aimenu.rs`) and by a free-form message
+/// typed into the Chat tab (`chat.rs`). Not unit-tested here - exercising
+/// it needs a real `Gtk.TextBuffer`, which panics unless GTK has already
+/// been initialized (needs a live display), unlike every other function
+/// this project unit-tests.
+pub fn selected_or_full_text(buffer: &sourceview5::Buffer) -> String {
+    if let Some((start, end)) = buffer.selection_bounds() {
+        buffer.text(&start, &end, false).to_string()
+    } else {
+        buffer.text(&buffer.start_iter(), &buffer.end_iter(), false).to_string()
+    }
+}
