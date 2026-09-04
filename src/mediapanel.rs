@@ -195,10 +195,10 @@ fn build_row(
         let upload_button_for_click = upload_button.clone();
         let upload_status_label = upload_status_label.clone();
         upload_button.connect_clicked(move |_| {
-            let (source, alt_for_upload, caption_for_upload) = {
+            let (source, alt_for_upload, caption_for_upload, previous) = {
                 let fm = frontmatter.borrow();
                 let Some(item) = fm.media.get(index) else { return };
-                (item.source.clone(), item.alt.as_wordpress_value().map(str::to_string), item.caption.clone())
+                (item.source.clone(), item.alt.as_wordpress_value().map(str::to_string), item.caption.clone(), item.wordpress.clone())
             };
 
             upload_button_for_click.set_sensitive(false);
@@ -207,7 +207,7 @@ fn build_row(
 
             let site = wpsite::load();
             let doc_dir = doc_dir.clone();
-            let (tx, rx) = mpsc::channel::<Result<wpclient::MediaResult, String>>();
+            let (tx, rx) = mpsc::channel::<Result<(wpclient::MediaResult, String), String>>();
             std::thread::spawn(move || {
                 let outcome = futures_lite::future::block_on(secrets::load_app_password(&site.url, &site.username))
                     .map_err(|err| err.to_string())
@@ -216,11 +216,21 @@ fn build_row(
                     })
                     .and_then(|password| {
                         let client = wpclient::Client::new(&site.url, &site.username, &password);
-                        let media = export::upload_image_file(&client, &source, doc_dir.as_deref()).map_err(|err| err.to_string())?;
+                        let uploaded = export::upload_image_file(&client, &source, doc_dir.as_deref()).map_err(|err| err.to_string())?;
                         client
-                            .update_media_metadata(media.id, alt_for_upload.as_deref(), caption_for_upload.as_deref())
+                            .update_media_metadata(uploaded.id, alt_for_upload.as_deref(), caption_for_upload.as_deref())
                             .map_err(|err| err.to_string())?;
-                        Ok(media)
+                        // WordPress can't replace an existing attachment's file
+                        // in place, so a re-upload (the "Erneut hochladen" case)
+                        // always creates a new one - clean up the superseded
+                        // attachment so the media library doesn't accumulate
+                        // orphaned duplicates. Best-effort: the new upload
+                        // already succeeded, a failed cleanup shouldn't fail this.
+                        if let Some(previous) = previous {
+                            let _ = client.delete_media(previous.media_id);
+                        }
+                        let content_hash = media::hash_local_file(&source, doc_dir.as_deref()).unwrap_or_default();
+                        Ok((uploaded, content_hash))
                     });
                 let _ = tx.send(outcome);
             });
@@ -230,8 +240,8 @@ fn build_row(
             let upload_button = upload_button_for_click.clone();
             let upload_status_label = upload_status_label.clone();
             glib::timeout_add_local(Duration::from_millis(150), move || match rx.try_recv() {
-                Ok(Ok(media_result)) => {
-                    let reference = media::WordPressMediaRef { media_id: media_result.id, url: media_result.source_url.clone() };
+                Ok(Ok((media_result, content_hash))) => {
+                    let reference = media::WordPressMediaRef { media_id: media_result.id, url: media_result.source_url.clone(), content_hash };
                     if let Some(item) = frontmatter.borrow_mut().media.get_mut(index) {
                         item.wordpress = Some(reference.clone());
                     }

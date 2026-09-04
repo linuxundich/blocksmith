@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-09-04
+
+### Fixed
+
+- Publishing/updating an article re-uploaded every local image to
+  WordPress's media library from scratch on every single export, creating
+  a duplicate attachment each time - the automatic export-time upload path
+  and the Medienverwaltung's per-image tracking were two disconnected
+  systems, and the former also never sent alt text or caption. Unified:
+  export now reconciles against the same tracked media list Medienverwaltung
+  uses, and skips uploading an image whose content (SHA-256) still matches
+  what's already on the server - "bei Bedarf hochladen", not on every
+  export. A changed local image is uploaded as a new attachment (WordPress
+  has no way to replace an existing one's file) with the superseded one
+  then deleted, and its filename/alt text/caption are always sent together,
+  whether the upload happens automatically at export time or manually via
+  Medienverwaltung's "Zu WordPress hochladen".
+
 ## [0.14.0] - 2026-09-01
 
 ### Added

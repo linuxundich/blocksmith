@@ -12,8 +12,12 @@
 //! `.md` frontmatter block (`document.rs`) so none of this is lost before
 //! `.bsm` exists.
 
+use std::collections::HashMap;
+use std::path::Path;
+
 use pulldown_cmark::{Event, Parser, Tag, TagEnd};
 use serde_json::Value;
+use sha2::Digest;
 
 /// The three states an image's alt text can be in - collapsing "empty" and
 /// "not yet decided" into one falsy value (as plain Markdown does) would
@@ -71,6 +75,12 @@ impl AltText {
 pub struct WordPressMediaRef {
     pub media_id: u64,
     pub url: String,
+    /// SHA-256 (hex) of the local file's content at the moment it was
+    /// uploaded - compared against the current file's hash by
+    /// `sync_uploads` to tell "unchanged since upload" from "the user
+    /// edited/replaced the local image" without depending on mtimes, which
+    /// a plain copy/touch can bump without any real content change.
+    pub content_hash: String,
 }
 
 /// The transient state of an in-progress upload - unlike `WordPressMediaRef`,
@@ -182,6 +192,80 @@ pub fn reconcile(existing: &[MediaItem], markdown: &str) -> Vec<MediaItem> {
         .collect()
 }
 
+fn hash_bytes(bytes: &[u8]) -> String {
+    sha2::Sha256::digest(bytes).iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// Resolves `source` against `doc_dir` (see `export::resolve_local_path`),
+/// reads it, and hashes its content - the same hash `sync_uploads` compares
+/// against, exposed separately for callers (like `mediapanel.rs`'s manual
+/// upload button) that already know which single item they just uploaded
+/// and only need to record its hash, not decide whether to upload at all.
+pub fn hash_local_file(source: &str, doc_dir: Option<&Path>) -> std::io::Result<String> {
+    let resolved = crate::export::resolve_local_path(source, doc_dir);
+    let bytes = std::fs::read(resolved)?;
+    Ok(hash_bytes(&bytes))
+}
+
+/// Ensures every local image in `items` is uploaded to WordPress with its
+/// current filename/alt text/caption, updating each item's `wordpress` ref
+/// in place, and returns a `source -> URL` map the caller uses to rewrite
+/// `wp:image` blocks before publishing. An image already uploaded with a
+/// content hash matching its current file is left untouched entirely - "bei
+/// Bedarf hochladen", not on every single export. An already-remote source
+/// (`http(s)://`, e.g. from a WordPress-imported article) is left alone
+/// too, silently, since there's nothing local to upload; a LOCAL path that
+/// fails to read is a real error and is surfaced, not skipped, since it
+/// would otherwise publish a broken image reference with no explanation.
+///
+/// WordPress's REST API has no way to replace an existing attachment's file
+/// in place, so a changed image is uploaded as a brand new attachment, and
+/// the superseded one is then deleted so the media library doesn't
+/// accumulate orphaned duplicates every time an image is edited and
+/// republished. That delete is best-effort: it runs after the new upload
+/// has already succeeded, so a failure to delete the old one is not itself
+/// treated as an export failure.
+pub fn sync_uploads(
+    client: &crate::wpclient::Client,
+    items: &mut [MediaItem],
+    doc_dir: Option<&Path>,
+) -> Result<HashMap<String, String>, String> {
+    let mut urls = HashMap::new();
+
+    for item in items.iter_mut() {
+        if item.source.starts_with("http://") || item.source.starts_with("https://") {
+            continue;
+        }
+
+        let resolved = crate::export::resolve_local_path(&item.source, doc_dir);
+        let bytes = std::fs::read(&resolved).map_err(|err| format!("Bild {} nicht lesbar: {err}", resolved.display()))?;
+        let current_hash = hash_bytes(&bytes);
+
+        if let Some(existing) = &item.wordpress {
+            if existing.content_hash == current_hash {
+                urls.insert(item.source.clone(), existing.url.clone());
+                continue;
+            }
+        }
+
+        let previous = item.wordpress.take();
+        let mime = crate::export::mime_from_extension(&item.filename);
+        let media = client.upload_media(&bytes, &item.filename, mime).map_err(|err| err.to_string())?;
+        client
+            .update_media_metadata(media.id, item.alt.as_wordpress_value(), item.caption.as_deref())
+            .map_err(|err| err.to_string())?;
+
+        if let Some(previous) = previous {
+            let _ = client.delete_media(previous.media_id);
+        }
+
+        urls.insert(item.source.clone(), media.source_url.clone());
+        item.wordpress = Some(WordPressMediaRef { media_id: media.id, url: media.source_url, content_hash: current_hash });
+    }
+
+    Ok(urls)
+}
+
 pub fn to_json(items: &[MediaItem]) -> Value {
     Value::Array(
         items
@@ -199,7 +283,7 @@ pub fn to_json(items: &[MediaItem]) -> Value {
                     object["caption"] = Value::String(caption.clone());
                 }
                 if let Some(wp) = &item.wordpress {
-                    object["wordpress"] = serde_json::json!({ "mediaId": wp.media_id, "url": wp.url });
+                    object["wordpress"] = serde_json::json!({ "mediaId": wp.media_id, "url": wp.url, "contentHash": wp.content_hash });
                 }
                 object
             })
@@ -224,6 +308,14 @@ pub fn from_json(value: &Value) -> Vec<MediaItem> {
                         Some(WordPressMediaRef {
                             media_id: wp.get("mediaId")?.as_u64()?,
                             url: wp.get("url").and_then(Value::as_str).unwrap_or_default().to_string(),
+                            // Missing on a document saved before content-hash
+                            // tracking existed - an empty hash never matches
+                            // a real file's hash, so `sync_uploads` treats
+                            // it as "changed" and re-uploads once on the
+                            // next export, safely picking up hash tracking
+                            // from then on. Not data-destructive, just one
+                            // redundant upload for pre-existing images.
+                            content_hash: wp.get("contentHash").and_then(Value::as_str).unwrap_or_default().to_string(),
                         })
                     });
                     Some(MediaItem {
@@ -309,7 +401,11 @@ mod tests {
             source: "cat.png".to_string(),
             alt: AltText::Text("A cat".to_string()),
             caption: Some("My cat".to_string()),
-            wordpress: Some(WordPressMediaRef { media_id: 42, url: "https://example.com/cat.png".to_string() }),
+            wordpress: Some(WordPressMediaRef {
+                media_id: 42,
+                url: "https://example.com/cat.png".to_string(),
+                content_hash: "deadbeef".to_string(),
+            }),
         }];
         let updated = reconcile(&existing, "![something else entirely](cat.png)\n");
         assert_eq!(updated, existing, "metadata for an image matched by source must survive re-scanning, even if the markdown alt text differs");
@@ -355,7 +451,7 @@ mod tests {
                 source: "c.png".into(),
                 alt: AltText::Text("A description".into()),
                 caption: Some("A caption".into()),
-                wordpress: Some(WordPressMediaRef { media_id: 7, url: "https://example.com/c.png".into() }),
+                wordpress: Some(WordPressMediaRef { media_id: 7, url: "https://example.com/c.png".into(), content_hash: "abc123".into() }),
             },
         ];
         let round_tripped = from_json_str(&to_json_string(&items));

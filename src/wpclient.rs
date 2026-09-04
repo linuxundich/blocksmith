@@ -222,9 +222,11 @@ impl Client {
     }
 
     /// Permanently deletes a media item (bypassing trash, which media
-    /// attachments don't support anyway). Mainly useful for cleaning up
-    /// after integration tests against a real site.
-    #[cfg(test)]
+    /// attachments don't support anyway). Used both for integration-test
+    /// cleanup and by `media::sync_uploads` to remove the now-superseded
+    /// attachment after a changed local image is re-uploaded as a new one -
+    /// WordPress's REST API has no way to replace an existing attachment's
+    /// file in place.
     pub fn delete_media(&self, media_id: u64) -> Result<()> {
         let url = format!("{}?force=true", self.endpoint(&format!("media/{media_id}")));
         let mut response = self

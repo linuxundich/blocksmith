@@ -243,6 +243,7 @@ dependencies = [
  "oo7",
  "pulldown-cmark",
  "serde_json",
+ "sha2",
  "sourceview5",
  "ureq",
  "webkit6",

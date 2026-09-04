@@ -326,7 +326,11 @@ mod tests {
                     source: "cat.png".to_string(),
                     alt: crate::media::AltText::Text("A cat".to_string()),
                     caption: Some("My cat".to_string()),
-                    wordpress: Some(crate::media::WordPressMediaRef { media_id: 42, url: "https://example.com/cat.png".to_string() }),
+                    wordpress: Some(crate::media::WordPressMediaRef {
+                        media_id: 42,
+                        url: "https://example.com/cat.png".to_string(),
+                        content_hash: "deadbeef".to_string(),
+                    }),
                 }],
             },
             body: "Some **body**.\n".to_string(),

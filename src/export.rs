@@ -18,7 +18,7 @@ use adw::prelude::*;
 use gtk4::glib;
 
 use crate::document::Frontmatter;
-use crate::{secrets, wpclient, wpsite};
+use crate::{media, secrets, wpclient, wpsite};
 
 pub fn open(
     parent: &adw::ApplicationWindow,
@@ -185,18 +185,19 @@ pub fn open(
         status_label.set_label("Wird gesendet …");
 
         let site = wpsite::load();
-        let current_fm = frontmatter.borrow().clone();
+        let mut current_fm = frontmatter.borrow().clone();
         let body = body.clone();
         let doc_dir = doc_dir.clone();
 
-        let (tx, rx) = mpsc::channel::<Result<wpclient::PostResult, String>>();
+        let (tx, rx) = mpsc::channel::<Result<(wpclient::PostResult, Vec<media::MediaItem>), String>>();
         std::thread::spawn(move || {
             let outcome = futures_lite::future::block_on(secrets::load_app_password(&site.url, &site.username))
                 .map_err(|err| err.to_string())
                 .and_then(|maybe_password| {
                     maybe_password.ok_or_else(|| "Kein Application Password im Schlüsselbund gefunden.".to_string())
                 })
-                .and_then(|password| run_export(&site, &password, &current_fm, &body, doc_dir.as_deref()));
+                .and_then(|password| run_export(&site, &password, &mut current_fm, &body, doc_dir.as_deref()))
+                .map(|post| (post, current_fm.media));
             let _ = tx.send(outcome);
         });
 
@@ -204,8 +205,12 @@ pub fn open(
         let status_label = status_label.clone();
         let publish_button = publish_button_for_click.clone();
         glib::timeout_add_local(Duration::from_millis(150), move || match rx.try_recv() {
-            Ok(Ok(post)) => {
-                frontmatter.borrow_mut().wp_post_id = Some(post.id);
+            Ok(Ok((post, media))) => {
+                {
+                    let mut fm = frontmatter.borrow_mut();
+                    fm.wp_post_id = Some(post.id);
+                    fm.media = media;
+                }
                 status_label.set_label(&format!("Erfolgreich gesendet: {}", post.link));
                 publish_button.set_sensitive(true);
                 glib::ControlFlow::Break
@@ -230,14 +235,17 @@ pub fn open(
 fn run_export(
     site: &wpsite::SiteConfig,
     password: &str,
-    frontmatter: &Frontmatter,
+    frontmatter: &mut Frontmatter,
     body: &str,
     doc_dir: Option<&Path>,
 ) -> Result<wpclient::PostResult, String> {
     let client = wpclient::Client::new(&site.url, &site.username, password);
 
+    frontmatter.media = media::reconcile(&frontmatter.media, body);
+    let uploaded_urls = media::sync_uploads(&client, &mut frontmatter.media, doc_dir)?;
+
     let mut blocks = gutenberg::parse_markdown(body);
-    upload_local_images(&client, &mut blocks, doc_dir).map_err(|err| err.to_string())?;
+    rewrite_image_urls(&mut blocks, &uploaded_urls);
     let content = gutenberg::render_blocks(&blocks);
 
     let mut category_ids = Vec::new();
@@ -261,7 +269,15 @@ fn run_export(
     }
     if let Some(path) = &frontmatter.featured_image {
         // A newly set local image always takes priority: upload it and use
-        // the resulting media id.
+        // the resulting media id. Unlike body images, this always re-
+        // uploads on every export rather than going through
+        // `media::sync_uploads`'s hash check - the featured image isn't a
+        // `MediaItem` at all (it's a single Frontmatter field, never
+        // scanned from the Markdown body), so it has no tracked content
+        // hash to compare against. Out of scope for now since the request
+        // this was built for was specifically about body images with
+        // alt-text/caption; worth unifying later if duplicate featured-
+        // image uploads become a real nuisance.
         let media = upload_image_file(&client, path, doc_dir).map_err(|err| err.to_string())?;
         payload["featured_media"] = serde_json::json!(media.id);
     } else if let Some(id) = frontmatter.featured_media_id {
@@ -278,37 +294,44 @@ fn run_export(
     result.map_err(|err| err.to_string())
 }
 
-/// Recursively rewrites `wp:image` blocks whose source is a local file path
-/// (not `http(s)://`) to the URL WordPress serves after uploading it, since
-/// a Gutenberg image block needs a URL the reader's browser can reach.
-fn upload_local_images(client: &wpclient::Client, blocks: &mut [gutenberg::Block], base_dir: Option<&Path>) -> wpclient::Result<()> {
+/// Recursively substitutes `wp:image` blocks' source with the WordPress URL
+/// `media::sync_uploads` resolved for it, wherever the block's current url
+/// is a key in `urls` - an already-remote url (not tracked by
+/// `sync_uploads` at all) simply has no matching key and is left as-is.
+fn rewrite_image_urls(blocks: &mut [gutenberg::Block], urls: &std::collections::HashMap<String, String>) {
     for block in blocks.iter_mut() {
         match block {
             gutenberg::Block::Image { url, .. } => {
-                if !url.starts_with("http://") && !url.starts_with("https://") {
-                    let media = upload_image_file(client, url, base_dir)?;
-                    *url = media.source_url;
+                if let Some(new_url) = urls.get(url) {
+                    *url = new_url.clone();
                 }
             }
-            gutenberg::Block::BlockQuote { blocks } => upload_local_images(client, blocks, base_dir)?,
+            gutenberg::Block::BlockQuote { blocks } => rewrite_image_urls(blocks, urls),
             gutenberg::Block::List { items, .. } => {
                 for item in items.iter_mut() {
-                    upload_local_images(client, item, base_dir)?;
+                    rewrite_image_urls(item, urls);
                 }
             }
             _ => {}
         }
     }
-    Ok(())
 }
 
-pub(crate) fn upload_image_file(client: &wpclient::Client, path_str: &str, base_dir: Option<&Path>) -> wpclient::Result<wpclient::MediaResult> {
-    let path = Path::new(path_str);
-    let resolved = if path.is_absolute() {
+/// Resolves a `MediaItem.source`/Markdown image path against the
+/// document's own directory - shared by every place that needs the actual
+/// file behind a local reference (`upload_image_file` here, and
+/// `media::sync_uploads`/`hash_local_file`).
+pub(crate) fn resolve_local_path(source: &str, base_dir: Option<&Path>) -> PathBuf {
+    let path = Path::new(source);
+    if path.is_absolute() {
         path.to_path_buf()
     } else {
         base_dir.map(|dir| dir.join(path)).unwrap_or_else(|| path.to_path_buf())
-    };
+    }
+}
+
+pub(crate) fn upload_image_file(client: &wpclient::Client, path_str: &str, base_dir: Option<&Path>) -> wpclient::Result<wpclient::MediaResult> {
+    let resolved = resolve_local_path(path_str, base_dir);
     let bytes = std::fs::read(&resolved).map_err(|err| wpclient::ApiError {
         status: 0,
         message: format!("Bild {} nicht lesbar: {err}", resolved.display()),
@@ -353,7 +376,7 @@ mod tests {
         let doc_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
         let body = "# Blocksmith export test\n\nSome **text** with a local image below.\n\n![a red pixel](pixel.png)\n";
 
-        let frontmatter = Frontmatter {
+        let mut frontmatter = Frontmatter {
             title: "Blocksmith export test post".to_string(),
             slug: String::new(),
             status: crate::document::PostStatus::Draft,
@@ -365,11 +388,65 @@ mod tests {
             media: Vec::new(),
         };
 
-        let created = run_export(&site, &password, &frontmatter, body, Some(&doc_dir)).expect("run_export failed");
+        let created = run_export(&site, &password, &mut frontmatter, body, Some(&doc_dir)).expect("run_export failed");
         assert!(created.id > 0);
 
-        // Cleanup: the post, and the category/tag terms `run_export` created.
+        // `run_export` reconciles + uploads media as a side effect - confirm
+        // it actually tracked and uploaded the one local image, not just
+        // that the post itself was created.
+        assert_eq!(frontmatter.media.len(), 1);
+        let uploaded = frontmatter.media[0].wordpress.clone().expect("expected the local image to have been uploaded");
+        assert!(uploaded.media_id > 0);
+        assert!(!uploaded.content_hash.is_empty());
+
+        // Cleanup: the post, the uploaded media item, and the category/tag
+        // terms `run_export` created.
         let client = wpclient::Client::new(&site.url, &site.username, &password);
         client.delete_post(created.id).expect("cleanup delete_post failed");
+        client.delete_media(uploaded.media_id).expect("cleanup delete_media failed");
+    }
+
+    /// Exercises the duplicate-upload fix directly: exporting the same
+    /// unchanged local image twice must reuse the same WordPress media id
+    /// both times, not create a second attachment.
+    #[test]
+    #[ignore]
+    fn run_export_does_not_reupload_an_unchanged_local_image() {
+        let site = wpsite::load();
+        assert!(!site.url.is_empty(), "no WordPress site configured (run the connection dialog first)");
+        let password = futures_lite::future::block_on(secrets::load_app_password(&site.url, &site.username))
+            .expect("keyring lookup failed")
+            .expect("no application password stored for this site/user");
+
+        let doc_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+        let body = "# Blocksmith re-export test\n\n![a red pixel](pixel.png)\n";
+
+        let mut frontmatter = Frontmatter {
+            title: "Blocksmith re-export test post".to_string(),
+            slug: String::new(),
+            status: crate::document::PostStatus::Draft,
+            categories: Vec::new(),
+            tags: Vec::new(),
+            featured_image: None,
+            wp_post_id: None,
+            featured_media_id: None,
+            media: Vec::new(),
+        };
+
+        let first = run_export(&site, &password, &mut frontmatter, body, Some(&doc_dir)).expect("first run_export failed");
+        let first_media_id = frontmatter.media[0].wordpress.clone().expect("expected an upload on the first export").media_id;
+
+        // Re-export the identical body/frontmatter (as an update, since
+        // `wp_post_id` now carries over) - the image content hasn't
+        // changed, so this must NOT create a second media attachment.
+        frontmatter.wp_post_id = Some(first.id);
+        let _second = run_export(&site, &password, &mut frontmatter, body, Some(&doc_dir)).expect("second run_export failed");
+        let second_media_id = frontmatter.media[0].wordpress.clone().expect("expected the ref to survive re-export").media_id;
+
+        assert_eq!(first_media_id, second_media_id, "re-exporting an unchanged local image must reuse the same WordPress media id");
+
+        let client = wpclient::Client::new(&site.url, &site.username, &password);
+        client.delete_post(first.id).expect("cleanup delete_post failed");
+        client.delete_media(first_media_id).expect("cleanup delete_media failed");
     }
 }

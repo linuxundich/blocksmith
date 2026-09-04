@@ -102,9 +102,14 @@ blocks. Implemented so far:
   custom prompts - see above).
 - **Publishing** — an "Artikel exportieren" dialog shows the generated
   Gutenberg HTML, then creates/updates the WordPress post via its REST API
-  on a background thread, uploading any locally-referenced images to the
-  media library and resolving category/tag names to WordPress term ids
-  (creating them if they don't exist yet). Once published, the same dialog
+  on a background thread, resolving category/tag names to WordPress term
+  ids (creating them if they don't exist yet). Locally-referenced images
+  are uploaded to the media library "bei Bedarf" (as needed), sharing the
+  same tracked media list Medienverwaltung uses: an image whose content
+  hash still matches what's already on the server is reused rather than
+  re-uploaded, and a changed one is uploaded as a new attachment with the
+  superseded one cleaned up automatically, since WordPress can't replace
+  an existing attachment's file in place. Once published, the same dialog
   offers a confirmed "Von WordPress löschen" to remove the post again.
 - **Flatpak packaging** — manifest, desktop entry, AppStream metainfo, and
   icon under `data/` and `build-aux/flatpak/`.
