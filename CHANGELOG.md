@@ -7,7 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-## [0.18.0] - 2026-09-04
+## [0.19.0] - 2026-09-04
+
+### Added
+
+- "Alternativtext festlegen…" in the editor's right-click context menu -
+  right-clicking a line with an image reference (`![Beschreibung](bild.png)`)
+  opens a small dialog for just that image's alt text and caption, backed
+  by the same data Medienverwaltung already edits. Alt text and caption
+  previously required opening Medienverwaltung (or the export dialog's
+  "Medien" tab) to reach at all.
+
+
 
 ### Fixed
 

@@ -13,6 +13,7 @@ mod editor;
 mod export;
 mod fontutil;
 mod formatting;
+mod imagealt;
 mod importer;
 mod linkpicker;
 mod llm;

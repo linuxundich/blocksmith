@@ -8,8 +8,8 @@ use gtk4::{gio, glib};
 
 use crate::document::{Document, Frontmatter};
 use crate::{
-    aimenu, chat, codeview, document, editor, export, formatting, importer, linkpicker, mediapanel, preview, properties, settings, stats,
-    statusbar, termcache,
+    aimenu, chat, codeview, document, editor, export, formatting, imagealt, importer, linkpicker, mediapanel, preview, properties, settings,
+    stats, statusbar, termcache,
 };
 
 const DEBOUNCE_MS: u64 = 250;
@@ -154,7 +154,9 @@ pub fn build(app: &adw::Application) -> adw::ApplicationWindow {
     let tag_terms: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(cached_terms.tags));
     termcache::spawn_refresh(category_terms.clone(), tag_terms.clone());
 
-    let ai_menu_handles = aimenu::install(&view, &buffer, &view_stack, chat_view.clone(), &spelling_menu);
+    let image_alt_menu = imagealt::menu_section();
+    imagealt::install(&view, &buffer, frontmatter.clone());
+    let ai_menu_handles = aimenu::install(&view, &buffer, &view_stack, chat_view.clone(), &spelling_menu, image_alt_menu.upcast_ref());
 
     wire_live_preview(&buffer, &preview_pane, &stats_view, &code_view);
     wire_scroll_sync(&editor_scroller, &buffer, &preview_pane);

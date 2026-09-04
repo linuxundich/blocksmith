@@ -65,8 +65,9 @@ blocks. Implemented so far:
   exporting afterward updates that same post instead of creating a
   duplicate.
 - **Medienverwaltung** (Ctrl+Shift+M, also embedded as a "Medien" tab in
-  the "Artikel exportieren" dialog next to "Vorschau", so it can be
-  checked right before publishing) — every image referenced in the
+  the "Artikel exportieren" dialog next to "Vorschau" so it can be checked
+  right before publishing, and reachable per-image via "Alternativtext
+  festlegen…" in the editor's right-click context menu) — every image referenced in the
   article gets its own alt text, caption, and WordPress upload state,
   independent of the Markdown source (persisted alongside the rest of the
   document in the frontmatter). Alt text is a three-state value rather

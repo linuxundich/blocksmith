@@ -36,6 +36,7 @@ pub fn install(
     view_stack: &adw::ViewStack,
     chat_view: Rc<ChatView>,
     spelling_menu: &gio::MenuModel,
+    image_alt_menu: &gio::MenuModel,
 ) -> AiMenuHandles {
     let translate_menu = gio::Menu::new();
     rebuild_translate_menu(&translate_menu, &aiprompts::load_translate_languages());
@@ -63,6 +64,7 @@ pub fn install(
 
     let combined_extra_menu = gio::Menu::new();
     combined_extra_menu.append_section(None, spelling_menu);
+    combined_extra_menu.append_section(None, image_alt_menu);
     combined_extra_menu.append_section(None, &ai_menu);
     view.set_extra_menu(Some(&combined_extra_menu));
 
