@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-09-04
+
+### Added
+
+- **KI-Alternativtext generieren…** - right-click an image (its `![alt](src)`
+  line in the editor, or the rendered image itself in the Vorschau pane) to
+  have the active KI-Chat provider look at the actual image and propose an
+  accessible alt text, at a choice of three detail levels ("Standard (kurz &
+  bündig)", "Ausführlich", "Hohe Genauigkeit"). The suggestion is shown for
+  review and can be corrected before it's applied; applying it writes
+  straight into the same field the manual alt-text editor and
+  Medienverwaltung already use, so it's what the WordPress media upload
+  sends - no separate step. Gemini, ChatGPT, Claude, and Ollama (a
+  vision-capable local model) are all supported.
+
 ## [0.20.0] - 2026-09-04
 
 ### Changed

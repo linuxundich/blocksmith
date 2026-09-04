@@ -7,6 +7,7 @@
 
 use std::time::Duration;
 
+use base64::Engine;
 use serde_json::Value;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -245,6 +246,86 @@ impl Client {
         Err(error_from_body(status, &body_text, &["error"]))
     }
 
+    /// Sends a single image plus an instruction prompt and returns the
+    /// model's text reply - a one-shot "describe this image" call (used for
+    /// AI-generated alt text, see `aialt.rs`), unlike `send`'s multi-turn
+    /// conversation history. `image_bytes` goes over the wire as base64,
+    /// inlined directly in the request body - all four providers support
+    /// this for a single image without needing a separate upload step.
+    pub fn describe_image(&self, prompt: &str, image_bytes: &[u8], mime_type: &str) -> Result<String> {
+        let data = base64::engine::general_purpose::STANDARD.encode(image_bytes);
+        match self.provider {
+            Provider::Gemini => self.describe_image_gemini(prompt, mime_type, &data),
+            Provider::OpenAi => self.describe_image_openai(prompt, mime_type, &data),
+            Provider::Claude => self.describe_image_claude(prompt, mime_type, &data),
+            Provider::Ollama => self.describe_image_ollama(prompt, &data),
+        }
+    }
+
+    fn describe_image_gemini(&self, prompt: &str, mime_type: &str, data: &str) -> Result<String> {
+        let body = gemini_image_body(prompt, mime_type, data);
+        let url = format!("https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent", self.model);
+        let (status, body_text) = self.post_json(&url, &[("x-goog-api-key", &self.api_key)], &body)?;
+        if !(200..300).contains(&status) {
+            return Err(error_from_body(status, &body_text, &["error", "message"]));
+        }
+        let value: Value = parse_json(&body_text)?;
+        value
+            .pointer("/candidates/0/content/parts/0/text")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .ok_or_else(|| ApiError {
+                message: "Keine Antwort erhalten (möglicherweise durch einen Sicherheitsfilter blockiert).".to_string(),
+            })
+    }
+
+    fn describe_image_openai(&self, prompt: &str, mime_type: &str, data: &str) -> Result<String> {
+        let body = openai_image_body(&self.model, prompt, mime_type, data);
+        let auth = format!("Bearer {}", self.api_key);
+        let (status, body_text) = self.post_json("https://api.openai.com/v1/chat/completions", &[("Authorization", &auth)], &body)?;
+        if !(200..300).contains(&status) {
+            return Err(error_from_body(status, &body_text, &["error", "message"]));
+        }
+        let value: Value = parse_json(&body_text)?;
+        value
+            .pointer("/choices/0/message/content")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .ok_or_else(|| ApiError { message: "Keine Antwort erhalten.".to_string() })
+    }
+
+    fn describe_image_claude(&self, prompt: &str, mime_type: &str, data: &str) -> Result<String> {
+        let body = claude_image_body(&self.model, prompt, mime_type, data);
+        let (status, body_text) = self.post_json(
+            "https://api.anthropic.com/v1/messages",
+            &[("x-api-key", &self.api_key), ("anthropic-version", "2023-06-01")],
+            &body,
+        )?;
+        if !(200..300).contains(&status) {
+            return Err(error_from_body(status, &body_text, &["error", "message"]));
+        }
+        let value: Value = parse_json(&body_text)?;
+        value
+            .pointer("/content/0/text")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .ok_or_else(|| ApiError { message: "Keine Antwort erhalten.".to_string() })
+    }
+
+    fn describe_image_ollama(&self, prompt: &str, data: &str) -> Result<String> {
+        let body = ollama_image_body(&self.model, prompt, data);
+        let url = format!("{}/api/chat", self.base_url);
+        let (status, body_text) = self.post_json(&url, &[], &body)?;
+        if !(200..300).contains(&status) {
+            return Err(error_from_body(status, &body_text, &["error"]));
+        }
+        let value: Value = parse_json(&body_text)?;
+        if let Some(text) = value.pointer("/message/content").and_then(Value::as_str) {
+            return Ok(text.to_string());
+        }
+        Err(error_from_body(status, &body_text, &["error"]))
+    }
+
     fn post_json(&self, url: &str, headers: &[(&str, &str)], body: &Value) -> Result<(u16, String)> {
         let mut request = self.agent.post(url).header("Content-Type", "application/json");
         for (name, value) in headers {
@@ -317,6 +398,59 @@ impl Client {
         }
         Ok(extract_ollama_models(&parse_json(&body_text)?))
     }
+}
+
+/// Request-body builders for `describe_image_*` - kept as pure functions
+/// (not inlined) so their JSON shape can be unit-tested the same way
+/// `extract_*_models` is, without needing a live network call.
+fn gemini_image_body(prompt: &str, mime_type: &str, data: &str) -> Value {
+    serde_json::json!({
+        "contents": [{
+            "role": "user",
+            "parts": [
+                {"text": prompt},
+                {"inline_data": {"mime_type": mime_type, "data": data}}
+            ]
+        }]
+    })
+}
+
+fn openai_image_body(model: &str, prompt: &str, mime_type: &str, data: &str) -> Value {
+    serde_json::json!({
+        "model": model,
+        "messages": [{
+            "role": "user",
+            "content": [
+                {"type": "text", "text": prompt},
+                {"type": "image_url", "image_url": {"url": format!("data:{mime_type};base64,{data}")}}
+            ]
+        }]
+    })
+}
+
+fn claude_image_body(model: &str, prompt: &str, mime_type: &str, data: &str) -> Value {
+    serde_json::json!({
+        "model": model,
+        "max_tokens": 1024,
+        "messages": [{
+            "role": "user",
+            "content": [
+                {"type": "image", "source": {"type": "base64", "media_type": mime_type, "data": data}},
+                {"type": "text", "text": prompt}
+            ]
+        }]
+    })
+}
+
+/// Ollama's `/api/chat` takes images as a plain array of base64 strings
+/// alongside the message - no data-URL prefix and no per-image mime type,
+/// unlike the other three providers.
+fn ollama_image_body(model: &str, prompt: &str, data: &str) -> Value {
+    serde_json::json!({
+        "model": model,
+        "messages": [{"role": "user", "content": prompt, "images": [data]}],
+        "stream": false
+    })
 }
 
 fn extract_gemini_models(value: &Value) -> Vec<String> {
@@ -499,5 +633,38 @@ mod tests {
         let body = r#"{"models":[{"name":"llama3.2:latest"},{"name":"mistral:latest"}]}"#;
         let value: Value = parse_json(body).unwrap();
         assert_eq!(extract_ollama_models(&value), vec!["llama3.2:latest".to_string(), "mistral:latest".to_string()]);
+    }
+
+    #[test]
+    fn gemini_image_body_inlines_the_image_alongside_the_prompt() {
+        let body = gemini_image_body("Beschreibe dieses Bild.", "image/png", "QUJD");
+        assert_eq!(body.pointer("/contents/0/parts/0/text").and_then(Value::as_str), Some("Beschreibe dieses Bild."));
+        assert_eq!(body.pointer("/contents/0/parts/1/inline_data/mime_type").and_then(Value::as_str), Some("image/png"));
+        assert_eq!(body.pointer("/contents/0/parts/1/inline_data/data").and_then(Value::as_str), Some("QUJD"));
+    }
+
+    #[test]
+    fn openai_image_body_uses_a_data_url() {
+        let body = openai_image_body("gpt-4o-mini", "Beschreibe dieses Bild.", "image/png", "QUJD");
+        assert_eq!(body.pointer("/messages/0/content/0/text").and_then(Value::as_str), Some("Beschreibe dieses Bild."));
+        assert_eq!(
+            body.pointer("/messages/0/content/1/image_url/url").and_then(Value::as_str),
+            Some("data:image/png;base64,QUJD")
+        );
+    }
+
+    #[test]
+    fn claude_image_body_uses_base64_source() {
+        let body = claude_image_body("claude-sonnet-5", "Beschreibe dieses Bild.", "image/png", "QUJD");
+        assert_eq!(body.pointer("/messages/0/content/0/source/media_type").and_then(Value::as_str), Some("image/png"));
+        assert_eq!(body.pointer("/messages/0/content/0/source/data").and_then(Value::as_str), Some("QUJD"));
+        assert_eq!(body.pointer("/messages/0/content/1/text").and_then(Value::as_str), Some("Beschreibe dieses Bild."));
+    }
+
+    #[test]
+    fn ollama_image_body_carries_images_as_plain_base64_array() {
+        let body = ollama_image_body("llava", "Beschreibe dieses Bild.", "QUJD");
+        assert_eq!(body.pointer("/messages/0/content").and_then(Value::as_str), Some("Beschreibe dieses Bild."));
+        assert_eq!(body.pointer("/messages/0/images/0").and_then(Value::as_str), Some("QUJD"));
     }
 }

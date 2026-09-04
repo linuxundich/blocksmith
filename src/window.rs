@@ -155,7 +155,8 @@ pub fn build(app: &adw::Application) -> adw::ApplicationWindow {
     termcache::spawn_refresh(category_terms.clone(), tag_terms.clone());
 
     let image_alt_menu = imagealt::menu_section();
-    imagealt::install(&view, &buffer, frontmatter.clone());
+    imagealt::install(&view, &buffer, frontmatter.clone(), current_path.clone());
+    preview_pane.install_ai_alt_text_menu(&window, frontmatter.clone());
     let ai_menu_handles = aimenu::install(&view, &buffer, &view_stack, chat_view.clone(), &spelling_menu, image_alt_menu.upcast_ref());
 
     wire_live_preview(&buffer, &preview_pane, &stats_view, &code_view);

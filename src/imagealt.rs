@@ -18,11 +18,13 @@
 //! so the existing cursor-based lookup has an accurate position to read.
 
 use std::cell::RefCell;
+use std::path::PathBuf;
 use std::rc::Rc;
 
 use adw::prelude::*;
 use gtk4::gio;
 
+use crate::aialt;
 use crate::document::Frontmatter;
 use crate::media::{self, AltText};
 
@@ -31,6 +33,7 @@ use crate::media::{self, AltText};
 pub fn menu_section() -> gio::Menu {
     let menu = gio::Menu::new();
     menu.append(Some("Alternativtext festlegen…"), Some("imagealt.set"));
+    menu.append(Some("KI-Alternativtext generieren…"), Some("imagealt.generate-ai"));
     menu
 }
 
@@ -38,7 +41,7 @@ pub fn menu_section() -> gio::Menu {
 /// docs for why this can't just rely on default `Gtk.TextView` behavior),
 /// and wires the `imagealt.set` action activated by the menu item
 /// `menu_section` returns, which then reads the (now-accurate) cursor line.
-pub fn install(view: &sourceview5::View, buffer: &sourceview5::Buffer, frontmatter: Rc<RefCell<Frontmatter>>) {
+pub fn install(view: &sourceview5::View, buffer: &sourceview5::Buffer, frontmatter: Rc<RefCell<Frontmatter>>, current_path: Rc<RefCell<Option<PathBuf>>>) {
     let gesture = gtk4::GestureClick::new();
     gesture.set_button(3); // secondary/right button
     {
@@ -55,9 +58,11 @@ pub fn install(view: &sourceview5::View, buffer: &sourceview5::Buffer, frontmatt
     view.add_controller(gesture);
 
     let actions = gio::SimpleActionGroup::new();
+
     let set_action = gio::SimpleAction::new("set", None);
     {
         let buffer = buffer.clone();
+        let frontmatter = frontmatter.clone();
         let view_weak = view.downgrade();
         set_action.connect_activate(move |_, _| {
             let Some(view) = view_weak.upgrade() else { return };
@@ -69,7 +74,57 @@ pub fn install(view: &sourceview5::View, buffer: &sourceview5::Buffer, frontmatt
         });
     }
     actions.add_action(&set_action);
+
+    let generate_ai_action = gio::SimpleAction::new("generate-ai", None);
+    {
+        let buffer = buffer.clone();
+        let view_weak = view.downgrade();
+        generate_ai_action.connect_activate(move |_, _| {
+            let Some(view) = view_weak.upgrade() else { return };
+            let Some(window) = view.root().and_then(|root| root.downcast::<gtk4::Window>().ok()) else {
+                return;
+            };
+            let line = buffer.iter_at_mark(&buffer.get_insert()).line();
+            let doc_dir = current_path.borrow().as_ref().and_then(|p| p.parent().map(|d| d.to_path_buf()));
+            generate_ai_for_line(&window, &buffer, &frontmatter, line, doc_dir);
+        });
+    }
+    actions.add_action(&generate_ai_action);
+
     view.insert_action_group("imagealt", Some(&actions));
+}
+
+/// Same image-on-line lookup + reconcile as `open_for_line`, but hands off
+/// to `aialt::open`'s AI-generation review dialog instead of the plain
+/// manual-entry one.
+fn generate_ai_for_line(
+    window: &gtk4::Window,
+    buffer: &sourceview5::Buffer,
+    frontmatter: &Rc<RefCell<Frontmatter>>,
+    line: i32,
+    doc_dir: Option<PathBuf>,
+) {
+    let body = buffer.text(&buffer.start_iter(), &buffer.end_iter(), false).to_string();
+
+    let Some(source) = image_source_on_line(&body, line) else {
+        let alert = adw::AlertDialog::builder()
+            .heading("Keine Bildreferenz gefunden")
+            .body("Für den KI-Alternativtext bitte mit der rechten Maustaste auf eine Zeile mit einem Bild (![Beschreibung](bild.png)) klicken.")
+            .build();
+        alert.add_response("ok", "OK");
+        alert.present(Some(window));
+        return;
+    };
+
+    {
+        let mut fm = frontmatter.borrow_mut();
+        fm.media = media::reconcile(&fm.media, &body);
+    }
+    let Some(index) = frontmatter.borrow().media.iter().position(|item| item.source == source) else {
+        return;
+    };
+
+    aialt::open(window, frontmatter.clone(), index, doc_dir);
 }
 
 /// Finds the `![alt](source)` reference starting on `line` (0-indexed,

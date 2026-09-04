@@ -1,3 +1,4 @@
+mod aialt;
 mod aimenu;
 mod aiprompts;
 mod appearance;

@@ -86,7 +86,13 @@ blocks. Implemented so far:
   editor toolbar opens a native image file picker and inserts a real
   Markdown image reference at the cursor (relative to the document's own
   folder when possible) - previously the only way to add an image
-  reference was to type its filename by hand.
+  reference was to type its filename by hand. A right-click on an image -
+  its Markdown line in the editor, or the rendered image itself in the
+  Vorschau pane - also offers "KI-Alternativtext generieren…": the active
+  KI-Chat provider looks at the real image and proposes an accessible alt
+  text at a choice of three detail levels (Standard/Ausführlich/Hohe
+  Genauigkeit), shown for review and correction before it's applied
+  directly into the same alt-text field, ready for the next upload.
 - **Einstellungen dialog** (`Adw.PreferencesDialog`, Ctrl+,) — an
   "Erscheinungsbild" page adopted directly from GNOME Builder's own
   implementation (light/dark/follow-system cards using Builder's bundled

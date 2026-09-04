@@ -25,7 +25,9 @@ use gtk4::{gio, glib, pango};
 use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 use webkit6::prelude::*;
 
+use crate::document::Frontmatter;
 use crate::fontutil;
+use crate::media::{self, MediaItem};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PreviewStyle {
@@ -185,6 +187,52 @@ impl PreviewPane {
         self.rerender();
     }
 
+    /// Adds a "KI-Alternativtext generieren…" item to the context menu when
+    /// right-clicking directly on a rendered image - the preview-side entry
+    /// point into `aialt::open` (the editor-side one is `imagealt.rs`,
+    /// triggered from the image's `![alt](src)` line instead). A second
+    /// `context-menu` handler alongside the one `new()` already installs
+    /// (which only trims the default navigation items), since `frontmatter`
+    /// isn't available yet at construction time - both handlers run against
+    /// the same `ContextMenu` on every right-click.
+    pub fn install_ai_alt_text_menu(&self, window: &impl IsA<gtk4::Window>, frontmatter: Rc<RefCell<Frontmatter>>) {
+        let window: gtk4::Window = window.clone().upcast();
+        let doc_dir = self.doc_dir.clone();
+        let last_markdown = self.last_markdown.clone();
+        self.web_view.connect_context_menu(move |_web_view, context_menu, hit_test_result| {
+            if !hit_test_result.context_is_image() {
+                return false;
+            }
+            let Some(image_uri) = hit_test_result.image_uri() else { return false };
+
+            // Re-reconcile here (not just relying on whatever's already in
+            // `frontmatter.media`) so a just-inserted image that hasn't been
+            // through Medienverwaltung/the export dialog yet still gets a
+            // working menu entry, not a silently-missing one.
+            {
+                let mut fm = frontmatter.borrow_mut();
+                fm.media = media::reconcile(&fm.media, &last_markdown.borrow());
+            }
+            let doc_dir_value = doc_dir.borrow().clone();
+            let Some(index) = item_index_for_image_uri(&frontmatter.borrow().media, &image_uri, doc_dir_value.as_deref()) else {
+                return false;
+            };
+
+            let action = gio::SimpleAction::new("generate-ai-alt-text", None);
+            {
+                let frontmatter = frontmatter.clone();
+                let window = window.clone();
+                let doc_dir_value = doc_dir_value.clone();
+                action.connect_activate(move |_, _| {
+                    crate::aialt::open(&window, frontmatter.clone(), index, doc_dir_value.clone());
+                });
+            }
+            let item = webkit6::ContextMenuItem::from_gaction(&action, "KI-Alternativtext generieren…", None);
+            context_menu.append(&item);
+            false
+        });
+    }
+
     pub fn scroll_to_line(&self, line: i32) {
         self.web_view.evaluate_javascript(&format!("window.scrollToLine && window.scrollToLine({line});"), None, None, gio::Cancellable::NONE, |_| {});
     }
@@ -238,6 +286,22 @@ fn base_uri(dir: Option<&Path>) -> Option<String> {
     let dir = dir?;
     let uri = gio::File::for_path(dir).uri();
     Some(if uri.ends_with('/') { uri.to_string() } else { format!("{uri}/") })
+}
+
+/// Matches a WebKit-resolved image URI back to the `MediaItem` it renders.
+/// A `file://` URI (the normal case for a locally-referenced image, since
+/// the preview's base URI - see `base_uri` above - turns a relative
+/// `![](photo.png)` into an absolute `file://` address before WebKit ever
+/// sees it) is converted back to a plain path and compared against each
+/// item's Markdown source resolved the same way `export::resolve_local_path`
+/// resolves it for upload/hashing; anything else (a remote `http(s)://` URL,
+/// `gio::File::path()` returns `None` for those) is compared directly, since
+/// a remote source is never rewritten.
+fn item_index_for_image_uri(items: &[MediaItem], image_uri: &str, doc_dir: Option<&Path>) -> Option<usize> {
+    if let Some(path) = gio::File::for_uri(image_uri).path() {
+        return items.iter().position(|item| crate::export::resolve_local_path(&item.source, doc_dir) == path);
+    }
+    items.iter().position(|item| item.source == image_uri)
 }
 
 /// One typographic style's CSS, in its light and dark variant. Baked
@@ -523,6 +587,42 @@ mod tests {
         for style in PreviewStyle::ALL {
             assert_eq!(PreviewStyle::from_id(style.id()), style);
         }
+    }
+
+    #[test]
+    fn item_index_for_image_uri_matches_a_local_file_uri_back_to_its_source() {
+        let dir = std::env::temp_dir().join(format!("blocksmith-preview-uri-match-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("cat.png"), b"fake png bytes").unwrap();
+
+        let items = vec![MediaItem {
+            id: "media-001".to_string(),
+            filename: "cat.png".to_string(),
+            source: "cat.png".to_string(),
+            alt: crate::media::AltText::Undefined,
+            caption: None,
+            wordpress: None,
+        }];
+        let uri = gio::File::for_path(dir.join("cat.png")).uri();
+
+        assert_eq!(item_index_for_image_uri(&items, &uri, Some(&dir)), Some(0));
+        assert_eq!(item_index_for_image_uri(&items, &uri, None), None, "no doc_dir means the source can't resolve to this path");
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn item_index_for_image_uri_matches_a_remote_url_directly() {
+        let items = vec![MediaItem {
+            id: "media-001".to_string(),
+            filename: "cat.png".to_string(),
+            source: "https://example.com/cat.png".to_string(),
+            alt: crate::media::AltText::Undefined,
+            caption: None,
+            wordpress: None,
+        }];
+        assert_eq!(item_index_for_image_uri(&items, "https://example.com/cat.png", None), Some(0));
+        assert_eq!(item_index_for_image_uri(&items, "https://example.com/dog.png", None), None);
     }
 
     #[test]

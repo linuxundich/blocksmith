@@ -389,6 +389,26 @@ pub(crate) fn resolve_local_path(source: &str, base_dir: Option<&Path>) -> PathB
     }
 }
 
+/// Reads the actual bytes behind a `MediaItem.source`/Markdown image
+/// destination - a local path resolved against the document's own
+/// directory (see `resolve_local_path`), or fetched over plain HTTP for an
+/// already-remote `http(s)://` source (e.g. an image in an article opened
+/// via "Von WordPress öffnen", which was never local to begin with). Used
+/// by `aialt.rs`, which needs the real image bytes to send to a vision-
+/// capable LLM - unlike `sync_uploads`, which only ever needs to *upload*
+/// a changed local file and can skip a remote source entirely.
+pub(crate) fn read_image_bytes(source: &str, base_dir: Option<&Path>) -> Result<Vec<u8>, String> {
+    if source.starts_with("http://") || source.starts_with("https://") {
+        let config = ureq::Agent::config_builder().timeout_global(Some(Duration::from_secs(30))).build();
+        let agent = ureq::Agent::new_with_config(config);
+        let mut response = agent.get(source).call().map_err(|err| format!("Bild nicht abrufbar: {err}"))?;
+        response.body_mut().read_to_vec().map_err(|err| format!("Bild nicht lesbar: {err}"))
+    } else {
+        let resolved = resolve_local_path(source, base_dir);
+        std::fs::read(&resolved).map_err(|err| format!("Bild {} nicht lesbar: {err}", resolved.display()))
+    }
+}
+
 pub(crate) fn upload_image_file(client: &wpclient::Client, path_str: &str, base_dir: Option<&Path>) -> wpclient::Result<wpclient::MediaResult> {
     let resolved = resolve_local_path(path_str, base_dir);
     let bytes = std::fs::read(&resolved).map_err(|err| wpclient::ApiError {
@@ -549,5 +569,24 @@ mod tests {
         let client = wpclient::Client::new(&site.url, &site.username, &password);
         client.delete_post(first.id).expect("cleanup delete_post failed");
         client.delete_media(first_media_id).expect("cleanup delete_media failed");
+    }
+
+    #[test]
+    fn read_image_bytes_reads_a_local_file_relative_to_the_doc_dir() {
+        let dir = std::env::temp_dir().join(format!("blocksmith-read-image-bytes-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("photo.png"), b"not a real png, just test bytes").unwrap();
+
+        let bytes = read_image_bytes("photo.png", Some(&dir)).expect("expected the local file to be readable");
+        assert_eq!(bytes, b"not a real png, just test bytes");
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn read_image_bytes_reports_a_readable_error_for_a_missing_local_file() {
+        let dir = std::env::temp_dir().join(format!("blocksmith-read-image-bytes-missing-test-{}", std::process::id()));
+        let err = read_image_bytes("nope.png", Some(&dir)).expect_err("expected a missing file to be an error");
+        assert!(err.contains("nope.png"), "{err}");
     }
 }
