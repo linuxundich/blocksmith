@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-09-04
+
+### Added
+
+- Medienverwaltung is now embedded directly in the "Artikel exportieren"
+  dialog as a "Medien" tab next to "Vorschau", so alt text, captions, and
+  WordPress upload state can be checked and fixed right before publishing,
+  not just from the separate Ctrl+Shift+M dialog (which still exists
+  unchanged).
+- A new image's caption is now seeded from its Markdown bracket text
+  (`![Bildunterschrift](bild.png)`) when no explicit `"title"` is present -
+  previously the caption stayed empty unless the rarely-used quoted-title
+  syntax was used, even though the bracket text is the only description
+  most images ever get. The title, when present, still takes priority.
+
 ## [0.16.0] - 2026-09-04
 
 ### Added

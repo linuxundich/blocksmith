@@ -182,8 +182,21 @@ pub fn reconcile(existing: &[MediaItem], markdown: &str) -> Vec<MediaItem> {
                 found.clone()
             } else {
                 let filename = source.rsplit(['/', '\\']).next().unwrap_or(&source).to_string();
+                // The caption prefers the explicit `"title"` when present,
+                // matching CommonMark's own naming for that slot; but many
+                // images are written as the plain `![text](src)` form with
+                // no title at all, and the user still thinks of that
+                // bracket text as the caption (it's the only descriptive
+                // text they ever typed) - so it's the fallback rather than
+                // being left blank.
+                let caption = if !markdown_title.is_empty() {
+                    Some(markdown_title)
+                } else if !markdown_alt.is_empty() {
+                    Some(markdown_alt.clone())
+                } else {
+                    None
+                };
                 let alt = if markdown_alt.is_empty() { AltText::Undefined } else { AltText::Text(markdown_alt) };
-                let caption = (!markdown_title.is_empty()).then_some(markdown_title);
                 let id = format!("media-{next_serial:03}");
                 next_serial += 1;
                 MediaItem { id, filename, source, alt, caption, wordpress: None }
@@ -377,6 +390,19 @@ mod tests {
     fn reconcile_seeds_caption_from_markdown_title() {
         let items = reconcile(&[], "![a red barn](barn.jpg \"A red barn at dusk\")\n");
         assert_eq!(items[0].caption, Some("A red barn at dusk".to_string()));
+    }
+
+    #[test]
+    fn reconcile_falls_back_to_bracket_text_for_caption_when_no_title_is_present() {
+        let items = reconcile(&[], "![a red barn](barn.jpg)\n");
+        assert_eq!(items[0].caption, Some("a red barn".to_string()), "the bracket text is the only description many images ever get - it should seed the caption too, not just alt text");
+    }
+
+    #[test]
+    fn reconcile_prefers_the_title_over_bracket_text_for_caption_when_both_are_present() {
+        let items = reconcile(&[], "![a red barn](barn.jpg \"A red barn at dusk\")\n");
+        assert_eq!(items[0].caption, Some("A red barn at dusk".to_string()));
+        assert_eq!(items[0].alt, AltText::Text("a red barn".to_string()), "alt still comes from the bracket text regardless of a title being present");
     }
 
     #[test]

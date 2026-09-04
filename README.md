@@ -64,7 +64,9 @@ blocks. Implemented so far:
   resolved from ids back to names, and the post's id carries over so
   exporting afterward updates that same post instead of creating a
   duplicate.
-- **Medienverwaltung** (Ctrl+Shift+M) — every image referenced in the
+- **Medienverwaltung** (Ctrl+Shift+M, also embedded as a "Medien" tab in
+  the "Artikel exportieren" dialog next to "Vorschau", so it can be
+  checked right before publishing) — every image referenced in the
   article gets its own alt text, caption, and WordPress upload state,
   independent of the Markdown source (persisted alongside the rest of the
   document in the frontmatter). Alt text is a three-state value rather
@@ -72,8 +74,11 @@ blocks. Implemented so far:
   Bildern haben noch keinen Alternativtext" hint), deliberately left empty
   for decorative images (not treated as an error), or defined text; the
   caption is a separate field, never derived from the alt text, though it
-  is seeded from the Markdown image's optional `"title"` the first time an
-  image is seen (`![alt](src "title")`). A "Zu WordPress hochladen" button
+  is seeded the first time an image is seen from the Markdown image's
+  optional `"title"` (`![alt](src "title")`) if present, else from its
+  bracket text (`![Bildunterschrift](src)`) - most images never get the
+  quoted-title form, so the bracket text is usually the only description
+  there is. A "Zu WordPress hochladen" button
   per image uploads it via the real REST API and stores the resulting
   media id/URL so re-opening the article recognizes it as already
   uploaded rather than re-uploading it. A "Bild einfügen…" button in the

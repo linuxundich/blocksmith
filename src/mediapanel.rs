@@ -24,18 +24,37 @@ use crate::media::{self, AltText, UploadStatus};
 use crate::{export, secrets, wpclient, wpsite};
 
 pub fn open(parent: &adw::ApplicationWindow, body: String, frontmatter: Rc<RefCell<Frontmatter>>, doc_dir: Option<PathBuf>) {
+    let content = build_content(frontmatter, &body, doc_dir);
+
+    let header = adw::HeaderBar::new();
+    let toolbar_view = adw::ToolbarView::new();
+    toolbar_view.add_top_bar(&header);
+    toolbar_view.set_content(Some(&content));
+
+    let dialog = adw::Dialog::builder()
+        .title("Medienverwaltung")
+        .content_width(560)
+        .content_height(600)
+        .child(&toolbar_view)
+        .build();
+    dialog.present(Some(parent));
+}
+
+/// Builds the Medienverwaltung's actual content (status line + per-image
+/// list), independent of the dialog chrome around it - reused both by the
+/// standalone `open()` above (still reachable via Ctrl+Shift+M) and by
+/// `export.rs`, which embeds this same content as a tab in the publish
+/// dialog so alt text/captions/uploads can be checked right before
+/// publishing, not just from a separate dialog.
+pub fn build_content(frontmatter: Rc<RefCell<Frontmatter>>, body: &str, doc_dir: Option<PathBuf>) -> gtk4::Widget {
     // Re-scan so images added/removed since the last reconcile (a save, or
     // opening this panel before) are reflected immediately - metadata for
     // still-referenced images is preserved (see `media::reconcile`).
     {
         let mut fm = frontmatter.borrow_mut();
-        fm.media = media::reconcile(&fm.media, &body);
+        fm.media = media::reconcile(&fm.media, body);
     }
     let item_count = frontmatter.borrow().media.len();
-
-    let header = adw::HeaderBar::new();
-    let toolbar_view = adw::ToolbarView::new();
-    toolbar_view.add_top_bar(&header);
 
     let content_box = gtk4::Box::builder()
         .orientation(gtk4::Orientation::Vertical)
@@ -62,15 +81,7 @@ pub fn open(parent: &adw::ApplicationWindow, body: String, frontmatter: Rc<RefCe
 
     content_box.append(&status_label);
     content_box.append(&scroller);
-    toolbar_view.set_content(Some(&content_box));
-
-    let dialog = adw::Dialog::builder()
-        .title("Medienverwaltung")
-        .content_width(560)
-        .content_height(600)
-        .child(&toolbar_view)
-        .build();
-    dialog.present(Some(parent));
+    content_box.upcast()
 }
 
 fn summary_text(frontmatter: &Rc<RefCell<Frontmatter>>) -> String {

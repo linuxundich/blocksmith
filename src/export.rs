@@ -18,7 +18,7 @@ use adw::prelude::*;
 use gtk4::glib;
 
 use crate::document::{Frontmatter, PostStatus};
-use crate::{media, secrets, wpclient, wpsite};
+use crate::{media, mediapanel, secrets, wpclient, wpsite};
 
 pub fn open(
     parent: &adw::ApplicationWindow,
@@ -28,19 +28,6 @@ pub fn open(
 ) {
     let site = wpsite::load();
     let current_fm = frontmatter.borrow().clone();
-
-    let header = adw::HeaderBar::new();
-    let toolbar_view = adw::ToolbarView::new();
-    toolbar_view.add_top_bar(&header);
-
-    let content_box = gtk4::Box::builder()
-        .orientation(gtk4::Orientation::Vertical)
-        .spacing(12)
-        .margin_top(18)
-        .margin_bottom(18)
-        .margin_start(18)
-        .margin_end(18)
-        .build();
 
     let preview_label = gtk4::Label::builder().label("Zu sendendes Gutenberg-HTML:").xalign(0.0).build();
 
@@ -60,6 +47,38 @@ pub fn open(
         .child(&preview_view)
         .vexpand(true)
         .min_content_height(240)
+        .build();
+
+    let preview_page = gtk4::Box::builder().orientation(gtk4::Orientation::Vertical).spacing(8).vexpand(true).build();
+    preview_page.append(&preview_label);
+    preview_page.append(&preview_scroller);
+
+    // Embedding Medienverwaltung here (not just linking to the separate
+    // Ctrl+Shift+M dialog) lets alt text/captions/uploads be checked and
+    // fixed right before publishing, in the same dialog - `build_content`
+    // does its own `media::reconcile`, so this tab is always in sync with
+    // the current body even if Medienverwaltung was never opened before.
+    let media_page = mediapanel::build_content(frontmatter.clone(), &body, doc_dir.clone());
+
+    let view_stack = adw::ViewStack::new();
+    view_stack.add_titled_with_icon(&preview_page, Some("preview"), "Vorschau", "view-reveal-symbolic");
+    view_stack.add_titled_with_icon(&media_page, Some("media"), "Medien", "image-x-generic-symbolic");
+    view_stack.set_vexpand(true);
+
+    let view_switcher = adw::InlineViewSwitcher::builder().stack(&view_stack).build();
+
+    let header = adw::HeaderBar::new();
+    header.set_title_widget(Some(&view_switcher));
+    let toolbar_view = adw::ToolbarView::new();
+    toolbar_view.add_top_bar(&header);
+
+    let content_box = gtk4::Box::builder()
+        .orientation(gtk4::Orientation::Vertical)
+        .spacing(12)
+        .margin_top(18)
+        .margin_bottom(18)
+        .margin_start(18)
+        .margin_end(18)
         .build();
 
     let status_label = gtk4::Label::new(None);
@@ -98,16 +117,15 @@ pub fn open(
         draft_button.set_sensitive(false);
     }
 
-    content_box.append(&preview_label);
-    content_box.append(&preview_scroller);
+    content_box.append(&view_stack);
     content_box.append(&status_label);
     content_box.append(&button_row);
     toolbar_view.set_content(Some(&content_box));
 
     let dialog = adw::Dialog::builder()
         .title("Artikel exportieren")
-        .content_width(640)
-        .content_height(560)
+        .content_width(680)
+        .content_height(640)
         .child(&toolbar_view)
         .build();
 
