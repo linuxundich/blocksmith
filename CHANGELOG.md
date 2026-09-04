@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.27.0] - 2026-09-04
+
+### Added
+
+- New application icon: a pen forging content on an anvil in WordPress
+  blue, replacing the earlier placeholder (a plain gradient square with
+  three bars).
+
 ## [0.26.0] - 2026-09-04
 
 ### Added
