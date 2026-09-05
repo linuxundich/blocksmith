@@ -30,7 +30,10 @@ blocks. Implemented so far:
   link with Ctrl+K; "Bild einfügen" opening a native image file picker
   instead of typing a filename by hand; "Bestehenden Artikel verlinken"
   opening a searchable picker over the site's existing posts and inserting
-  a real Markdown link to the one picked), a debounced live HTML preview kept in scroll-sync with the
+  a real Markdown link to the one picked; pasting an image straight from the
+  clipboard with Ctrl+V - a screenshot, or "Copy Image" from a browser -
+  saves it into the article's own folder and inserts it, falling through to
+  a normal text paste when there's no image on the clipboard), a debounced live HTML preview kept in scroll-sync with the
   editor (matched by source line, not scroll percentage, so a tall image
   doesn't throw off the sync), and a footer status bar with word count and
   reading time for the whole article - plus the same two numbers for the
@@ -69,6 +72,10 @@ blocks. Implemented so far:
   autocomplete for existing WordPress categories/tags (backed by an
   on-disk cache, `src/termcache.rs`, refreshed at startup and on demand)
   and a native file picker for the featured image, not just a path field.
+- **Local autosave / crash-recovery** — while the article has unsaved
+  changes, a debounced background snapshot is kept in a local recovery
+  slot; if Blocksmith is closed without saving (or crashes), the next
+  launch offers to restore it, or discard it.
 - **Von WordPress öffnen** (Ctrl+Shift+O) — pick an existing post from the
   configured site, grouped into "Entwürfe" and "Veröffentlicht" (drafts
   first), and edit it as Markdown: `crates/gutenberg`'s reverse converter

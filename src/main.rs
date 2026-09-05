@@ -4,6 +4,7 @@ mod aimenu;
 mod aiprompts;
 mod appearance;
 mod autocomplete;
+mod autosave;
 mod changelog;
 mod chat;
 mod chatconfig;

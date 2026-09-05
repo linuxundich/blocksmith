@@ -11,7 +11,7 @@
 //! obvious choices, `serde_yaml` and its forks, are unmaintained) for a
 //! handful of scalar/list fields.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::media::MediaItem;
 
@@ -242,6 +242,38 @@ pub fn image_reference(path: &Path, doc_dir: Option<&Path>) -> String {
     path.to_string_lossy().to_string()
 }
 
+/// Picks a filename for an image pasted from the clipboard (which, unlike a
+/// file picked via a dialog, has no name of its own) - `eingefuegtes-bild.png`,
+/// falling back to a numbered suffix if that (or an earlier numbered variant)
+/// is already taken, so pasting several screenshots in a row never silently
+/// overwrites the previous one. `exists` is injected rather than calling
+/// `Path::exists` directly so this stays a pure, filesystem-free unit test.
+pub fn unique_pasted_image_path(dir: &Path, exists: impl Fn(&Path) -> bool) -> PathBuf {
+    let candidate = dir.join("eingefuegtes-bild.png");
+    if !exists(&candidate) {
+        return candidate;
+    }
+    let mut n = 2;
+    loop {
+        let candidate = dir.join(format!("eingefuegtes-bild-{n}.png"));
+        if !exists(&candidate) {
+            return candidate;
+        }
+        n += 1;
+    }
+}
+
+/// Whether a clipboard offering these mime types has an image on it - used
+/// to decide whether Ctrl+V should paste an image (see `window.rs`) instead
+/// of falling through to GtkSourceView's own text paste handling. A plain
+/// prefix check rather than an exact-match list, since clipboard producers
+/// advertise a wide, open-ended variety of `image/*` mime types (png, jpeg,
+/// bmp, tiff, webp, and platform-specific ones) and matching the prefix
+/// covers all of them without needing to keep a list in sync.
+pub fn mime_types_contain_image<S: AsRef<str>>(mime_types: &[S]) -> bool {
+    mime_types.iter().any(|mime| mime.as_ref().starts_with("image/"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -262,6 +294,36 @@ mod tests {
     fn image_reference_falls_back_to_absolute_when_the_document_has_no_directory_yet() {
         let reference = image_reference(Path::new("/home/toff/artikel/foto.png"), None);
         assert_eq!(reference, "/home/toff/artikel/foto.png");
+    }
+
+    #[test]
+    fn unique_pasted_image_path_uses_the_plain_name_when_nothing_exists_yet() {
+        let path = unique_pasted_image_path(Path::new("/home/toff/artikel"), |_| false);
+        assert_eq!(path, Path::new("/home/toff/artikel/eingefuegtes-bild.png"));
+    }
+
+    #[test]
+    fn unique_pasted_image_path_numbers_around_an_existing_file() {
+        let path = unique_pasted_image_path(Path::new("/home/toff/artikel"), |p| p == Path::new("/home/toff/artikel/eingefuegtes-bild.png"));
+        assert_eq!(path, Path::new("/home/toff/artikel/eingefuegtes-bild-2.png"));
+    }
+
+    #[test]
+    fn unique_pasted_image_path_skips_past_several_taken_numbers() {
+        let path = unique_pasted_image_path(Path::new("/tmp"), |p| {
+            p == Path::new("/tmp/eingefuegtes-bild.png") || p == Path::new("/tmp/eingefuegtes-bild-2.png") || p == Path::new("/tmp/eingefuegtes-bild-3.png")
+        });
+        assert_eq!(path, Path::new("/tmp/eingefuegtes-bild-4.png"));
+    }
+
+    #[test]
+    fn mime_types_contain_image_detects_a_common_image_mime_type() {
+        assert!(mime_types_contain_image(&["text/plain", "image/png"]));
+    }
+
+    #[test]
+    fn mime_types_contain_image_is_false_for_text_only_clipboard_content() {
+        assert!(!mime_types_contain_image(&["text/plain", "text/html"]));
     }
 
     #[test]

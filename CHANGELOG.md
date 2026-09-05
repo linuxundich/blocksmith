@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.28.0] - 2026-09-05
+
+### Added
+
+- Pasting an image from the clipboard (Ctrl+V) - a screenshot, or "Copy
+  Image" from a browser - now saves it as a new file in the article's own
+  folder and inserts it, instead of doing nothing. Pasting plain text still
+  works exactly as before.
+- Local autosave / crash-recovery: while the article has unsaved changes, a
+  snapshot is written to a local recovery slot in the background. If
+  Blocksmith is closed without saving (or crashes), the next launch offers
+  to restore that snapshot - or discard it.
+
 ## [0.27.0] - 2026-09-04
 
 ### Added

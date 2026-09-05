@@ -4,12 +4,12 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use adw::prelude::*;
-use gtk4::{gio, glib};
+use gtk4::{gdk, gio, glib};
 
 use crate::document::{Document, Frontmatter};
 use crate::{
-    about, aimenu, chat, codeview, document, editor, export, formatting, imagealt, importer, linkpicker, media, mediapanel, preview, properties,
-    recentfiles, settings, stats, statusbar, termcache, windowstate,
+    about, aimenu, autosave, chat, codeview, document, editor, export, formatting, imagealt, importer, linkpicker, media, mediapanel, preview,
+    properties, recentfiles, settings, stats, statusbar, termcache, windowstate,
 };
 
 const DEBOUNCE_MS: u64 = 250;
@@ -208,6 +208,12 @@ pub fn build(app: &adw::Application) -> adw::ApplicationWindow {
 
     let current_path: Rc<RefCell<Option<PathBuf>>> = Rc::new(RefCell::new(None));
     let frontmatter: Rc<RefCell<Frontmatter>> = Rc::new(RefCell::new(Frontmatter::default()));
+    // What's currently safely on disk (or, for a still-unsaved document,
+    // just ""): the baseline `wire_live_preview`'s autosave tick compares
+    // the buffer against, so loading an already-saved article doesn't
+    // immediately manufacture a bogus "unsaved changes" recovery snapshot
+    // for content that was never actually edited - see `autosave.rs`.
+    let saved_text: Rc<RefCell<String>> = Rc::new(RefCell::new(String::new()));
 
     let cached_terms = termcache::load();
     let category_terms: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(cached_terms.categories));
@@ -219,19 +225,29 @@ pub fn build(app: &adw::Application) -> adw::ApplicationWindow {
     preview::PreviewPane::install_ai_alt_text_menu(&preview_pane, &window, frontmatter.clone());
     let ai_menu_handles = aimenu::install(&view, &buffer, &view_stack, chat_view.clone(), &spelling_menu, image_alt_menu.upcast_ref());
 
-    wire_live_preview(&buffer, &preview_pane, &stats_view, &code_view, &frontmatter);
+    let doc_ctx = DocContext {
+        buffer: buffer.clone(),
+        current_path: current_path.clone(),
+        frontmatter: frontmatter.clone(),
+        title: title.clone(),
+        toast_overlay: toast_overlay.clone(),
+        preview_pane: preview_pane.clone(),
+        saved_text: saved_text.clone(),
+    };
+
+    wire_live_preview(&buffer, &preview_pane, &stats_view, &code_view, &frontmatter, &current_path, &saved_text);
     wire_scroll_sync(&editor_scroller, &buffer, &preview_pane);
     wire_status_bar(&buffer, &status_bar);
-    wire_new_action(&window, &buffer, &current_path, &frontmatter, &title, &preview_pane);
-    wire_open_action(&window, &buffer, &current_path, &frontmatter, &title, &toast_overlay, &preview_pane);
-    wire_open_from_wordpress_action(&window, &buffer, &current_path, &frontmatter, &title, &preview_pane);
-    wire_save_action(&window, &buffer, &current_path, &frontmatter, &title, &toast_overlay, &preview_pane);
+    wire_new_action(&window, &buffer, &current_path, &frontmatter, &title, &preview_pane, &saved_text);
+    wire_open_action(&window, &doc_ctx);
+    wire_open_from_wordpress_action(&window, &buffer, &current_path, &frontmatter, &title, &preview_pane, &saved_text);
+    wire_save_action(&window, &doc_ctx);
     let recent_files_widgets = RecentFilesWidgets {
         button: recent_button,
         popover: recent_popover,
         list: recent_list,
     };
-    wire_recent_files_button(&recent_files_widgets, &buffer, &current_path, &frontmatter, &title, &toast_overlay, &preview_pane);
+    wire_recent_files_button(&recent_files_widgets, &doc_ctx);
     wire_properties_action(&window, &frontmatter, &category_terms, &tag_terms, &current_path);
     wire_settings_action(&window, &buffer, ai_menu_handles, &preview_pane);
     wire_about_action(&window);
@@ -239,6 +255,8 @@ pub fn build(app: &adw::Application) -> adw::ApplicationWindow {
     wire_media_action(&window, &buffer, &current_path, &frontmatter, &preview_pane);
     wire_insert_image_action(&window, &buffer, &current_path);
     wire_insert_post_link_action(&window, &buffer);
+    wire_paste_image_shortcut(&view, &buffer, &current_path, &toast_overlay);
+    wire_startup_recovery(&window, &buffer, &current_path, &frontmatter, &title, &preview_pane);
 
     window
 }
@@ -262,6 +280,8 @@ fn wire_live_preview(
     stats_view: &Rc<stats::StatsView>,
     code_view: &Rc<codeview::CodeView>,
     frontmatter: &Rc<RefCell<Frontmatter>>,
+    current_path: &Rc<RefCell<Option<PathBuf>>>,
+    saved_text: &Rc<RefCell<String>>,
 ) {
     let debounce: Rc<RefCell<Option<glib::SourceId>>> = Rc::new(RefCell::new(None));
 
@@ -269,6 +289,8 @@ fn wire_live_preview(
     let stats_view_clone = stats_view.clone();
     let code_view_clone = code_view.clone();
     let frontmatter_clone = frontmatter.clone();
+    let current_path_clone = current_path.clone();
+    let saved_text_clone = saved_text.clone();
     let debounce_clone = debounce.clone();
     buffer.connect_changed(move |buf| {
         if let Some(id) = debounce_clone.borrow_mut().take() {
@@ -279,6 +301,8 @@ fn wire_live_preview(
         let stats_view = stats_view_clone.clone();
         let code_view = code_view_clone.clone();
         let frontmatter = frontmatter_clone.clone();
+        let current_path = current_path_clone.clone();
+        let saved_text = saved_text_clone.clone();
         let debounce_inner = debounce_clone.clone();
         let id = glib::timeout_add_local(Duration::from_millis(DEBOUNCE_MS), move || {
             // Reconciled here (not just relying on whatever the media list
@@ -294,6 +318,15 @@ fn wire_live_preview(
             preview_pane.update(&text, &media_items);
             stats_view.update(&text);
             code_view.update(&text);
+            // Piggybacks on this same debounce instead of running its own
+            // timer - see `autosave.rs`. Skipped when the text still
+            // matches what's already safely on disk (e.g. right after
+            // opening a file, whose own `buffer.set_text` also runs through
+            // this same `changed` signal), so opening-and-not-editing an
+            // article never manufactures a bogus recovery prompt.
+            if text != *saved_text.borrow() {
+                autosave::save(&frontmatter.borrow(), &text, current_path.borrow().as_deref());
+            }
             *debounce_inner.borrow_mut() = None;
             glib::ControlFlow::Break
         });
@@ -439,6 +472,7 @@ fn wire_new_action(
     frontmatter: &Rc<RefCell<Frontmatter>>,
     title: &adw::WindowTitle,
     preview_pane: &Rc<preview::PreviewPane>,
+    saved_text: &Rc<RefCell<String>>,
 ) {
     let action = gio::SimpleAction::new("new", None);
     let buffer = buffer.clone();
@@ -446,32 +480,38 @@ fn wire_new_action(
     let frontmatter = frontmatter.clone();
     let title = title.clone();
     let preview_pane = preview_pane.clone();
+    let saved_text = saved_text.clone();
     action.connect_activate(move |_, _| {
         buffer.set_text("");
         *current_path.borrow_mut() = None;
         *frontmatter.borrow_mut() = Frontmatter::default();
         title.set_subtitle("Unbenannt");
         preview_pane.set_doc_dir(None);
+        *saved_text.borrow_mut() = String::new();
+        autosave::clear();
     });
     window.add_action(&action);
 }
 
-fn wire_open_action(
-    window: &adw::ApplicationWindow,
-    buffer: &sourceview5::Buffer,
-    current_path: &Rc<RefCell<Option<PathBuf>>>,
-    frontmatter: &Rc<RefCell<Frontmatter>>,
-    title: &adw::WindowTitle,
-    toast_overlay: &adw::ToastOverlay,
-    preview_pane: &Rc<preview::PreviewPane>,
-) {
+/// The handles almost every "open something new into the editor" action
+/// needs, bundled purely to keep those functions' parameter counts down
+/// (clippy::too_many_arguments) - the same fix already used for
+/// `RecentFilesWidgets`. All fields are reference-counted/GObject handles,
+/// so cloning the whole bundle is as cheap as cloning any one field.
+#[derive(Clone)]
+struct DocContext {
+    buffer: sourceview5::Buffer,
+    current_path: Rc<RefCell<Option<PathBuf>>>,
+    frontmatter: Rc<RefCell<Frontmatter>>,
+    title: adw::WindowTitle,
+    toast_overlay: adw::ToastOverlay,
+    preview_pane: Rc<preview::PreviewPane>,
+    saved_text: Rc<RefCell<String>>,
+}
+
+fn wire_open_action(window: &adw::ApplicationWindow, ctx: &DocContext) {
     let action = gio::SimpleAction::new("open", None);
-    let buffer = buffer.clone();
-    let current_path = current_path.clone();
-    let frontmatter = frontmatter.clone();
-    let title = title.clone();
-    let toast_overlay = toast_overlay.clone();
-    let preview_pane = preview_pane.clone();
+    let ctx = ctx.clone();
     let window_weak = window.downgrade();
     action.connect_activate(move |_, _| {
         let Some(window) = window_weak.upgrade() else {
@@ -489,16 +529,11 @@ fn wire_open_action(
             .filters(&filters)
             .build();
 
-        let buffer = buffer.clone();
-        let current_path = current_path.clone();
-        let frontmatter = frontmatter.clone();
-        let title = title.clone();
-        let toast_overlay = toast_overlay.clone();
-        let preview_pane = preview_pane.clone();
+        let ctx = ctx.clone();
         dialog.open(Some(&window), gio::Cancellable::NONE, move |result| {
             let Ok(file) = result else { return };
             let Some(path) = file.path() else { return };
-            open_document_at_path(path, &buffer, &current_path, &frontmatter, &title, &toast_overlay, &preview_pane);
+            open_document_at_path(path, &ctx);
         });
     });
     window.add_action(&action);
@@ -510,26 +545,20 @@ fn wire_open_action(
 /// Records the path into `recentfiles` on success, so opening the same
 /// article twice keeps it at the front of that list rather than piling up
 /// a duplicate entry.
-fn open_document_at_path(
-    path: PathBuf,
-    buffer: &sourceview5::Buffer,
-    current_path: &Rc<RefCell<Option<PathBuf>>>,
-    frontmatter: &Rc<RefCell<Frontmatter>>,
-    title: &adw::WindowTitle,
-    toast_overlay: &adw::ToastOverlay,
-    preview_pane: &Rc<preview::PreviewPane>,
-) {
+fn open_document_at_path(path: PathBuf, ctx: &DocContext) {
     match document::read(&path) {
         Ok(doc) => {
-            buffer.set_text(&doc.body);
-            title.set_subtitle(&subtitle_for(Some(&path), &doc.frontmatter));
-            *frontmatter.borrow_mut() = doc.frontmatter;
+            ctx.buffer.set_text(&doc.body);
+            ctx.title.set_subtitle(&subtitle_for(Some(&path), &doc.frontmatter));
+            *ctx.saved_text.borrow_mut() = doc.body.clone();
+            *ctx.frontmatter.borrow_mut() = doc.frontmatter;
             let doc_dir = path.parent().map(Path::to_path_buf);
             let _ = recentfiles::record(&path);
-            *current_path.borrow_mut() = Some(path);
-            preview_pane.set_doc_dir(doc_dir);
+            *ctx.current_path.borrow_mut() = Some(path);
+            ctx.preview_pane.set_doc_dir(doc_dir);
+            autosave::clear();
         }
-        Err(err) => show_toast(toast_overlay, &format!("Öffnen fehlgeschlagen: {err}")),
+        Err(err) => show_toast(&ctx.toast_overlay, &format!("Öffnen fehlgeschlagen: {err}")),
     }
 }
 
@@ -546,21 +575,8 @@ struct RecentFilesWidgets {
 /// becomes active (about to show its popover) - simpler than tracking
 /// whether the list changed since it was last shown, and cheap enough that
 /// rebuilding a ten-entry list on every click is not worth avoiding.
-fn wire_recent_files_button(
-    widgets: &RecentFilesWidgets,
-    buffer: &sourceview5::Buffer,
-    current_path: &Rc<RefCell<Option<PathBuf>>>,
-    frontmatter: &Rc<RefCell<Frontmatter>>,
-    title: &adw::WindowTitle,
-    toast_overlay: &adw::ToastOverlay,
-    preview_pane: &Rc<preview::PreviewPane>,
-) {
-    let buffer = buffer.clone();
-    let current_path = current_path.clone();
-    let frontmatter = frontmatter.clone();
-    let title = title.clone();
-    let toast_overlay = toast_overlay.clone();
-    let preview_pane = preview_pane.clone();
+fn wire_recent_files_button(widgets: &RecentFilesWidgets, ctx: &DocContext) {
+    let ctx = ctx.clone();
     let recent_list = widgets.list.clone();
     let recent_popover = widgets.popover.clone();
     widgets.button.connect_active_notify(move |button| {
@@ -583,16 +599,11 @@ fn wire_recent_files_button(
             let parent = path.parent().map(|p| p.display().to_string()).unwrap_or_default();
             let row = adw::ActionRow::builder().title(filename).subtitle(parent).activatable(true).use_markup(false).build();
             {
-                let buffer = buffer.clone();
-                let current_path = current_path.clone();
-                let frontmatter = frontmatter.clone();
-                let title = title.clone();
-                let toast_overlay = toast_overlay.clone();
-                let preview_pane = preview_pane.clone();
+                let ctx = ctx.clone();
                 let recent_popover = recent_popover.clone();
                 row.connect_activated(move |_| {
                     recent_popover.popdown();
-                    open_document_at_path(path.clone(), &buffer, &current_path, &frontmatter, &title, &toast_overlay, &preview_pane);
+                    open_document_at_path(path.clone(), &ctx);
                 });
             }
             recent_list.append(&row);
@@ -607,6 +618,7 @@ fn wire_open_from_wordpress_action(
     frontmatter: &Rc<RefCell<Frontmatter>>,
     title: &adw::WindowTitle,
     preview_pane: &Rc<preview::PreviewPane>,
+    saved_text: &Rc<RefCell<String>>,
 ) {
     let action = gio::SimpleAction::new("open-from-wordpress", None);
     let buffer = buffer.clone();
@@ -614,6 +626,7 @@ fn wire_open_from_wordpress_action(
     let frontmatter = frontmatter.clone();
     let title = title.clone();
     let preview_pane = preview_pane.clone();
+    let saved_text = saved_text.clone();
     let window_weak = window.downgrade();
     action.connect_activate(move |_, _| {
         let Some(window) = window_weak.upgrade() else {
@@ -624,47 +637,44 @@ fn wire_open_from_wordpress_action(
         let frontmatter = frontmatter.clone();
         let title = title.clone();
         let preview_pane = preview_pane.clone();
+        let saved_text = saved_text.clone();
         importer::open(&window, move |imported| {
             buffer.set_text(&imported.body);
             title.set_subtitle(&subtitle_for(None, &imported.frontmatter));
+            // Baseline set to the just-imported text (not left stale, and
+            // not cleared to "") so a crash with zero local edits since the
+            // import doesn't manufacture a recovery snapshot for content
+            // that's trivially re-importable from the same WordPress post.
+            *saved_text.borrow_mut() = imported.body.clone();
             *frontmatter.borrow_mut() = imported.frontmatter;
             *current_path.borrow_mut() = None;
             preview_pane.set_doc_dir(None);
+            autosave::clear();
         });
     });
     window.add_action(&action);
 }
 
-fn wire_save_action(
-    window: &adw::ApplicationWindow,
-    buffer: &sourceview5::Buffer,
-    current_path: &Rc<RefCell<Option<PathBuf>>>,
-    frontmatter: &Rc<RefCell<Frontmatter>>,
-    title: &adw::WindowTitle,
-    toast_overlay: &adw::ToastOverlay,
-    preview_pane: &Rc<preview::PreviewPane>,
-) {
+fn wire_save_action(window: &adw::ApplicationWindow, ctx: &DocContext) {
     let action = gio::SimpleAction::new("save", None);
-    let buffer = buffer.clone();
-    let current_path = current_path.clone();
-    let frontmatter = frontmatter.clone();
-    let title = title.clone();
-    let toast_overlay = toast_overlay.clone();
-    let preview_pane = preview_pane.clone();
+    let ctx = ctx.clone();
     let window_weak = window.downgrade();
     action.connect_activate(move |_, _| {
         let Some(window) = window_weak.upgrade() else {
             return;
         };
-        let body = buffer.text(&buffer.start_iter(), &buffer.end_iter(), false).to_string();
+        let body = ctx.buffer.text(&ctx.buffer.start_iter(), &ctx.buffer.end_iter(), false).to_string();
         let doc = Document {
-            frontmatter: frontmatter.borrow().clone(),
+            frontmatter: ctx.frontmatter.borrow().clone(),
             body,
         };
 
-        if let Some(path) = current_path.borrow().clone() {
+        if let Some(path) = ctx.current_path.borrow().clone() {
             if let Err(err) = document::write(&path, &doc) {
-                show_toast(&toast_overlay, &format!("Speichern fehlgeschlagen: {err}"));
+                show_toast(&ctx.toast_overlay, &format!("Speichern fehlgeschlagen: {err}"));
+            } else {
+                *ctx.saved_text.borrow_mut() = doc.body.clone();
+                autosave::clear();
             }
             return;
         }
@@ -674,22 +684,21 @@ fn wire_save_action(
             .initial_name("artikel.md")
             .build();
 
-        let current_path = current_path.clone();
-        let title = title.clone();
-        let toast_overlay = toast_overlay.clone();
-        let preview_pane = preview_pane.clone();
+        let ctx = ctx.clone();
         dialog.save(Some(&window), gio::Cancellable::NONE, move |result| {
             let Ok(file) = result else { return };
             let Some(path) = file.path() else { return };
             if let Err(err) = document::write(&path, &doc) {
-                show_toast(&toast_overlay, &format!("Speichern fehlgeschlagen: {err}"));
+                show_toast(&ctx.toast_overlay, &format!("Speichern fehlgeschlagen: {err}"));
                 return;
             }
-            title.set_subtitle(&subtitle_for(Some(&path), &doc.frontmatter));
+            ctx.title.set_subtitle(&subtitle_for(Some(&path), &doc.frontmatter));
             let doc_dir = path.parent().map(Path::to_path_buf);
             let _ = recentfiles::record(&path);
-            *current_path.borrow_mut() = Some(path);
-            preview_pane.set_doc_dir(doc_dir);
+            *ctx.current_path.borrow_mut() = Some(path);
+            ctx.preview_pane.set_doc_dir(doc_dir);
+            *ctx.saved_text.borrow_mut() = doc.body.clone();
+            autosave::clear();
         });
     });
     window.add_action(&action);
@@ -810,6 +819,117 @@ fn wire_insert_post_link_action(window: &adw::ApplicationWindow, buffer: &source
         }
     });
     window.add_action(&action);
+}
+
+/// Intercepts Ctrl+V on the editor view: if the clipboard holds an image
+/// (a screenshot, or "Copy Image" from a browser - not a file picked via a
+/// dialog, which already goes through `wire_insert_image_action`), it's
+/// saved as a new PNG file directly in the article's own folder and
+/// inserted as a Markdown image reference, instead of falling through to
+/// GtkSourceView's own paste handling (which has no text form for an image
+/// and would just do nothing). A clipboard with plain text is left
+/// untouched - `glib::Propagation::Proceed` lets the normal paste run.
+fn wire_paste_image_shortcut(view: &sourceview5::View, buffer: &sourceview5::Buffer, current_path: &Rc<RefCell<Option<PathBuf>>>, toast_overlay: &adw::ToastOverlay) {
+    let controller = gtk4::EventControllerKey::new();
+    let buffer = buffer.clone();
+    let current_path = current_path.clone();
+    let toast_overlay = toast_overlay.clone();
+    let view_weak = view.downgrade();
+    controller.connect_key_pressed(move |_, key, _, state| {
+        if key != gdk::Key::v || !state.contains(gdk::ModifierType::CONTROL_MASK) {
+            return glib::Propagation::Proceed;
+        }
+        let Some(view) = view_weak.upgrade() else {
+            return glib::Propagation::Proceed;
+        };
+        let clipboard = view.clipboard();
+        if !document::mime_types_contain_image(&clipboard.formats().mime_types()) {
+            return glib::Propagation::Proceed;
+        }
+        let Some(doc_dir) = current_path.borrow().as_ref().and_then(|p| p.parent().map(Path::to_path_buf)) else {
+            show_toast(&toast_overlay, "Bitte den Artikel zuerst speichern, um Bilder einzufügen.");
+            return glib::Propagation::Stop;
+        };
+        let buffer = buffer.clone();
+        let toast_overlay = toast_overlay.clone();
+        clipboard.read_texture_async(gio::Cancellable::NONE, move |result| {
+            let texture = match result {
+                Ok(Some(texture)) => texture,
+                _ => {
+                    show_toast(&toast_overlay, "Bild konnte nicht aus der Zwischenablage gelesen werden.");
+                    return;
+                }
+            };
+            let path = document::unique_pasted_image_path(&doc_dir, |p| p.exists());
+            if let Err(err) = texture.save_to_png(&path) {
+                show_toast(&toast_overlay, &format!("Bild konnte nicht gespeichert werden: {err}"));
+                return;
+            }
+            let reference = document::image_reference(&path, Some(&doc_dir));
+            formatting::insert_image(&buffer, &reference);
+        });
+        glib::Propagation::Stop
+    });
+    view.add_controller(controller);
+}
+
+/// Offers to restore a leftover autosave snapshot from a previous run - a
+/// crash, or the app being quit without saving - found on launch. Declining
+/// discards it outright; there's no "ask me again later", since the
+/// snapshot itself is the only copy of that unsaved text and leaving it
+/// around unresolved would just repeat the same prompt on every future
+/// launch until it's dealt with one way or the other.
+fn wire_startup_recovery(
+    window: &adw::ApplicationWindow,
+    buffer: &sourceview5::Buffer,
+    current_path: &Rc<RefCell<Option<PathBuf>>>,
+    frontmatter: &Rc<RefCell<Frontmatter>>,
+    title: &adw::WindowTitle,
+    preview_pane: &Rc<preview::PreviewPane>,
+) {
+    let Some(recovered) = autosave::recover() else {
+        return;
+    };
+    let name = recovered
+        .original_path
+        .as_deref()
+        .and_then(Path::file_name)
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "einem unbenannten Artikel".to_string());
+    let dialog = adw::AlertDialog::new(
+        Some("Nicht gespeicherter Stand gefunden"),
+        Some(&format!(
+            "Von „{name}“ wurde ein nicht gespeicherter Stand gefunden - vermutlich nach einem Absturz oder weil Blocksmith ohne zu speichern beendet wurde. Wiederherstellen?"
+        )),
+    );
+    dialog.add_response("discard", "Verwerfen");
+    dialog.add_response("restore", "Wiederherstellen");
+    dialog.set_response_appearance("restore", adw::ResponseAppearance::Suggested);
+    dialog.set_default_response(Some("restore"));
+    dialog.set_close_response("discard");
+
+    let buffer = buffer.clone();
+    let current_path = current_path.clone();
+    let frontmatter = frontmatter.clone();
+    let title = title.clone();
+    let preview_pane = preview_pane.clone();
+    dialog.connect_response(None, move |_, response| {
+        if response != "restore" {
+            autosave::clear();
+            return;
+        }
+        buffer.set_text(&recovered.body);
+        title.set_subtitle(&subtitle_for(recovered.original_path.as_deref(), &recovered.frontmatter));
+        let doc_dir = recovered.original_path.as_deref().and_then(|p| p.parent().map(Path::to_path_buf));
+        *frontmatter.borrow_mut() = recovered.frontmatter.clone();
+        *current_path.borrow_mut() = recovered.original_path.clone();
+        preview_pane.set_doc_dir(doc_dir);
+        // `saved_text` deliberately stays at its initial "" here: this
+        // restored text is exactly the unsaved content the snapshot was
+        // protecting, so it should read as dirty (and keep being
+        // autosaved) until an explicit Save writes it out for real.
+    });
+    dialog.present(Some(window));
 }
 
 fn wire_media_action(
