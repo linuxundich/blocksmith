@@ -450,6 +450,12 @@ fn render_block(block: &Block) -> String {
             header,
             rows,
         } => render_table(alignments, header, rows),
+        // WordPress's "Weiterlesen" marker is, unusually among Gutenberg
+        // blocks, still just the bare `<!--more-->` HTML comment as its own
+        // inner content - `pulldown-cmark` already hands that to us as an
+        // ordinary raw-HTML block, so recognizing this one exact case here
+        // is enough; everything else still passes through as `wp:html`.
+        Block::RawHtml { html } if html.trim() == "<!--more-->" => wrap("more", None, "<!--more-->"),
         Block::RawHtml { html } => wrap("html", None, html.trim()),
     }
 }
@@ -562,6 +568,17 @@ mod tests {
         assert_eq!(
             out,
             "<!-- wp:html -->\n<div class=\"embed\">hi</div>\n<!-- /wp:html -->"
+        );
+    }
+
+    #[test]
+    fn lone_more_marker_becomes_wp_more() {
+        let out = markdown_to_gutenberg("Erster Absatz.\n\n<!--more-->\n\nZweiter Absatz.");
+        assert_eq!(
+            out,
+            "<!-- wp:paragraph -->\n<p>Erster Absatz.</p>\n<!-- /wp:paragraph -->\n\n\
+             <!-- wp:more -->\n<!--more-->\n<!-- /wp:more -->\n\n\
+             <!-- wp:paragraph -->\n<p>Zweiter Absatz.</p>\n<!-- /wp:paragraph -->"
         );
     }
 

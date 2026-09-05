@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.29.0] - 2026-09-05
+
+### Added
+
+- Suchen und Ersetzen (Ctrl+F): a bar at the bottom of the editor for
+  finding and replacing text, with live match highlighting, a match count,
+  next/previous navigation, and "Ersetzen"/"Alle ersetzen".
+- "Tastenkürzel" - a native keyboard-shortcuts overview (Ctrl+?), linked
+  from the primary menu next to "Einstellungen".
+- "Weiterlesen" marker: a lone `<!--more-->` line now exports as WordPress's
+  `wp:more` block (instead of the generic HTML passthrough), with a new
+  editor toolbar button to insert it.
+
 ## [0.28.0] - 2026-09-05
 
 ### Added

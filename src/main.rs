@@ -28,8 +28,10 @@ mod preview;
 mod promptsettings;
 mod properties;
 mod recentfiles;
+mod searchbar;
 mod secrets;
 mod settings;
+mod shortcuts;
 mod stats;
 mod statusbar;
 mod termcache;
@@ -53,6 +55,8 @@ fn main() -> glib::ExitCode {
     app.set_accels_for_action("win.settings", &["<Ctrl>comma"]);
     app.set_accels_for_action("win.publish", &["<Ctrl><Shift>p"]);
     app.set_accels_for_action("win.media-manager", &["<Ctrl><Shift>m"]);
+    app.set_accels_for_action("win.find", &["<Ctrl>f"]);
+    app.set_accels_for_action("win.show-help-overlay", &["<Ctrl>question"]);
 
     app.connect_activate(|app| {
         appearance::apply_saved_color_scheme();

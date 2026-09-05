@@ -9,7 +9,7 @@ use gtk4::{gdk, gio, glib};
 use crate::document::{Document, Frontmatter};
 use crate::{
     about, aimenu, autosave, chat, codeview, document, editor, export, formatting, imagealt, importer, linkpicker, media, mediapanel, preview,
-    properties, recentfiles, settings, stats, statusbar, termcache, windowstate,
+    properties, recentfiles, searchbar, settings, shortcuts, stats, statusbar, termcache, windowstate,
 };
 
 const DEBOUNCE_MS: u64 = 250;
@@ -23,11 +23,13 @@ pub fn build(app: &adw::Application) -> adw::ApplicationWindow {
 
     let toolbar = formatting::build(&view, &buffer);
     formatting::install_shortcuts(&view, &buffer);
+    let search_bar = searchbar::SearchBar::new(&view, &buffer);
     let editor_pane = gtk4::Box::builder().orientation(gtk4::Orientation::Vertical).build();
     editor_pane.append(&toolbar);
     editor_pane.append(&gtk4::Separator::new(gtk4::Orientation::Horizontal));
     editor_pane.append(&editor_scroller);
     editor_scroller.set_vexpand(true);
+    editor_pane.append(&search_bar.widget);
 
     let chat_view = Rc::new(chat::ChatView::new(&buffer));
     let code_view = Rc::new(codeview::CodeView::new());
@@ -131,6 +133,7 @@ pub fn build(app: &adw::Application) -> adw::ApplicationWindow {
     // how the button itself triggers it.
     let primary_menu = gio::Menu::new();
     primary_menu.append(Some("Einstellungen"), Some("win.settings"));
+    primary_menu.append(Some("Tastenkürzel"), Some("win.show-help-overlay"));
     primary_menu.append(Some("Über Blocksmith"), Some("win.about"));
 
     let settings_button = gtk4::MenuButton::new();
@@ -257,6 +260,8 @@ pub fn build(app: &adw::Application) -> adw::ApplicationWindow {
     wire_insert_post_link_action(&window, &buffer);
     wire_paste_image_shortcut(&view, &buffer, &current_path, &toast_overlay);
     wire_startup_recovery(&window, &buffer, &current_path, &frontmatter, &title, &preview_pane);
+    wire_find_action(&window, &search_bar);
+    window.set_help_overlay(Some(&shortcuts::build()));
 
     window
 }
@@ -930,6 +935,13 @@ fn wire_startup_recovery(
         // autosaved) until an explicit Save writes it out for real.
     });
     dialog.present(Some(window));
+}
+
+fn wire_find_action(window: &adw::ApplicationWindow, search_bar: &Rc<searchbar::SearchBar>) {
+    let action = gio::SimpleAction::new("find", None);
+    let search_bar = search_bar.clone();
+    action.connect_activate(move |_, _| search_bar.open());
+    window.add_action(&action);
 }
 
 fn wire_media_action(

@@ -76,6 +76,8 @@ pub fn build(view: &sourceview5::View, buffer: &sourceview5::Buffer) -> gtk4::Bo
         action_button("insert-image-symbolic", "Bild einfügen…", "win.insert-image"),
     ]));
 
+    toolbar.append(&group(&[label_button("⋯", "„Weiterlesen“-Marker einfügen", buffer, insert_more_marker)]));
+
     toolbar
 }
 
@@ -171,6 +173,17 @@ fn insert_table(buffer: &sourceview5::Buffer) {
     let pos = iter.offset();
     buffer.insert(&mut iter, "| Spalte 1 | Spalte 2 |\n| --- | --- |\n| Zelle 1 | Zelle 2 |\n");
     select(buffer, pos + 2, pos + 10); // "Spalte 1"
+}
+
+/// Inserts WordPress's "Weiterlesen" marker - a lone `<!--more-->` HTML
+/// comment - on its own line. Both Markdown and `crates/gutenberg`'s
+/// forward converter already treat that as a raw-HTML passthrough, mapped
+/// specifically to `wp:more` there (not the generic `wp:html`), so nothing
+/// beyond the literal text needs inserting here. Like "Tabelle einfügen",
+/// this expects the cursor to already be on its own blank line.
+fn insert_more_marker(buffer: &sourceview5::Buffer) {
+    let mut iter = buffer.iter_at_mark(&buffer.get_insert());
+    buffer.insert(&mut iter, "<!--more-->\n");
 }
 
 /// Inserts a Markdown link, selecting the placeholder text (existing

@@ -33,7 +33,11 @@ blocks. Implemented so far:
   a real Markdown link to the one picked; pasting an image straight from the
   clipboard with Ctrl+V - a screenshot, or "Copy Image" from a browser -
   saves it into the article's own folder and inserts it, falling through to
-  a normal text paste when there's no image on the clipboard), a debounced live HTML preview kept in scroll-sync with the
+  a normal text paste when there's no image on the clipboard; a "Weiterlesen"
+  button inserting WordPress's `<!--more-->` marker, exported as a real
+  `wp:more` block rather than generic HTML), a Ctrl+F search-and-replace bar
+  sliding up from the bottom of the editor (live match highlighting and
+  count, next/previous navigation, replace one or all), a debounced live HTML preview kept in scroll-sync with the
   editor (matched by source line, not scroll percentage, so a tall image
   doesn't throw off the sync), and a footer status bar with word count and
   reading time for the whole article - plus the same two numbers for the
@@ -149,11 +153,12 @@ blocks. Implemented so far:
   superseded one cleaned up automatically, since WordPress can't replace
   an existing attachment's file in place. Once published, the same dialog
   offers a confirmed "Von WordPress löschen" to remove the post again.
-- **Primary menu** (the header bar's hamburger button) — "Einstellungen"
-  and "Über Blocksmith", the latter a native `Adw.AboutDialog` with the
-  version (always in sync with `Cargo.toml`), GPL-3.0-or-later license
-  text, issue tracker/repository links, and the full `CHANGELOG.md`
-  history as its browsable "Neuigkeiten" release notes.
+- **Primary menu** (the header bar's hamburger button) — "Einstellungen",
+  "Tastenkürzel" (a native `Gtk.ShortcutsWindow`, also reachable via
+  Ctrl+?), and "Über Blocksmith", the latter a native `Adw.AboutDialog`
+  with the version (always in sync with `Cargo.toml`), GPL-3.0-or-later
+  license text, issue tracker/repository links, and the full
+  `CHANGELOG.md` history as its browsable "Neuigkeiten" release notes.
 - **Flatpak packaging** — manifest, desktop entry, AppStream metainfo, and
   icon under `data/` and `build-aux/flatpak/`.
 

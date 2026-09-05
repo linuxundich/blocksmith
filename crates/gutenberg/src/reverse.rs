@@ -556,6 +556,11 @@ mod tests {
     }
 
     #[test]
+    fn more_marker_round_trips() {
+        assert_eq!(round_trip("Erster Absatz.\n\n<!--more-->\n\nZweiter Absatz."), "Erster Absatz.\n\n<!--more-->\n\nZweiter Absatz.");
+    }
+
+    #[test]
     fn link_round_trips() {
         assert_eq!(round_trip("Check [this](https://example.com) out."), "Check [this](https://example.com) out.");
     }

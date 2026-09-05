@@ -20,20 +20,14 @@ what's already shipped.
   that file already loaded (instead of a blank "Unbenannt" document) is
   now a small addition on top of infrastructure that already exists,
   rather than a new subsystem.
-- **Find & replace in the editor.** There's a searchable picker for
-  *existing WordPress posts* (`linkpicker.rs`) but no in-article text
-  search/replace at all - a conspicuous gap for a serious writing tool.
-- **`Gtk.ShortcutsWindow`.** A standard, cheap GNOME HIG pattern - pairs
-  naturally with the primary menu added in v0.26.0 ("Tastenkürzel" next
-  to "Über Blocksmith"). This app already has a real, non-trivial set of
-  shortcuts (Ctrl+N/O/S/,/B/I/K, Ctrl+Shift+O/M/P) that are currently
-  only discoverable via button tooltips.
-- **"Weiterlesen" / more-tag support.** WordPress's `<!--more-->`
-  convention (splits the excerpt shown on the blog index from the rest of
-  the article) has no Markdown equivalent yet in `crates/gutenberg`. A
-  small addition: a specific marker line (e.g. a lone `<!--more-->` HTML
-  comment, which Markdown already passes through as raw HTML) mapped to
-  Gutenberg's `wp:more` block, plus a toolbar button to insert it.
+- ~~**Find & replace in the editor.**~~ Done (see CHANGELOG.md) - a Ctrl+F
+  bar at the bottom of the editor, backed by GtkSourceView's own
+  SearchContext/SearchSettings.
+- ~~**`Gtk.ShortcutsWindow`.**~~ Done (see CHANGELOG.md) - "Tastenkürzel" in
+  the primary menu, also reachable via Ctrl+?.
+- ~~**"Weiterlesen" / more-tag support.**~~ Done (see CHANGELOG.md) - a
+  lone `<!--more-->` line now exports as `wp:more`, with a toolbar button
+  to insert it.
 - **Manage existing categories/tags** (rename/delete) from inside the
   app. Right now taxonomy terms are only ever *read* (autocomplete) or
   *created* (automatically, during publish, for a name that doesn't exist
