@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.30.0] - 2026-09-05
+
+### Added
+
+- Embed blocks: a bare URL alone on its own line (YouTube, X/Twitter,
+  Vimeo, Instagram, SoundCloud, Spotify, or any other) now exports as a
+  real `wp:embed` block instead of staying a plain link.
+- Video/audio support: local video and audio files are inserted with the
+  same `![]()` syntax as images (via a new "Video/Audio einfügen" toolbar
+  button, or Ctrl+V/drag from a file manager into the picker), upload to
+  WordPress's media library, and export as real `wp:video`/`wp:audio`
+  blocks. The live preview shows an actual player instead of a broken
+  image icon.
+- Scheduled publishing: a new "Geplant" status in Artikel-Eigenschaften
+  with a publish date/time field, and a "Terminieren" button in the
+  export dialog. Reopening an already-scheduled WordPress post restores
+  its scheduled time.
+
 ## [0.29.0] - 2026-09-05
 
 ### Added

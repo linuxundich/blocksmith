@@ -25,7 +25,7 @@ use gtk4::{gio, glib, pango};
 use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 use webkit6::prelude::*;
 
-use crate::document::Frontmatter;
+use crate::document::{self, Frontmatter};
 use crate::fontutil;
 use crate::media::{self, MediaItem};
 
@@ -470,7 +470,47 @@ fn render_body_with_line_anchors(markdown: &str, media: &[MediaItem]) -> String 
             _ => i += 1,
         }
     }
-    wrap_images_with_badges(&out, media)
+    wrap_images_with_badges(&rewrite_media_tags(&out), media)
+}
+
+/// Rewrites `<img>` tags whose `src` is a local video/audio file (by
+/// extension - mirrors `crates/gutenberg`'s own export-time classification,
+/// `as_lone_media`/`media_kind`, since this app reuses `![]()` image syntax
+/// for all local media) into real `<video controls>`/`<audio controls>`
+/// tags, so the live preview shows an actual player instead of a broken
+/// image icon. Runs before `wrap_images_with_badges`, so a converted tag -
+/// no longer an `<img>` - is simply left alone by it like any other
+/// non-image element; upload/alt/format badges don't apply to video/audio.
+fn rewrite_media_tags(html: &str) -> String {
+    let mut out = String::with_capacity(html.len());
+    let mut rest = html;
+    while let Some(start) = rest.find("<img ") {
+        out.push_str(&rest[..start]);
+        let Some(tag_end_rel) = rest[start..].find('>') else {
+            out.push_str(&rest[start..]);
+            return out;
+        };
+        let tag_end = start + tag_end_rel + 1;
+        let tag = &rest[start..tag_end];
+        let src = extract_attr(tag, "src").unwrap_or_default();
+        match media_tag_for(&src) {
+            Some(media_tag) => out.push_str(&format!("<{media_tag} controls src=\"{src}\"></{media_tag}>")),
+            None => out.push_str(tag),
+        }
+        rest = &rest[tag_end..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// The HTML tag a media `src` should become - `None` means "not
+/// video/audio, leave the `<img>` as it is".
+fn media_tag_for(src: &str) -> Option<&'static str> {
+    match document::media_reference_kind(src) {
+        document::MediaReferenceKind::Video => Some("video"),
+        document::MediaReferenceKind::Audio => Some("audio"),
+        document::MediaReferenceKind::Image => None,
+    }
 }
 
 const BADGE_CSS: &str = ".img-wrap { position: relative; display: inline-block; max-width: 100%; }
@@ -720,6 +760,27 @@ mod tests {
         assert_eq!(image_format_label("photo.webp"), Some("WEBP".to_string()));
         assert_eq!(image_format_label("photo.PNG"), Some("PNG".to_string()));
         assert_eq!(image_format_label("no-extension"), None);
+    }
+
+    #[test]
+    fn media_tag_for_recognizes_video_and_audio_extensions() {
+        assert_eq!(media_tag_for("clip.mp4"), Some("video"));
+        assert_eq!(media_tag_for("clip.MOV"), Some("video"));
+        assert_eq!(media_tag_for("song.mp3"), Some("audio"));
+        assert_eq!(media_tag_for("song.mp3?ver=2"), Some("audio"));
+        assert_eq!(media_tag_for("photo.png"), None);
+    }
+
+    #[test]
+    fn rewrite_media_tags_turns_a_video_img_into_a_real_video_tag() {
+        let html = "<p><img src=\"clip.mp4\" alt=\"\" /></p>";
+        assert_eq!(rewrite_media_tags(html), "<p><video controls src=\"clip.mp4\"></video></p>");
+    }
+
+    #[test]
+    fn rewrite_media_tags_leaves_ordinary_images_untouched() {
+        let html = "<p><img src=\"photo.png\" alt=\"\" /></p>";
+        assert_eq!(rewrite_media_tags(html), html);
     }
 
     #[test]

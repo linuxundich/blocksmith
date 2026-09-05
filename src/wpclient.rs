@@ -87,6 +87,9 @@ pub struct PostDetail {
     pub tags: Vec<u64>,
     /// `0` means no featured image is set.
     pub featured_media: u64,
+    /// Site-local `"YYYY-MM-DDTHH:MM:SS"` - the post's publish date, or for
+    /// a `status == "future"` post, its scheduled publish date/time.
+    pub date: String,
 }
 
 fn network_error(err: ureq::Error) -> ApiError {
@@ -329,7 +332,7 @@ impl Client {
     /// Markdown.
     pub fn get_post(&self, id: u64) -> Result<PostDetail> {
         let url = format!(
-            "{}?context=edit&_fields=id,title,content,status,slug,categories,tags,featured_media",
+            "{}?context=edit&_fields=id,title,content,status,slug,categories,tags,featured_media,date",
             self.endpoint(&format!("posts/{id}"))
         );
         let value = self.get_json(&url)?;
@@ -345,6 +348,7 @@ impl Client {
             categories: u64_array("categories"),
             tags: u64_array("tags"),
             featured_media: value.get("featured_media").and_then(Value::as_u64).unwrap_or(0),
+            date: value.get("date").and_then(Value::as_str).unwrap_or_default().to_string(),
         })
     }
 

@@ -69,13 +69,20 @@ blocks. Implemented so far:
 - **Gutenberg block engine** (`crates/gutenberg`) — a standalone, unit-tested
   library that parses Markdown into a block tree and renders it as
   block-comment-annotated HTML (`<!-- wp:paragraph -->...`), independent of
-  the GUI.
+  the GUI. A local image/video/audio file referenced with `![]()` becomes
+  the matching `wp:image`/`wp:video`/`wp:audio` block by its file
+  extension, and a bare URL alone on its own line becomes a real
+  `wp:embed` block (YouTube, X/Twitter, Vimeo, Instagram, SoundCloud,
+  Spotify recognized by name for a nicer immediate block-editor preview;
+  any other URL still embeds generically, the same way WordPress's own
+  editor falls back to oEmbed discovery for it).
 - **Document model** — per-article frontmatter (title, slug, status,
-  categories, tags, featured image, WordPress post id) stored in the `.md`
-  file itself, editable via an "Artikel-Eigenschaften" dialog with
-  autocomplete for existing WordPress categories/tags (backed by an
-  on-disk cache, `src/termcache.rs`, refreshed at startup and on demand)
-  and a native file picker for the featured image, not just a path field.
+  scheduled publish date/time, categories, tags, featured image, WordPress
+  post id) stored in the `.md` file itself, editable via an
+  "Artikel-Eigenschaften" dialog with autocomplete for existing WordPress
+  categories/tags (backed by an on-disk cache, `src/termcache.rs`,
+  refreshed at startup and on demand) and a native file picker for the
+  featured image, not just a path field.
 - **Local autosave / crash-recovery** — while the article has unsaved
   changes, a debounced background snapshot is kept in a local recovery
   slot; if Blocksmith is closed without saving (or crashes), the next
@@ -109,7 +116,9 @@ blocks. Implemented so far:
   editor toolbar opens a native image file picker and inserts a real
   Markdown image reference at the cursor (relative to the document's own
   folder when possible) - previously the only way to add an image
-  reference was to type its filename by hand. A right-click on an image -
+  reference was to type its filename by hand. A "Video/Audio einfügen…"
+  button next to it does the same for local video/audio files - the same
+  `![]()` reference, just picked from a video/audio file filter instead. A right-click on an image -
   its Markdown line in the editor, or the rendered image itself in the
   Vorschau pane - also offers "KI-Alternativtext generieren…": the active
   KI-Chat provider looks at the real image and proposes an accessible alt
@@ -144,7 +153,12 @@ blocks. Implemented so far:
   "Artikel-Eigenschaften" dialog's status field currently holds - so
   publishing directly vs. uploading a draft first is an unambiguous choice
   made right in this dialog, and either one updates the same tracked post
-  rather than creating a new one. Category/tag names are resolved to
+  rather than creating a new one. A third "Terminieren" button appears once
+  "Geplant" is picked in Artikel-Eigenschaften with a valid publish
+  date/time set there - exporting without one is refused with a clear
+  error rather than silently publishing immediately, which is what
+  WordPress itself does with a scheduled status and no real future date.
+  Category/tag names are resolved to
   WordPress term ids (creating them if they don't exist yet). Locally-referenced images
   are uploaded to the media library "bei Bedarf" (as needed), sharing the
   same tracked media list Medienverwaltung uses: an image whose content

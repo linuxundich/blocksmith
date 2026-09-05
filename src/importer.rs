@@ -300,10 +300,12 @@ fn fetch_and_convert(site: &wpsite::SiteConfig, password: &str, post_id: u64) ->
     }
 
     let body = gutenberg::gutenberg_to_markdown(&detail.content);
+    let is_future = detail.status == "future";
     let frontmatter = Frontmatter {
         title: detail.title,
         slug: detail.slug,
         status: PostStatus::from_str(&detail.status),
+        scheduled_at: is_future.then_some(detail.date).filter(|d| !d.is_empty()),
         categories,
         tags,
         featured_image: None,

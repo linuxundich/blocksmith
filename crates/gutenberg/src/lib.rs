@@ -17,6 +17,20 @@ pub enum Block {
     BlockQuote { blocks: Vec<Block> },
     CodeBlock { lang: Option<String>, text: String },
     Image { url: String, alt: String, title: Option<String> },
+    /// `wp:video` - see `as_lone_media` for how a Markdown image reference
+    /// ends up here instead of `Image`.
+    Video { url: String },
+    /// `wp:audio` - see `as_lone_media`.
+    Audio { url: String },
+    /// A bare URL alone on its own line - CommonMark's only way to write
+    /// "embed this", the same way `![alt](url)` alone is its only way to
+    /// write a block-level image (see `as_lone_image`). Maps to WordPress's
+    /// `core/embed`, a *dynamic* block: WordPress re-fetches/re-renders the
+    /// actual embed HTML from `url` at display time regardless of what's
+    /// saved here, so only `url` itself needs to round-trip correctly -
+    /// the type/provider info this crate adds is a cosmetic nicety for the
+    /// block editor's own immediate preview, not load-bearing.
+    Embed { url: String },
     ThematicBreak,
     Table {
         alignments: Vec<ColumnAlignment>,
@@ -148,24 +162,68 @@ fn heading_level_num(level: HeadingLevel) -> u8 {
     }
 }
 
-/// A lone image is CommonMark's only way to express a "block-level" image:
-/// `![alt](url)` on its own line parses as a Paragraph containing exactly one
-/// inline Image. Detect that shape so it becomes a `wp:image` block instead
-/// of a paragraph wrapping an `<img>`.
-fn as_lone_image(events: &[Event]) -> Option<Block> {
+/// A lone image is CommonMark's only way to express a "block-level" media
+/// reference: `![alt](url)` on its own line parses as a Paragraph
+/// containing exactly one inline Image. Detect that shape so it becomes a
+/// `wp:image`/`wp:video`/`wp:audio` block instead of a paragraph wrapping
+/// an `<img>` - Markdown has no dedicated video/audio syntax of its own, so
+/// this app reuses image syntax for all local media and dispatches on the
+/// url's file extension, the same way "Bild einfügen" and "Video/Audio
+/// einfügen" both just insert a plain `![]()` reference regardless of type.
+fn as_lone_media(events: &[Event]) -> Option<Block> {
     let Some(Event::Start(Tag::Image { dest_url, title, .. })) = events.first() else {
         return None;
     };
     let Some(Event::End(TagEnd::Image)) = events.last() else {
         return None;
     };
-    let alt = collect_text(&events[1..events.len() - 1]);
-    let title = if title.is_empty() { None } else { Some(title.to_string()) };
-    Some(Block::Image {
-        url: dest_url.to_string(),
-        alt,
-        title,
-    })
+    match media_kind(dest_url) {
+        MediaKind::Video => Some(Block::Video { url: dest_url.to_string() }),
+        MediaKind::Audio => Some(Block::Audio { url: dest_url.to_string() }),
+        MediaKind::Image => {
+            let alt = collect_text(&events[1..events.len() - 1]);
+            let title = if title.is_empty() { None } else { Some(title.to_string()) };
+            Some(Block::Image {
+                url: dest_url.to_string(),
+                alt,
+                title,
+            })
+        }
+    }
+}
+
+enum MediaKind {
+    Image,
+    Video,
+    Audio,
+}
+
+/// Classifies a media url by its file extension (ignoring any query string
+/// or fragment) - an unrecognized extension is treated as an image, the
+/// long-standing default for this app.
+fn media_kind(url: &str) -> MediaKind {
+    let path = url.split(['?', '#']).next().unwrap_or(url);
+    match path.rsplit('.').next().unwrap_or("").to_lowercase().as_str() {
+        "mp4" | "webm" | "ogv" | "mov" => MediaKind::Video,
+        "mp3" | "wav" | "ogg" | "m4a" | "flac" => MediaKind::Audio,
+        _ => MediaKind::Image,
+    }
+}
+
+/// A lone embeddable URL is written either as plain bare text (pulldown-cmark
+/// doesn't autolink bare URLs, so this arrives as one `Event::Text`) or as an
+/// explicit CommonMark autolink `<https://...>` (a `Tag::Link` whose visible
+/// text is exactly its own destination). Anything else - including a normal
+/// `[text](url)` link, which is clearly meant as inline prose, not a
+/// standalone embed - falls through to a regular paragraph.
+fn as_lone_embed(events: &[Event]) -> Option<Block> {
+    let url = match events {
+        [Event::Text(t)] => t.to_string(),
+        [Event::Start(Tag::Link { dest_url, .. }), Event::Text(t), Event::End(TagEnd::Link)] if t.as_ref() == dest_url.as_ref() => dest_url.to_string(),
+        _ => return None,
+    };
+    let url = url.trim();
+    (url.starts_with("http://") || url.starts_with("https://")).then(|| Block::Embed { url: url.to_string() })
 }
 
 fn parse_blocks(events: &[Event], mut i: usize, stop: usize) -> Vec<Block> {
@@ -182,7 +240,7 @@ fn parse_blocks(events: &[Event], mut i: usize, stop: usize) -> Vec<Block> {
                 match tag {
                     Tag::Paragraph => {
                         let inner = &events[i + 1..end];
-                        blocks.push(as_lone_image(inner).unwrap_or_else(|| Block::Paragraph {
+                        blocks.push(as_lone_media(inner).or_else(|| as_lone_embed(inner)).unwrap_or_else(|| Block::Paragraph {
                             html: inline_html(inner),
                         }));
                     }
@@ -323,6 +381,61 @@ fn escape_html(s: &str) -> String {
     out
 }
 
+fn escape_json_string(s: &str) -> String {
+    s.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+struct EmbedProvider {
+    host_contains: &'static str,
+    type_: &'static str,
+    slug: &'static str,
+}
+
+/// WordPress's own oEmbed provider list is much larger than this - these
+/// are just the handful common enough to be worth naming explicitly for a
+/// nicer immediate block-editor preview (see `Block::Embed`'s doc comment
+/// for why an unrecognized provider still works, just more generically).
+const EMBED_PROVIDERS: &[EmbedProvider] = &[
+    EmbedProvider { host_contains: "youtube.com", type_: "video", slug: "youtube" },
+    EmbedProvider { host_contains: "youtu.be", type_: "video", slug: "youtube" },
+    EmbedProvider { host_contains: "vimeo.com", type_: "video", slug: "vimeo" },
+    EmbedProvider { host_contains: "twitter.com", type_: "rich", slug: "twitter" },
+    EmbedProvider { host_contains: "x.com", type_: "rich", slug: "twitter" },
+    EmbedProvider { host_contains: "instagram.com", type_: "rich", slug: "instagram" },
+    EmbedProvider { host_contains: "soundcloud.com", type_: "rich", slug: "soundcloud" },
+    EmbedProvider { host_contains: "open.spotify.com", type_: "rich", slug: "spotify" },
+];
+
+fn embed_provider_for(url: &str) -> Option<&'static EmbedProvider> {
+    EMBED_PROVIDERS.iter().find(|p| url.contains(p.host_contains))
+}
+
+fn render_media_tag(tag: &str, url: &str) -> String {
+    wrap(tag, None, &format!("<figure class=\"wp-block-{tag}\"><{tag} controls src=\"{}\"></{tag}></figure>", escape_html(url)))
+}
+
+fn render_embed(url: &str) -> String {
+    let provider = embed_provider_for(url);
+    let attrs = match provider {
+        Some(p) => format!(
+            "{{\"url\":\"{}\",\"type\":\"{}\",\"providerNameSlug\":\"{}\",\"responsive\":true}}",
+            escape_json_string(url),
+            p.type_,
+            p.slug
+        ),
+        None => format!("{{\"url\":\"{}\"}}", escape_json_string(url)),
+    };
+    let classes = match provider {
+        Some(p) => format!("wp-block-embed is-type-{} is-provider-{} wp-block-embed-{}", p.type_, p.slug, p.slug),
+        None => "wp-block-embed".to_string(),
+    };
+    wrap(
+        "embed",
+        Some(attrs),
+        &format!("<figure class=\"{classes}\"><div class=\"wp-block-embed__wrapper\">\n{}\n</div></figure>", escape_html(url)),
+    )
+}
+
 fn wrap(name: &str, attrs: Option<String>, content: &str) -> String {
     let attrs_str = attrs.map(|a| format!(" {a}")).unwrap_or_default();
     format!("<!-- wp:{name}{attrs_str} -->\n{content}\n<!-- /wp:{name} -->")
@@ -440,6 +553,9 @@ fn render_block(block: &Block) -> String {
                 ),
             )
         }
+        Block::Video { url } => render_media_tag("video", url),
+        Block::Audio { url } => render_media_tag("audio", url),
+        Block::Embed { url } => render_embed(url),
         Block::ThematicBreak => wrap(
             "separator",
             None,
@@ -541,6 +657,54 @@ mod tests {
             out,
             "<!-- wp:image -->\n<figure class=\"wp-block-image\">\
              <img src=\"https://example.com/cat.png\" alt=\"a cat\"/></figure>\n<!-- /wp:image -->"
+        );
+    }
+
+    #[test]
+    fn lone_video_reference_becomes_wp_video() {
+        let out = markdown_to_gutenberg("![](clip.mp4)");
+        assert_eq!(out, "<!-- wp:video -->\n<figure class=\"wp-block-video\"><video controls src=\"clip.mp4\"></video></figure>\n<!-- /wp:video -->");
+    }
+
+    #[test]
+    fn lone_audio_reference_becomes_wp_audio() {
+        let out = markdown_to_gutenberg("![](song.mp3)");
+        assert_eq!(out, "<!-- wp:audio -->\n<figure class=\"wp-block-audio\"><audio controls src=\"song.mp3\"></audio></figure>\n<!-- /wp:audio -->");
+    }
+
+    #[test]
+    fn lone_bare_url_line_becomes_wp_embed_with_known_provider() {
+        let out = markdown_to_gutenberg("https://www.youtube.com/watch?v=dQw4w9WgXcQ");
+        assert_eq!(
+            out,
+            "<!-- wp:embed {\"url\":\"https://www.youtube.com/watch?v=dQw4w9WgXcQ\",\"type\":\"video\",\"providerNameSlug\":\"youtube\",\"responsive\":true} -->\n\
+             <figure class=\"wp-block-embed is-type-video is-provider-youtube wp-block-embed-youtube\">\
+             <div class=\"wp-block-embed__wrapper\">\nhttps://www.youtube.com/watch?v=dQw4w9WgXcQ\n</div></figure>\n<!-- /wp:embed -->"
+        );
+    }
+
+    #[test]
+    fn lone_autolink_url_line_becomes_wp_embed() {
+        let out = markdown_to_gutenberg("<https://x.com/someuser/status/12345>");
+        assert!(out.starts_with("<!-- wp:embed {\"url\":\"https://x.com/someuser/status/12345\""));
+    }
+
+    #[test]
+    fn lone_url_from_an_unknown_provider_becomes_a_generic_wp_embed() {
+        let out = markdown_to_gutenberg("https://example.com/some-article");
+        assert_eq!(
+            out,
+            "<!-- wp:embed {\"url\":\"https://example.com/some-article\"} -->\n\
+             <figure class=\"wp-block-embed\"><div class=\"wp-block-embed__wrapper\">\nhttps://example.com/some-article\n</div></figure>\n<!-- /wp:embed -->"
+        );
+    }
+
+    #[test]
+    fn a_url_used_as_link_text_stays_a_normal_link() {
+        let out = markdown_to_gutenberg("[Video ansehen](https://www.youtube.com/watch?v=dQw4w9WgXcQ)");
+        assert_eq!(
+            out,
+            "<!-- wp:paragraph -->\n<p><a href=\"https://www.youtube.com/watch?v=dQw4w9WgXcQ\">Video ansehen</a></p>\n<!-- /wp:paragraph -->"
         );
     }
 

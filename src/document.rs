@@ -15,11 +15,19 @@ use std::path::{Path, PathBuf};
 
 use crate::media::MediaItem;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum PostStatus {
+    #[default]
     Draft,
     Pending,
     Publish,
+    /// Scheduled publishing - WordPress only actually treats a post this
+    /// way if its `date` is really in the future (see `Frontmatter::
+    /// scheduled_at`); given a past or missing date, WordPress silently
+    /// publishes it immediately instead; `run_export` refuses to export
+    /// with this status and no valid `scheduled_at` rather than let that
+    /// surprise happen.
+    Future,
 }
 
 impl PostStatus {
@@ -28,6 +36,7 @@ impl PostStatus {
             PostStatus::Draft => "draft",
             PostStatus::Pending => "pending",
             PostStatus::Publish => "publish",
+            PostStatus::Future => "future",
         }
     }
 
@@ -35,11 +44,12 @@ impl PostStatus {
         match s.trim() {
             "pending" => PostStatus::Pending,
             "publish" => PostStatus::Publish,
+            "future" => PostStatus::Future,
             _ => PostStatus::Draft,
         }
     }
 
-    pub const ALL: [PostStatus; 3] = [PostStatus::Draft, PostStatus::Pending, PostStatus::Publish];
+    pub const ALL: [PostStatus; 4] = [PostStatus::Draft, PostStatus::Pending, PostStatus::Publish, PostStatus::Future];
 
     /// Human-readable German label, for the properties dialog's dropdown.
     pub fn label(&self) -> &'static str {
@@ -47,13 +57,8 @@ impl PostStatus {
             PostStatus::Draft => "Entwurf",
             PostStatus::Pending => "Ausstehend",
             PostStatus::Publish => "Veröffentlicht",
+            PostStatus::Future => "Geplant",
         }
-    }
-}
-
-impl Default for PostStatus {
-    fn default() -> Self {
-        PostStatus::Draft
     }
 }
 
@@ -62,6 +67,10 @@ pub struct Frontmatter {
     pub title: String,
     pub slug: String,
     pub status: PostStatus,
+    /// When `status` is `PostStatus::Future`: the publish date/time, as the
+    /// normalized `"YYYY-MM-DDTHH:MM:00"` form `parse_scheduled_at`
+    /// produces - sent as-is as the WordPress REST API's `date` field.
+    pub scheduled_at: Option<String>,
     pub categories: Vec<String>,
     pub tags: Vec<String>,
     pub featured_image: Option<String>,
@@ -137,6 +146,9 @@ pub fn parse(input: &str) -> Document {
             "title" => frontmatter.title = unquote(value),
             "slug" => frontmatter.slug = unquote(value),
             "status" => frontmatter.status = PostStatus::from_str(value),
+            "scheduled_at" => {
+                frontmatter.scheduled_at = (!value.is_empty()).then(|| unquote(value));
+            }
             "categories" => frontmatter.categories = parse_list(value),
             "tags" => frontmatter.tags = parse_list(value),
             "featured_image" => {
@@ -171,6 +183,9 @@ pub fn serialize(doc: &Document) -> String {
     out.push_str(&format!("title: \"{}\"\n", escape(&fm.title)));
     out.push_str(&format!("slug: \"{}\"\n", escape(&fm.slug)));
     out.push_str(&format!("status: {}\n", fm.status.as_str()));
+    if let Some(scheduled_at) = &fm.scheduled_at {
+        out.push_str(&format!("scheduled_at: \"{}\"\n", escape(scheduled_at)));
+    }
     out.push_str(&format!("categories: {}\n", render_list(&fm.categories)));
     out.push_str(&format!("tags: {}\n", render_list(&fm.tags)));
     if let Some(img) = &fm.featured_image {
@@ -226,6 +241,45 @@ fn render_list(items: &[String]) -> String {
     format!("[{}]", rendered.join(", "))
 }
 
+/// Parses a `"YYYY-MM-DD HH:MM"` (or `"YYYY-MM-DDTHH:MM"`) scheduled-
+/// publish date/time - the format the properties dialog's plain text entry
+/// takes - into the normalized ISO 8601 form WordPress's REST API `date`
+/// field expects, `"YYYY-MM-DDTHH:MM:00"`. Not a full calendar validator -
+/// only checks the shape and each component's numeric range, so an
+/// impossible date like 2026-02-30 still reaches WordPress, which already
+/// rejects that with its own clear error; this just catches typos/garbage
+/// input before ever making a network call, and before `PostStatus::Future`
+/// could otherwise silently publish immediately (see its doc comment).
+pub fn parse_scheduled_at(input: &str) -> Option<String> {
+    let input = input.trim().replacen('T', " ", 1);
+    let (date, time) = input.split_once(' ')?;
+
+    let mut date_parts = date.splitn(4, '-');
+    let year: u32 = date_parts.next()?.parse().ok()?;
+    let month: u32 = date_parts.next()?.parse().ok()?;
+    let day: u32 = date_parts.next()?.parse().ok()?;
+    if date_parts.next().is_some() || year < 1970 || !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+        return None;
+    }
+
+    let mut time_parts = time.splitn(3, ':');
+    let hour: u32 = time_parts.next()?.parse().ok()?;
+    let minute: u32 = time_parts.next()?.parse().ok()?;
+    if time_parts.next().is_some() || hour > 23 || minute > 59 {
+        return None;
+    }
+
+    Some(format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:00"))
+}
+
+/// The reverse of `parse_scheduled_at`'s normalization, for showing an
+/// already-set `Frontmatter::scheduled_at` back in the properties dialog's
+/// entry - drops the `:00` seconds `parse_scheduled_at` always adds and
+/// swaps the `T` back for a space.
+pub fn format_scheduled_at_for_display(iso: &str) -> String {
+    iso.strip_suffix(":00").unwrap_or(iso).replacen('T', " ", 1)
+}
+
 /// Prefers a path relative to the document's own directory (so the article
 /// stays portable if the folder is moved as a whole) for a locally-picked
 /// file `path` - falls back to the absolute path if it lives somewhere else
@@ -274,9 +328,66 @@ pub fn mime_types_contain_image<S: AsRef<str>>(mime_types: &[S]) -> bool {
     mime_types.iter().any(|mime| mime.as_ref().starts_with("image/"))
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MediaReferenceKind {
+    Image,
+    Video,
+    Audio,
+}
+
+/// Classifies a media reference by its file extension (ignoring any query
+/// string/fragment) - this app reuses plain `![]()` Markdown image syntax
+/// for all local media (see `crates/gutenberg`'s `as_lone_media`/
+/// `media_kind`, the export-side counterpart of this same classification,
+/// necessarily duplicated rather than shared since that crate has no
+/// dependency on this one), so a few places that only make sense for an
+/// actual image (the live preview's `<img>` rendering, the editor's
+/// AI-alt-text context-menu action) need to recognize and exclude the
+/// video/audio case. An unrecognized extension is treated as an image, the
+/// long-standing default for this app.
+pub fn media_reference_kind(source: &str) -> MediaReferenceKind {
+    let path = source.split(['?', '#']).next().unwrap_or(source);
+    match path.rsplit('.').next().unwrap_or("").to_lowercase().as_str() {
+        "mp4" | "webm" | "ogv" | "mov" => MediaReferenceKind::Video,
+        "mp3" | "wav" | "ogg" | "m4a" | "flac" => MediaReferenceKind::Audio,
+        _ => MediaReferenceKind::Image,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parse_scheduled_at_normalizes_a_space_separated_date_and_time() {
+        assert_eq!(parse_scheduled_at("2026-12-24 18:30"), Some("2026-12-24T18:30:00".to_string()));
+    }
+
+    #[test]
+    fn parse_scheduled_at_also_accepts_a_t_separator() {
+        assert_eq!(parse_scheduled_at("2026-12-24T18:30"), Some("2026-12-24T18:30:00".to_string()));
+    }
+
+    #[test]
+    fn parse_scheduled_at_rejects_an_out_of_range_month() {
+        assert_eq!(parse_scheduled_at("2026-13-01 12:00"), None);
+    }
+
+    #[test]
+    fn parse_scheduled_at_rejects_an_out_of_range_hour() {
+        assert_eq!(parse_scheduled_at("2026-12-24 25:00"), None);
+    }
+
+    #[test]
+    fn parse_scheduled_at_rejects_garbage_input() {
+        assert_eq!(parse_scheduled_at("not a date"), None);
+        assert_eq!(parse_scheduled_at(""), None);
+    }
+
+    #[test]
+    fn format_scheduled_at_for_display_strips_seconds_and_the_t_separator() {
+        assert_eq!(format_scheduled_at_for_display("2026-12-24T18:30:00"), "2026-12-24 18:30");
+    }
 
     #[test]
     fn image_reference_prefers_a_path_relative_to_the_document_directory() {
@@ -324,6 +435,16 @@ mod tests {
     #[test]
     fn mime_types_contain_image_is_false_for_text_only_clipboard_content() {
         assert!(!mime_types_contain_image(&["text/plain", "text/html"]));
+    }
+
+    #[test]
+    fn media_reference_kind_recognizes_common_video_and_audio_extensions() {
+        assert_eq!(media_reference_kind("clip.mp4"), MediaReferenceKind::Video);
+        assert_eq!(media_reference_kind("clip.MOV"), MediaReferenceKind::Video);
+        assert_eq!(media_reference_kind("song.mp3"), MediaReferenceKind::Audio);
+        assert_eq!(media_reference_kind("song.mp3?ver=2"), MediaReferenceKind::Audio);
+        assert_eq!(media_reference_kind("photo.png"), MediaReferenceKind::Image);
+        assert_eq!(media_reference_kind("no-extension"), MediaReferenceKind::Image);
     }
 
     #[test]
@@ -377,6 +498,7 @@ mod tests {
                 title: "A \"quoted\" title".to_string(),
                 slug: "a-quoted-title".to_string(),
                 status: PostStatus::Pending,
+                scheduled_at: Some("2026-12-24T18:30:00".to_string()),
                 categories: vec!["Cat A".to_string(), "Cat B".to_string()],
                 tags: vec!["one".to_string()],
                 featured_image: None,

@@ -154,6 +154,9 @@ fn make_block(name: &str, attrs: Option<&str>, inner: &str) -> Block {
             title: extract_attr(inner, "title").filter(|t| !t.is_empty()),
         },
         "separator" => Block::ThematicBreak,
+        "video" => Block::Video { url: extract_attr(inner, "src").unwrap_or_default() },
+        "audio" => Block::Audio { url: extract_attr(inner, "src").unwrap_or_default() },
+        "embed" => Block::Embed { url: extract_json_string(attrs, "url").unwrap_or_default() },
         "table" => parse_table_block(inner),
         // Unrecognized block types (custom blocks, embeds, ...) and our own
         // "html" passthrough both just keep their raw HTML - nothing lost.
@@ -163,6 +166,18 @@ fn make_block(name: &str, attrs: Option<&str>, inner: &str) -> Block {
 
 fn attr_flag(attrs: Option<&str>, key: &str) -> bool {
     attrs.is_some_and(|a| a.contains(&format!("\"{key}\":true")))
+}
+
+/// Reads a `"key":"value"` string out of a block's JSON attrs comment -
+/// this crate's block-comment scanner is a hand-rolled scanner rather than
+/// a full HTML parser (see the module doc comment above), and this is the
+/// JSON-attrs equivalent of `extract_attr`'s HTML-tag-attribute scanning.
+fn extract_json_string(attrs: Option<&str>, key: &str) -> Option<String> {
+    let attrs = attrs?;
+    let needle = format!("\"{key}\":\"");
+    let start = attrs.find(&needle)? + needle.len();
+    let end = attrs[start..].find('"')? + start;
+    Some(attrs[start..end].replace("\\\"", "\"").replace("\\\\", "\\"))
 }
 
 fn detect_heading_level(inner: &str) -> Option<u8> {
@@ -411,6 +426,9 @@ fn render_block_markdown(block: &Block) -> String {
                 None => format!("![{alt}]({destination})"),
             }
         }
+        Block::Video { url } => format!("![]({})", markdown_destination(url)),
+        Block::Audio { url } => format!("![]({})", markdown_destination(url)),
+        Block::Embed { url } => url.clone(),
         Block::ThematicBreak => "---".to_string(),
         Block::Table { alignments, header, rows } => render_table_markdown(alignments, header, rows),
         Block::RawHtml { html } => html.clone(),
@@ -558,6 +576,26 @@ mod tests {
     #[test]
     fn more_marker_round_trips() {
         assert_eq!(round_trip("Erster Absatz.\n\n<!--more-->\n\nZweiter Absatz."), "Erster Absatz.\n\n<!--more-->\n\nZweiter Absatz.");
+    }
+
+    #[test]
+    fn video_reference_round_trips() {
+        assert_eq!(round_trip("![](clip.mp4)"), "![](clip.mp4)");
+    }
+
+    #[test]
+    fn audio_reference_round_trips() {
+        assert_eq!(round_trip("![](song.mp3)"), "![](song.mp3)");
+    }
+
+    #[test]
+    fn embed_url_round_trips() {
+        assert_eq!(round_trip("https://www.youtube.com/watch?v=dQw4w9WgXcQ"), "https://www.youtube.com/watch?v=dQw4w9WgXcQ");
+    }
+
+    #[test]
+    fn embed_url_from_an_unknown_provider_round_trips() {
+        assert_eq!(round_trip("https://example.com/some-article"), "https://example.com/some-article");
     }
 
     #[test]

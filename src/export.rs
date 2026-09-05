@@ -108,6 +108,15 @@ pub fn open(
     let draft_button = gtk4::Button::with_label("Als Entwurf hochladen");
     draft_button.set_halign(gtk4::Align::End);
 
+    // Only shown when "Geplant" is actually selected in den Artikel-
+    // Eigenschaften - the third status the export dialog's two buttons
+    // above can't express, since each forces its own fixed status
+    // (`wire_publish_button`'s `target_status`) - visible so scheduling is
+    // reachable at all, but only when it means something.
+    let schedule_button = gtk4::Button::with_label("Terminieren");
+    schedule_button.set_halign(gtk4::Align::End);
+    schedule_button.set_visible(current_fm.status == PostStatus::Future);
+
     let delete_button = gtk4::Button::with_label("Von WordPress löschen");
     delete_button.add_css_class("destructive-action");
     delete_button.set_halign(gtk4::Align::End);
@@ -116,17 +125,20 @@ pub fn open(
     let button_row = gtk4::Box::builder().orientation(gtk4::Orientation::Horizontal).spacing(6).halign(gtk4::Align::End).build();
     button_row.append(&delete_button);
     button_row.append(&draft_button);
+    button_row.append(&schedule_button);
     button_row.append(&publish_button);
 
     if site.url.is_empty() {
         status_label.set_label("Keine WordPress-Verbindung eingerichtet - bitte zuerst über den Verbindungs-Dialog konfigurieren.");
         publish_button.set_sensitive(false);
         draft_button.set_sensitive(false);
+        schedule_button.set_sensitive(false);
         delete_button.set_sensitive(false);
     } else if current_fm.title.is_empty() {
         status_label.set_label("Bitte zuerst einen Titel in den Artikel-Eigenschaften setzen.");
         publish_button.set_sensitive(false);
         draft_button.set_sensitive(false);
+        schedule_button.set_sensitive(false);
     }
 
     content_box.append(&view_stack);
@@ -215,31 +227,33 @@ pub fn open(
         });
     }
 
-    wire_publish_button(&publish_button, &draft_button, PostStatus::Publish, &frontmatter, &body, &doc_dir, &status_label);
-    wire_publish_button(&draft_button, &publish_button, PostStatus::Draft, &frontmatter, &body, &doc_dir, &status_label);
+    wire_publish_button(&publish_button, &[&draft_button, &schedule_button], PostStatus::Publish, &frontmatter, &body, &doc_dir, &status_label);
+    wire_publish_button(&draft_button, &[&publish_button, &schedule_button], PostStatus::Draft, &frontmatter, &body, &doc_dir, &status_label);
+    wire_publish_button(&schedule_button, &[&publish_button, &draft_button], PostStatus::Future, &frontmatter, &body, &doc_dir, &status_label);
 
     dialog.present(Some(parent));
 }
 
-/// Wires one of the two publish-flow buttons ("Veröffentlichen" /
-/// "Als Entwurf hochladen") - `target_status` is sent regardless of
-/// whatever `Frontmatter.status` happens to currently hold (e.g. from the
-/// separate "Artikel-Eigenschaften" dialog), so clicking either button is
-/// an unambiguous, deterministic choice rather than depending on a status
-/// set somewhere else first. `other_button` is disabled alongside `button`
-/// while a request is in flight, so both can't race the same post/media at
-/// once; on success `Frontmatter.status` is updated to match, so
-/// "Artikel-Eigenschaften" reflects what was actually just sent.
+/// Wires one of the three publish-flow buttons ("Veröffentlichen" /
+/// "Als Entwurf hochladen" / "Terminieren") - `target_status` is sent
+/// regardless of whatever `Frontmatter.status` happens to currently hold
+/// (e.g. from the separate "Artikel-Eigenschaften" dialog), so clicking any
+/// one button is an unambiguous, deterministic choice rather than depending
+/// on a status set somewhere else first. `other_buttons` are disabled
+/// alongside `button` while a request is in flight, so none of them can
+/// race the same post/media at once; on success `Frontmatter.status` is
+/// updated to match, so "Artikel-Eigenschaften" reflects what was actually
+/// just sent.
 fn wire_publish_button(
     button: &gtk4::Button,
-    other_button: &gtk4::Button,
+    other_buttons: &[&gtk4::Button],
     target_status: PostStatus,
     frontmatter: &Rc<RefCell<Frontmatter>>,
     body: &str,
     doc_dir: &Option<PathBuf>,
     status_label: &gtk4::Label,
 ) {
-    let other_button = other_button.clone();
+    let other_buttons: Vec<gtk4::Button> = other_buttons.iter().map(|b| (*b).clone()).collect();
     let frontmatter = frontmatter.clone();
     let body = body.to_string();
     let doc_dir = doc_dir.clone();
@@ -248,7 +262,9 @@ fn wire_publish_button(
     let button_for_click = button.clone();
     button.connect_clicked(move |_| {
         button_for_click.set_sensitive(false);
-        other_button.set_sensitive(false);
+        for b in &other_buttons {
+            b.set_sensitive(false);
+        }
         status_label.set_label("Wird gesendet …");
 
         let site = wpsite::load();
@@ -272,7 +288,7 @@ fn wire_publish_button(
         let frontmatter = frontmatter.clone();
         let status_label = status_label.clone();
         let button = button_for_click.clone();
-        let other_button = other_button.clone();
+        let other_buttons = other_buttons.clone();
         glib::timeout_add_local(Duration::from_millis(150), move || match rx.try_recv() {
             Ok(Ok((post, media))) => {
                 {
@@ -283,20 +299,26 @@ fn wire_publish_button(
                 }
                 status_label.set_label(&format!("Erfolgreich gesendet: {}", post.link));
                 button.set_sensitive(true);
-                other_button.set_sensitive(true);
+                for b in &other_buttons {
+                    b.set_sensitive(true);
+                }
                 glib::ControlFlow::Break
             }
             Ok(Err(err)) => {
                 status_label.set_label(&format!("Fehler: {err}"));
                 button.set_sensitive(true);
-                other_button.set_sensitive(true);
+                for b in &other_buttons {
+                    b.set_sensitive(true);
+                }
                 glib::ControlFlow::Break
             }
             Err(mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
             Err(mpsc::TryRecvError::Disconnected) => {
                 status_label.set_label("Interner Fehler: Export-Thread hat kein Ergebnis geliefert.");
                 button.set_sensitive(true);
-                other_button.set_sensitive(true);
+                for b in &other_buttons {
+                    b.set_sensitive(true);
+                }
                 glib::ControlFlow::Break
             }
         });
@@ -310,6 +332,15 @@ fn run_export(
     body: &str,
     doc_dir: Option<&Path>,
 ) -> Result<wpclient::PostResult, String> {
+    // WordPress only actually schedules a post if its `date` is genuinely
+    // in the future - given a missing or past date, it silently publishes
+    // immediately instead of scheduling (see `PostStatus::Future`'s doc
+    // comment), so this is checked up front rather than letting that
+    // surprise happen after an otherwise-successful export.
+    if frontmatter.status == PostStatus::Future && frontmatter.scheduled_at.is_none() {
+        return Err("Für den Status „Geplant“ muss ein gültiger Veröffentlichungstermin gesetzt sein.".to_string());
+    }
+
     let client = wpclient::Client::new(&site.url, &site.username, password);
 
     frontmatter.media = media::reconcile(&frontmatter.media, body);
@@ -338,6 +369,11 @@ fn run_export(
     if !frontmatter.slug.is_empty() {
         payload["slug"] = serde_json::Value::String(frontmatter.slug.clone());
     }
+    if frontmatter.status == PostStatus::Future {
+        if let Some(scheduled_at) = &frontmatter.scheduled_at {
+            payload["date"] = serde_json::Value::String(scheduled_at.clone());
+        }
+    }
     if let Some(path) = &frontmatter.featured_image {
         // A newly set local image always takes priority: upload it and use
         // the resulting media id. Unlike body images, this always re-
@@ -365,14 +401,15 @@ fn run_export(
     result.map_err(|err| err.to_string())
 }
 
-/// Recursively substitutes `wp:image` blocks' source with the WordPress URL
-/// `media::sync_uploads` resolved for it, wherever the block's current url
-/// is a key in `urls` - an already-remote url (not tracked by
-/// `sync_uploads` at all) simply has no matching key and is left as-is.
+/// Recursively substitutes `wp:image`/`wp:video`/`wp:audio` blocks' source
+/// with the WordPress URL `media::sync_uploads` resolved for it, wherever
+/// the block's current url is a key in `urls` - an already-remote url (not
+/// tracked by `sync_uploads` at all, e.g. an embed) simply has no matching
+/// key and is left as-is.
 fn rewrite_image_urls(blocks: &mut [gutenberg::Block], urls: &std::collections::HashMap<String, String>) {
     for block in blocks.iter_mut() {
         match block {
-            gutenberg::Block::Image { url, .. } => {
+            gutenberg::Block::Image { url, .. } | gutenberg::Block::Video { url } | gutenberg::Block::Audio { url } => {
                 if let Some(new_url) = urls.get(url) {
                     *url = new_url.clone();
                 }
@@ -441,6 +478,15 @@ pub(crate) fn mime_from_extension(filename: &str) -> &'static str {
         "gif" => "image/gif",
         "webp" => "image/webp",
         "svg" => "image/svg+xml",
+        "mp4" => "video/mp4",
+        "webm" => "video/webm",
+        "ogv" => "video/ogg",
+        "mov" => "video/quicktime",
+        "mp3" => "audio/mpeg",
+        "wav" => "audio/wav",
+        "ogg" => "audio/ogg",
+        "m4a" => "audio/mp4",
+        "flac" => "audio/flac",
         _ => "application/octet-stream",
     }
 }
@@ -471,6 +517,7 @@ mod tests {
             title: "Blocksmith draft/publish status test".to_string(),
             slug: String::new(),
             status: crate::document::PostStatus::Draft,
+            scheduled_at: None,
             categories: Vec::new(),
             tags: Vec::new(),
             featured_image: None,
@@ -513,6 +560,7 @@ mod tests {
             title: "Blocksmith export test post".to_string(),
             slug: String::new(),
             status: crate::document::PostStatus::Draft,
+            scheduled_at: None,
             categories: vec!["Blocksmith Export Test".to_string()],
             tags: vec!["blocksmith-test".to_string()],
             featured_image: None,
@@ -558,6 +606,7 @@ mod tests {
             title: "Blocksmith re-export test post".to_string(),
             slug: String::new(),
             status: crate::document::PostStatus::Draft,
+            scheduled_at: None,
             categories: Vec::new(),
             tags: Vec::new(),
             featured_image: None,

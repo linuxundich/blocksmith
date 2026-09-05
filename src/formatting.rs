@@ -74,6 +74,7 @@ pub fn build(view: &sourceview5::View, buffer: &sourceview5::Buffer) -> gtk4::Bo
         icon_button("insert-link-symbolic", "Link einfügen (Strg+K)", buffer, |b| insert_link(b)),
         action_button("document-open-recent-symbolic", "Bestehenden Artikel verlinken…", "win.insert-post-link"),
         action_button("insert-image-symbolic", "Bild einfügen…", "win.insert-image"),
+        action_button("video-x-generic-symbolic", "Video/Audio einfügen…", "win.insert-media"),
     ]));
 
     toolbar.append(&group(&[label_button("⋯", "„Weiterlesen“-Marker einfügen", buffer, insert_more_marker)]));

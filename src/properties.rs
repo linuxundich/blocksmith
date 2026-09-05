@@ -51,6 +51,12 @@ pub fn open(
         .selected(selected_index as u32)
         .build();
 
+    let scheduled_row = adw::EntryRow::builder()
+        .title("Veröffentlichungstermin (JJJJ-MM-TT HH:MM)")
+        .text(current.scheduled_at.as_deref().map(document::format_scheduled_at_for_display).unwrap_or_default().as_str())
+        .build();
+    scheduled_row.set_visible(current.status == PostStatus::Future);
+
     let refresh_button = gtk4::Button::from_icon_name("view-refresh-symbolic");
     refresh_button.set_tooltip_text(Some("Kategorien & Tags von WordPress aktualisieren"));
     refresh_button.add_css_class("flat");
@@ -67,6 +73,7 @@ pub fn open(
     group.add(&title_row);
     group.add(&slug_row);
     group.add(&status_row);
+    group.add(&scheduled_row);
     group.add(&categories_row);
     group.add(&tags_row);
     group.add(&featured_image_row);
@@ -145,10 +152,24 @@ pub fn open(
     }
     {
         let frontmatter = frontmatter.clone();
+        let scheduled_row = scheduled_row.clone();
         status_row.connect_selected_notify(move |row| {
             if let Some(status) = PostStatus::ALL.get(row.selected() as usize) {
                 frontmatter.borrow_mut().status = *status;
+                scheduled_row.set_visible(*status == PostStatus::Future);
             }
+        });
+    }
+    {
+        let frontmatter = frontmatter.clone();
+        scheduled_row.connect_changed(move |row| {
+            let text = row.text().to_string();
+            let parsed = document::parse_scheduled_at(&text);
+            row.remove_css_class("error");
+            if !text.trim().is_empty() && parsed.is_none() {
+                row.add_css_class("error");
+            }
+            frontmatter.borrow_mut().scheduled_at = parsed;
         });
     }
 

@@ -257,6 +257,7 @@ pub fn build(app: &adw::Application) -> adw::ApplicationWindow {
     wire_publish_action(&window, &buffer, &current_path, &frontmatter, &preview_pane);
     wire_media_action(&window, &buffer, &current_path, &frontmatter, &preview_pane);
     wire_insert_image_action(&window, &buffer, &current_path);
+    wire_insert_media_action(&window, &buffer, &current_path);
     wire_insert_post_link_action(&window, &buffer);
     wire_paste_image_shortcut(&view, &buffer, &current_path, &toast_overlay);
     wire_startup_recovery(&window, &buffer, &current_path, &frontmatter, &title, &preview_pane);
@@ -801,6 +802,41 @@ fn wire_insert_image_action(window: &adw::ApplicationWindow, buffer: &sourceview
         filters.append(&filter);
 
         let dialog = gtk4::FileDialog::builder().title("Bild einfügen").filters(&filters).build();
+
+        let buffer = buffer.clone();
+        let doc_dir = current_path.borrow().as_ref().and_then(|p| p.parent().map(Path::to_path_buf));
+        dialog.open(Some(&window), gio::Cancellable::NONE, move |result| {
+            let Ok(file) = result else { return };
+            let Some(path) = file.path() else { return };
+            let reference = document::image_reference(&path, doc_dir.as_deref());
+            formatting::insert_image(&buffer, &reference);
+        });
+    });
+    window.add_action(&action);
+}
+
+/// Same insertion mechanism as "Bild einfügen" - `formatting::insert_image`
+/// just inserts a plain `![]()` reference regardless of file type, and
+/// `crates/gutenberg` dispatches on the url's extension at export time (see
+/// `as_lone_media`) - only the file-picker's filter differs here.
+fn wire_insert_media_action(window: &adw::ApplicationWindow, buffer: &sourceview5::Buffer, current_path: &Rc<RefCell<Option<PathBuf>>>) {
+    let action = gio::SimpleAction::new("insert-media", None);
+    let buffer = buffer.clone();
+    let current_path = current_path.clone();
+    let window_weak = window.downgrade();
+    action.connect_activate(move |_, _| {
+        let Some(window) = window_weak.upgrade() else {
+            return;
+        };
+
+        let filter = gtk4::FileFilter::new();
+        filter.add_mime_type("video/*");
+        filter.add_mime_type("audio/*");
+        filter.set_name(Some("Video/Audio"));
+        let filters = gio::ListStore::new::<gtk4::FileFilter>();
+        filters.append(&filter);
+
+        let dialog = gtk4::FileDialog::builder().title("Video/Audio einfügen").filters(&filters).build();
 
         let buffer = buffer.clone();
         let doc_dir = current_path.borrow().as_ref().and_then(|p| p.parent().map(Path::to_path_buf));

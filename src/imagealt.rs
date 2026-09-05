@@ -25,7 +25,7 @@ use adw::prelude::*;
 use gtk4::gio;
 
 use crate::aialt;
-use crate::document::Frontmatter;
+use crate::document::{self, Frontmatter};
 use crate::media::{self, AltText};
 use crate::preview;
 
@@ -115,7 +115,12 @@ fn generate_ai_for_line(
 ) {
     let body = buffer.text(&buffer.start_iter(), &buffer.end_iter(), false).to_string();
 
-    let Some(source) = image_source_on_line(&body, line) else {
+    // AI alt-text generation is vision-model-based and makes no sense for a
+    // video/audio reference - `![]()` syntax is reused for all local media
+    // (see `crates/gutenberg`'s `as_lone_media`), so a right-click here can
+    // land on either.
+    let is_image = |source: &String| document::media_reference_kind(source) == document::MediaReferenceKind::Image;
+    let Some(source) = image_source_on_line(&body, line).filter(is_image) else {
         let alert = adw::AlertDialog::builder()
             .heading("Keine Bildreferenz gefunden")
             .body("Für den KI-Alternativtext bitte mit der rechten Maustaste auf eine Zeile mit einem Bild (![Beschreibung](bild.png)) klicken.")

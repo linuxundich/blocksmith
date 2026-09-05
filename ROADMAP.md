@@ -38,23 +38,19 @@ what's already shipped.
 - ~~**Local autosave / crash-recovery.**~~ Done (see CHANGELOG.md) - a
   debounced background snapshot now survives a crash or a forgotten save,
   with a restore-or-discard prompt on next launch.
-- **Scheduled publishing.** `document::PostStatus` only has
-  `Draft`/`Pending`/`Publish` - no `Future` status with a date/time
-  picker, so a post can't be scheduled for later from inside the app even
-  though WordPress itself supports it.
-- **oEmbed / embed block support.** A bare URL on its own line (YouTube,
-  Twitter/X, etc.) is exactly how WordPress's own editor already expects
-  an embed to be written - `crates/gutenberg` currently has no `wp:embed`
-  block at all, so such a URL only ever survives as a plain link inside a
-  paragraph. Very natural fit for how people already write Markdown.
+- ~~**Scheduled publishing.**~~ Done (see CHANGELOG.md) - a `Future`
+  status, a publish date/time field in Artikel-Eigenschaften, and a
+  "Terminieren" button in the export dialog (refusing to export with no
+  valid date, rather than let WordPress silently publish immediately).
+- ~~**oEmbed / embed block support.**~~ Done (see CHANGELOG.md) - a bare
+  URL alone on its own line exports as a real `wp:embed` block.
 - **Multiple WordPress site profiles.** `wpsite.rs` holds exactly one
   site's URL/username - switching projects between two different
   self-hosted WordPress installs currently means re-entering the
   connection by hand each time.
-- **Video/audio media support.** `media.rs`/Medienverwaltung and the
-  Gutenberg engine only know about images; there's no upload workflow or
-  dedicated block for either, so a `<video>`/`<audio>` tag only survives
-  as an opaque `wp:html` passthrough.
+- ~~**Video/audio media support.**~~ Done (see CHANGELOG.md) - local
+  video/audio files are inserted the same way as images and export as
+  real `wp:video`/`wp:audio` blocks.
 - **Image compression/format conversion before upload.** A large,
   unoptimized screenshot uploads exactly as-is today; a "downscale/
   convert to WebP before sending" step (even just above some size
