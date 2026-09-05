@@ -61,6 +61,15 @@ pub struct MediaDetail {
     pub caption: String,
 }
 
+/// An existing taxonomy term with its real id - unlike
+/// [`Client::list_term_names`]'s name-only list (autocomplete doesn't need
+/// an id), renaming or deleting a term requires it.
+#[derive(Debug, Clone)]
+pub struct Term {
+    pub id: u64,
+    pub name: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct PostSummary {
     pub id: u64,
@@ -298,6 +307,63 @@ impl Client {
         Ok(value.get("name").and_then(Value::as_str).unwrap_or_default().to_string())
     }
 
+    /// Lists up to 100 existing terms - id and name both, unlike
+    /// `list_term_names` - for the "Kategorien & Tags verwalten" dialog,
+    /// which needs real ids to rename or delete a term.
+    pub fn list_terms(&self, taxonomy: &str) -> Result<Vec<Term>> {
+        let url = format!("{}?per_page=100&orderby=name&_fields=id,name", self.endpoint(taxonomy));
+        let value = self.get_json(&url)?;
+        Ok(value
+            .as_array()
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|item| {
+                        Some(Term {
+                            id: item.get("id")?.as_u64()?,
+                            name: item.get("name").and_then(Value::as_str)?.to_string(),
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default())
+    }
+
+    /// Renames an existing taxonomy term in place.
+    pub fn rename_term(&self, taxonomy: &str, id: u64, new_name: &str) -> Result<()> {
+        let mut response = self
+            .agent
+            .post(self.endpoint(&format!("{taxonomy}/{id}")))
+            .header("Authorization", self.auth_header.as_str())
+            .send_json(serde_json::json!({ "name": new_name }))
+            .map_err(network_error)?;
+        let status = response.status().as_u16();
+        if !(200..300).contains(&status) {
+            let body_text = response.body_mut().read_to_string().unwrap_or_default();
+            return Err(error_from_body(status, &body_text));
+        }
+        Ok(())
+    }
+
+    /// Permanently deletes a taxonomy term (categories/tags have no trash,
+    /// unlike posts - `force=true` is required, same as `delete_post`/
+    /// `delete_media`).
+    pub fn delete_term(&self, taxonomy: &str, id: u64) -> Result<()> {
+        let url = format!("{}?force=true", self.endpoint(&format!("{taxonomy}/{id}")));
+        let mut response = self
+            .agent
+            .delete(url)
+            .header("Authorization", self.auth_header.as_str())
+            .call()
+            .map_err(network_error)?;
+        let status = response.status().as_u16();
+        if !(200..300).contains(&status) {
+            let body_text = response.body_mut().read_to_string().unwrap_or_default();
+            return Err(error_from_body(status, &body_text));
+        }
+        Ok(())
+    }
+
     /// Lists the most recent posts (any status the authenticated user can
     /// see), for the "Von WordPress öffnen" picker. Doesn't paginate beyond
     /// the first 50 - fine for finding a recent article to edit.
@@ -512,6 +578,35 @@ mod tests {
         assert_eq!(updated.id, created.id);
 
         client.delete_post(created.id).expect("cleanup delete_post failed");
+    }
+
+    /// Exercises the "Kategorien & Tags verwalten" dialog's full flow
+    /// against the real site: create -> list (must include it, with a
+    /// matching id) -> rename -> verify -> delete -> verify gone.
+    #[test]
+    #[ignore]
+    fn term_management_round_trip_against_real_site() {
+        let config = wpsite::load();
+        assert!(!config.url.is_empty(), "no WordPress site configured (run the connection dialog first)");
+        let password = futures_lite::future::block_on(secrets::load_app_password(&config.url, &config.username))
+            .expect("keyring lookup failed")
+            .expect("no application password stored for this site/user");
+        let client = Client::new(&config.url, &config.username, &password);
+
+        let term_id = client
+            .resolve_or_create_term("categories", "Blocksmith Term-Test")
+            .expect("resolve_or_create_term failed");
+
+        let listed = client.list_terms("categories").expect("list_terms failed");
+        assert!(listed.iter().any(|t| t.id == term_id && t.name == "Blocksmith Term-Test"), "created term not found in list_terms: {listed:?}");
+
+        client.rename_term("categories", term_id, "Blocksmith Term-Test (umbenannt)").expect("rename_term failed");
+        let renamed_name = client.get_term_name("categories", term_id).expect("get_term_name after rename failed");
+        assert_eq!(renamed_name, "Blocksmith Term-Test (umbenannt)");
+
+        client.delete_term("categories", term_id).expect("delete_term failed");
+        let after_delete = client.list_terms("categories").expect("list_terms after delete failed");
+        assert!(!after_delete.iter().any(|t| t.id == term_id), "term still present after delete_term: {after_delete:?}");
     }
 
     /// A 1x1 transparent PNG - real image bytes, not a text stand-in, so

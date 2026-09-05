@@ -36,6 +36,7 @@ mod settings;
 mod shortcuts;
 mod stats;
 mod statusbar;
+mod taxonomy;
 mod termcache;
 mod window;
 mod windowstate;

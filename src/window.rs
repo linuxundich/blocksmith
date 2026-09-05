@@ -299,6 +299,7 @@ pub fn build(app: &adw::Application) -> adw::ApplicationWindow {
     wire_insert_media_action(&window, &buffer, &current_path);
     wire_insert_post_link_action(&window, &buffer);
     wire_paste_image_shortcut(&view, &buffer, &current_path, &toast_overlay);
+    wire_drop_target(&view, &buffer, &current_path);
     wire_startup_recovery(&window, &buffer, &current_path, &frontmatter, &title, &preview_pane);
     wire_find_action(&window, &search_bar);
     window.set_help_overlay(Some(&shortcuts::build()));
@@ -951,6 +952,51 @@ fn wire_paste_image_shortcut(view: &sourceview5::View, buffer: &sourceview5::Buf
         glib::Propagation::Stop
     });
     view.add_controller(controller);
+}
+
+/// Accepts one or more local files dropped onto the editor from a file
+/// manager - same insertion mechanism as "Bild einfügen"/"Video/Audio
+/// einfügen" and clipboard paste (`document::image_reference` +
+/// `formatting::insert_image`), just triggered by a `Gtk.DropTarget`
+/// instead of a picker dialog or Ctrl+V. Unlike the clipboard-paste case, no
+/// new file needs to be written to disk, so this works even before the
+/// article has ever been saved (`doc_dir` is simply `None` then, and
+/// `image_reference` falls back to the file's absolute path).
+fn wire_drop_target(view: &sourceview5::View, buffer: &sourceview5::Buffer, current_path: &Rc<RefCell<Option<PathBuf>>>) {
+    let drop_target = gtk4::DropTarget::new(gdk::FileList::static_type(), gdk::DragAction::COPY);
+    let buffer = buffer.clone();
+    let current_path = current_path.clone();
+    let view_weak = view.downgrade();
+    drop_target.connect_drop(move |_target, value, x, y| {
+        let Some(view) = view_weak.upgrade() else {
+            return false;
+        };
+        let Ok(file_list) = value.get::<gdk::FileList>() else {
+            return false;
+        };
+        let files = file_list.files();
+        if files.is_empty() {
+            return false;
+        }
+
+        let (buffer_x, buffer_y) = view.window_to_buffer_coords(gtk4::TextWindowType::Widget, x as i32, y as i32);
+        if let Some((iter, _trailing)) = view.iter_at_position(buffer_x, buffer_y) {
+            buffer.place_cursor(&iter);
+        }
+
+        let doc_dir = current_path.borrow().as_ref().and_then(|p| p.parent().map(Path::to_path_buf));
+        for (index, file) in files.iter().enumerate() {
+            let Some(path) = file.path() else { continue };
+            if index > 0 {
+                let mut iter = buffer.iter_at_mark(&buffer.get_insert());
+                buffer.insert(&mut iter, "\n");
+            }
+            let reference = document::image_reference(&path, doc_dir.as_deref());
+            formatting::insert_image(&buffer, &reference);
+        }
+        true
+    });
+    view.add_controller(drop_target);
 }
 
 /// Offers to restore a leftover autosave snapshot from a previous run - a

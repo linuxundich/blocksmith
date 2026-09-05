@@ -38,7 +38,9 @@ blocks. Implemented so far:
   a real Markdown link to the one picked; pasting an image straight from the
   clipboard with Ctrl+V - a screenshot, or "Copy Image" from a browser -
   saves it into the article's own folder and inserts it, falling through to
-  a normal text paste when there's no image on the clipboard; a "Weiterlesen"
+  a normal text paste when there's no image on the clipboard; dragging one or
+  more local files from a file manager onto the editor inserts them the same
+  way, even in an unsaved article; a "Weiterlesen"
   button inserting WordPress's `<!--more-->` marker, exported as a real
   `wp:more` block rather than generic HTML), a Ctrl+F search-and-replace bar
   sliding up from the bottom of the editor (live match highlighting and
@@ -87,7 +89,11 @@ blocks. Implemented so far:
   "Artikel-Eigenschaften" dialog with autocomplete for existing WordPress
   categories/tags (backed by an on-disk cache, `src/termcache.rs`,
   refreshed at startup and on demand) and a native file picker for the
-  featured image, not just a path field.
+  featured image, not just a path field. A "Kategorien & Tags verwalten"
+  dialog next to that autocomplete's refresh button lists every existing
+  category/tag and lets you rename or permanently delete one straight
+  from the app, instead of only ever being able to read or auto-create a
+  term.
 - **Local autosave / crash-recovery** — while the article has unsaved
   changes, a debounced background snapshot is kept in a local recovery
   slot; if Blocksmith is closed without saving (or crashes), the next

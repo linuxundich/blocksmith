@@ -12,7 +12,7 @@ use gtk4::gio;
 
 use crate::document::{self, parse_list, Frontmatter, PostStatus};
 use crate::i18n::tr;
-use crate::{autocomplete, termcache};
+use crate::{autocomplete, taxonomy, termcache};
 
 pub fn open(
     parent: &adw::ApplicationWindow,
@@ -70,8 +70,24 @@ pub fn open(
         });
     }
 
+    let manage_terms_button = gtk4::Button::from_icon_name("document-edit-symbolic");
+    manage_terms_button.set_tooltip_text(Some(&tr("Kategorien & Tags verwalten…")));
+    manage_terms_button.add_css_class("flat");
+    {
+        let parent = parent.clone();
+        let category_terms = category_terms.clone();
+        let tag_terms = tag_terms.clone();
+        manage_terms_button.connect_clicked(move |_| {
+            taxonomy::open(&parent, category_terms.clone(), tag_terms.clone());
+        });
+    }
+
+    let header_suffix_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
+    header_suffix_box.append(&manage_terms_button);
+    header_suffix_box.append(&refresh_button);
+
     let group = adw::PreferencesGroup::builder().title(tr("Artikel-Eigenschaften")).build();
-    group.set_header_suffix(Some(&refresh_button));
+    group.set_header_suffix(Some(&header_suffix_box));
     group.add(&title_row);
     group.add(&slug_row);
     group.add(&status_row);

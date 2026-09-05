@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.32.0] - 2026-09-05
+
+### Added
+
+- Drag a local file into the editor: dropping one or more files from a
+  file manager onto the editor inserts them the same way as "Bild
+  einfügen"/clipboard paste - works even in an unsaved article (falling
+  back to the file's absolute path).
+- "Kategorien & Tags verwalten" dialog (reachable from Artikel-
+  Eigenschaften): lists every existing WordPress category/tag and lets
+  you rename or permanently delete one directly, instead of only ever
+  being able to read (autocomplete) or create a term automatically on
+  publish.
+
 ## [0.31.0] - 2026-09-05
 
 ### Added

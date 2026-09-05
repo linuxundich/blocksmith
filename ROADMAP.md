@@ -12,9 +12,10 @@ what's already shipped.
 - ~~**Paste an image from the clipboard.**~~ Done (see CHANGELOG.md) -
   `Ctrl+V` now saves a clipboard image into the article folder and
   inserts it, falling back to normal text paste when there's no image.
-- **Drag a local image file into the editor.** Same underlying insert
-  logic as "Bild einfügen" and clipboard paste, triggered by a
-  `Gtk.DropTarget` on the editor view instead of a button or a keystroke.
+- ~~**Drag a local image file into the editor.**~~ Done (see
+  CHANGELOG.md) - a `Gtk.DropTarget` on the editor view accepts one or
+  more dropped files, same insertion logic as "Bild einfügen"/clipboard
+  paste.
 - **Reopen the last article on launch.** `recentfiles.rs` (v0.25.0)
   already tracks the most-recently-opened path - starting the app with
   that file already loaded (instead of a blank "Unbenannt" document) is
@@ -28,10 +29,10 @@ what's already shipped.
 - ~~**"Weiterlesen" / more-tag support.**~~ Done (see CHANGELOG.md) - a
   lone `<!--more-->` line now exports as `wp:more`, with a toolbar button
   to insert it.
-- **Manage existing categories/tags** (rename/delete) from inside the
-  app. Right now taxonomy terms are only ever *read* (autocomplete) or
-  *created* (automatically, during publish, for a name that doesn't exist
-  yet) - there's no UI to fix a typo in an existing term or remove one.
+- ~~**Manage existing categories/tags** (rename/delete) from inside the
+  app.~~ Done (see CHANGELOG.md) - a "Kategorien & Tags verwalten" dialog,
+  reachable from Artikel-Eigenschaften, lists every term with a real WP
+  term id and lets you rename or delete it.
 
 ## Moderate scope, higher value
 
