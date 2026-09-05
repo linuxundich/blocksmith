@@ -1,5 +1,7 @@
 /target
 /.claude/
+# Compiled by build.rs from po/*.po on every build - see po/README.md.
+/po/locale/
 /build-aux/flatpak/.flatpak-builder/
 /build-aux/flatpak/build-dir/
 /build-aux/flatpak/repo/

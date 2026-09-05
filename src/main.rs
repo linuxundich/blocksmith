@@ -17,7 +17,9 @@ mod editor;
 mod export;
 mod fontutil;
 mod formatting;
+mod i18n;
 mod imagealt;
+mod imagecompress;
 mod importer;
 mod linkpicker;
 mod llm;
@@ -46,6 +48,11 @@ use gtk4::glib;
 const APP_ID: &str = "de.christophlangner.Blocksmith";
 
 fn main() -> glib::ExitCode {
+    // Must run before anything else - `setlocale` (which this calls) isn't
+    // thread-safe against locale-dependent calls running concurrently on
+    // other threads, and nothing here has spawned any yet.
+    i18n::init();
+
     let app = adw::Application::builder().application_id(APP_ID).build();
 
     app.set_accels_for_action("win.new", &["<Ctrl>n"]);
@@ -56,6 +63,7 @@ fn main() -> glib::ExitCode {
     app.set_accels_for_action("win.publish", &["<Ctrl><Shift>p"]);
     app.set_accels_for_action("win.media-manager", &["<Ctrl><Shift>m"]);
     app.set_accels_for_action("win.find", &["<Ctrl>f"]);
+    app.set_accels_for_action("win.toggle-focus-mode", &["<Ctrl><Shift>f"]);
     app.set_accels_for_action("win.show-help-overlay", &["<Ctrl>question"]);
 
     app.connect_activate(|app| {

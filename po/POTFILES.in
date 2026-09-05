@@ -1,0 +1,4 @@
+src/window.rs
+src/properties.rs
+src/shortcuts.rs
+src/document.rs

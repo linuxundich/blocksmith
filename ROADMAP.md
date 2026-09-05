@@ -51,12 +51,9 @@ what's already shipped.
 - ~~**Video/audio media support.**~~ Done (see CHANGELOG.md) - local
   video/audio files are inserted the same way as images and export as
   real `wp:video`/`wp:audio` blocks.
-- **Image compression/format conversion before upload.** A large,
-  unoptimized screenshot uploads exactly as-is today; a "downscale/
-  convert to WebP before sending" step (even just above some size
-  threshold) would be a meaningful, low-effort quality-of-life win, and
-  the app already owns the whole image-upload pipeline (`media.rs`,
-  `sync_uploads`) this would slot into.
+- ~~**Image compression/format conversion before upload.**~~ Done (see
+  CHANGELOG.md) - an oversized PNG/JPEG is downscaled and re-encoded
+  (opaque PNGs converting to JPEG) before upload, via `gdk-pixbuf`.
 
 ## Larger / architectural
 
@@ -67,21 +64,25 @@ what's already shipped.
   spec) in favor of the simpler `.md`-plus-frontmatter approach this app
   still uses today - still valid, still a genuinely large undertaking,
   don't start without an explicit go-ahead.
-- **Internationalization (i18n).** Every UI string is hardcoded German
-  text throughout the whole codebase; making the app translatable
-  (`gettext` + a `po/` directory - planned in the very first project
-  outline, never started) is a real, substantial step, only worth taking
-  if this is ever meant to reach a non-German-speaking audience.
+- **Internationalization (i18n) - infrastructure done, most strings still
+  German.** (see CHANGELOG.md) gettext is wired up end to end (a real,
+  working English translation proves it: `po/en.po`, compiled by
+  `build.rs`), but only applied to a representative slice so far
+  (`window.rs`'s header/menu/tabs, `properties.rs`, `shortcuts.rs`,
+  `PostStatus`'s labels). Converting the remaining ~25 files is the exact
+  same mechanical step repeated - wrap a literal in `i18n::tr("...")` -
+  see `po/README.md` for the full workflow and the one real gotcha
+  (`tr(variable)` isn't extractable by `xgettext`, only `tr("literal")`
+  is). Also still open: wiring a real installed/Flatpak build to find its
+  translations at all (`po/README.md`'s "Known limitation").
 - **A CI pipeline.** There is no `.github/workflows` (or any other CI) at
   all right now - `cargo build`/`test`/`clippy` only ever run locally,
   by hand, before a commit. Not a user-facing feature, but real
   protection against regressions that this project's pace of change
   would benefit from.
-- **Distraction-free / focus writing mode.** Hide the toolbar, header
-  bar, and right-hand pane down to just the editor text, for long-form
-  drafting. A bigger UI undertaking than the "collapse the preview pane"
-  toggle already shipped in v0.24.0, since it would need to also fold
-  away the toolbar/header, not just the right pane.
+- ~~**Distraction-free / focus writing mode.**~~ Done (see CHANGELOG.md) -
+  Ctrl+Shift+F hides the header bar, toolbar, and right-hand pane down to
+  just the editor text.
 
 ## Deliberately not recommended
 

@@ -262,8 +262,10 @@ pub fn sync_uploads(
         }
 
         let previous = item.wordpress.take();
-        let mime = crate::export::mime_from_extension(&item.filename);
-        let media = client.upload_media(&bytes, &item.filename, mime).map_err(|err| err.to_string())?;
+        let compressed = crate::imagecompress::maybe_compress(&bytes, &item.filename);
+        let media = client
+            .upload_media(&compressed.bytes, &compressed.filename, compressed.mime_type)
+            .map_err(|err| err.to_string())?;
         client
             .update_media_metadata(media.id, item.alt.as_wordpress_value(), item.caption.as_deref())
             .map_err(|err| err.to_string())?;

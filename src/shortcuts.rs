@@ -4,40 +4,48 @@
 //! conventional `win.show-help-overlay` action - no bespoke action or
 //! `open()` function needed here, just the window to hand it.
 
+use crate::i18n::tr;
+
 pub fn build() -> gtk4::ShortcutsWindow {
     let window = gtk4::ShortcutsWindow::builder().modal(true).build();
 
     let section = gtk4::ShortcutsSection::builder().section_name("main").build();
+    // Every title below is `tr("...")` right here at its own literal - not
+    // built from a shared table and translated once through a variable -
+    // so `xgettext --keyword=tr` (see `po/README.md`) can actually find
+    // it: it only extracts a call whose argument is a string literal, not
+    // one that's been looked up into a local first.
     section.add_group(&group(
-        "Allgemein",
+        tr("Allgemein"),
         &[
-            ("Neuer Artikel", "<Ctrl>N"),
-            ("Öffnen", "<Ctrl>O"),
-            ("Von WordPress öffnen", "<Ctrl><Shift>O"),
-            ("Speichern", "<Ctrl>S"),
-            ("Artikel exportieren", "<Ctrl><Shift>P"),
-            ("Medienverwaltung", "<Ctrl><Shift>M"),
-            ("Einstellungen", "<Ctrl>comma"),
+            (tr("Neuer Artikel"), "<Ctrl>N"),
+            (tr("Öffnen"), "<Ctrl>O"),
+            (tr("Von WordPress öffnen"), "<Ctrl><Shift>O"),
+            (tr("Speichern"), "<Ctrl>S"),
+            (tr("Artikel exportieren"), "<Ctrl><Shift>P"),
+            (tr("Medienverwaltung"), "<Ctrl><Shift>M"),
+            (tr("Fokus-Schreibmodus"), "<Ctrl><Shift>F"),
+            (tr("Einstellungen"), "<Ctrl>comma"),
         ],
     ));
     section.add_group(&group(
-        "Editor",
+        tr("Editor"),
         &[
-            ("Fett", "<Ctrl>B"),
-            ("Kursiv", "<Ctrl>I"),
-            ("Link einfügen", "<Ctrl>K"),
-            ("Bild aus der Zwischenablage einfügen", "<Ctrl>V"),
-            ("Suchen und Ersetzen", "<Ctrl>F"),
+            (tr("Fett"), "<Ctrl>B"),
+            (tr("Kursiv"), "<Ctrl>I"),
+            (tr("Link einfügen"), "<Ctrl>K"),
+            (tr("Bild aus der Zwischenablage einfügen"), "<Ctrl>V"),
+            (tr("Suchen und Ersetzen"), "<Ctrl>F"),
         ],
     ));
     window.add_section(&section);
     window
 }
 
-fn group(title: &str, shortcuts: &[(&str, &str)]) -> gtk4::ShortcutsGroup {
+fn group(title: String, shortcuts: &[(String, &str)]) -> gtk4::ShortcutsGroup {
     let group = gtk4::ShortcutsGroup::builder().title(title).build();
     for (title, accelerator) in shortcuts {
-        group.add_shortcut(&gtk4::ShortcutsShortcut::builder().title(*title).accelerator(*accelerator).build());
+        group.add_shortcut(&gtk4::ShortcutsShortcut::builder().title(title.as_str()).accelerator(*accelerator).build());
     }
     group
 }

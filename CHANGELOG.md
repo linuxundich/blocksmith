@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.31.0] - 2026-09-05
+
+### Added
+
+- Image compression before upload: an oversized PNG/JPEG referenced in an
+  article is downscaled and re-encoded before it's sent to WordPress
+  (an opaque PNG converting to JPEG when that's smaller) - an
+  already-small image is uploaded unchanged.
+- Fokus-Schreibmodus (Ctrl+Shift+F): hides the header bar, editor
+  toolbar, and preview pane down to just the editor text, for
+  distraction-free writing.
+- Internationalization: the app is now translatable via GNU gettext.
+  A representative slice of the UI (the main window's header bar/menu/
+  tabs, "Artikel-Eigenschaften", "Tastenkürzel") is wired up and has a
+  complete English translation (`po/en.po`) proving the pipeline works
+  end to end; the rest of the app's strings are converted the same way
+  incrementally. See `po/README.md` for the translator/contributor
+  workflow.
+
 ## [0.30.0] - 2026-09-05
 
 ### Added

@@ -51,13 +51,17 @@ impl PostStatus {
 
     pub const ALL: [PostStatus; 4] = [PostStatus::Draft, PostStatus::Pending, PostStatus::Publish, PostStatus::Future];
 
-    /// Human-readable German label, for the properties dialog's dropdown.
-    pub fn label(&self) -> &'static str {
+    /// Human-readable, translated label, for the properties dialog's
+    /// dropdown. Each arm calls `tr()` directly on its own literal (rather
+    /// than matching to a variable and translating once) so `xgettext`
+    /// can actually find these strings - see `shortcuts.rs`'s `group()`
+    /// for the same rule with a longer explanation.
+    pub fn label(&self) -> String {
         match self {
-            PostStatus::Draft => "Entwurf",
-            PostStatus::Pending => "Ausstehend",
-            PostStatus::Publish => "Veröffentlicht",
-            PostStatus::Future => "Geplant",
+            PostStatus::Draft => crate::i18n::tr("Entwurf"),
+            PostStatus::Pending => crate::i18n::tr("Ausstehend"),
+            PostStatus::Publish => crate::i18n::tr("Veröffentlicht"),
+            PostStatus::Future => crate::i18n::tr("Geplant"),
         }
     }
 }

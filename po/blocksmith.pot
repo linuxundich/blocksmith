@@ -1,0 +1,209 @@
+# Translation template for Blocksmith.
+# Copyright (C) 2026 Christoph Langner
+# This file is distributed under the same license as the Blocksmith package
+# (GPL-3.0-or-later).
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: Blocksmith 0.30.0\n"
+"Report-Msgid-Bugs-To: https://github.com/linuxundich/blocksmith/issues\n"
+"POT-Creation-Date: 2026-09-05 21:48+0200\n"
+"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+"Language-Team: LANGUAGE <LL@li.org>\n"
+"Language: \n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+#: src/window.rs:40
+msgid "Vorschau"
+msgstr ""
+
+#: src/window.rs:41
+msgid "Gutenberg-Code"
+msgstr ""
+
+#: src/window.rs:42
+msgid "Statistik"
+msgstr ""
+
+#: src/window.rs:43
+msgid "Chat"
+msgstr ""
+
+#: src/window.rs:94 src/window.rs:319 src/window.rs:533
+msgid "Unbenannt"
+msgstr ""
+
+#: src/window.rs:97
+msgid "Neu (Strg+N)"
+msgstr ""
+
+#: src/window.rs:101
+msgid "Öffnen (Strg+O)"
+msgstr ""
+
+#: src/window.rs:106
+msgid "Zuletzt geöffnet"
+msgstr ""
+
+#: src/window.rs:115
+msgid "Von WordPress öffnen (Strg+Umschalt+O)"
+msgstr ""
+
+#: src/window.rs:119
+msgid "Speichern (Strg+S)"
+msgstr ""
+
+#: src/window.rs:123 src/properties.rs:73 src/properties.rs:95
+msgid "Artikel-Eigenschaften"
+msgstr ""
+
+#: src/window.rs:127
+msgid "Medienverwaltung (Strg+Umschalt+M)"
+msgstr ""
+
+#: src/window.rs:137 src/shortcuts.rs:28
+msgid "Einstellungen"
+msgstr ""
+
+#: src/window.rs:138
+msgid "Tastenkürzel"
+msgstr ""
+
+#: src/window.rs:139
+msgid "Über Blocksmith"
+msgstr ""
+
+#: src/window.rs:143
+msgid "Hauptmenü (Strg+,)"
+msgstr ""
+
+#: src/window.rs:147
+msgid "Vorschau ein-/ausblenden"
+msgstr ""
+
+#: src/window.rs:155
+msgid "Fokus-Schreibmodus (Strg+Umschalt+F)"
+msgstr ""
+
+#: src/window.rs:159
+msgid "Artikel exportieren (Strg+Umschalt+P)"
+msgstr ""
+
+#: src/properties.rs:26
+msgid "Titel"
+msgstr ""
+
+#: src/properties.rs:27
+msgid "Slug"
+msgstr ""
+
+#: src/properties.rs:29
+msgid "Kategorien (Komma-getrennt)"
+msgstr ""
+
+#: src/properties.rs:33
+msgid "Tags (Komma-getrennt)"
+msgstr ""
+
+#: src/properties.rs:37
+msgid "Featured Image (Pfad)"
+msgstr ""
+
+#: src/properties.rs:41
+msgid "Bild auswählen…"
+msgstr ""
+
+#: src/properties.rs:51
+msgid "Status"
+msgstr ""
+
+#: src/properties.rs:57
+msgid "Veröffentlichungstermin (JJJJ-MM-TT HH:MM)"
+msgstr ""
+
+#: src/properties.rs:63
+msgid "Kategorien & Tags von WordPress aktualisieren"
+msgstr ""
+
+#: src/properties.rs:138
+msgid "Bilder"
+msgstr ""
+
+#: src/properties.rs:142
+msgid "Featured Image auswählen"
+msgstr ""
+
+#: src/shortcuts.rs:19
+msgid "Allgemein"
+msgstr ""
+
+#: src/shortcuts.rs:21
+msgid "Neuer Artikel"
+msgstr ""
+
+#: src/shortcuts.rs:22
+msgid "Öffnen"
+msgstr ""
+
+#: src/shortcuts.rs:23
+msgid "Von WordPress öffnen"
+msgstr ""
+
+#: src/shortcuts.rs:24
+msgid "Speichern"
+msgstr ""
+
+#: src/shortcuts.rs:25
+msgid "Artikel exportieren"
+msgstr ""
+
+#: src/shortcuts.rs:26
+msgid "Medienverwaltung"
+msgstr ""
+
+#: src/shortcuts.rs:27
+msgid "Fokus-Schreibmodus"
+msgstr ""
+
+#: src/shortcuts.rs:32
+msgid "Editor"
+msgstr ""
+
+#: src/shortcuts.rs:34
+msgid "Fett"
+msgstr ""
+
+#: src/shortcuts.rs:35
+msgid "Kursiv"
+msgstr ""
+
+#: src/shortcuts.rs:36
+msgid "Link einfügen"
+msgstr ""
+
+#: src/shortcuts.rs:37
+msgid "Bild aus der Zwischenablage einfügen"
+msgstr ""
+
+#: src/shortcuts.rs:38
+msgid "Suchen und Ersetzen"
+msgstr ""
+
+#: src/document.rs:61
+msgid "Entwurf"
+msgstr ""
+
+#: src/document.rs:62
+msgid "Ausstehend"
+msgstr ""
+
+#: src/document.rs:63
+msgid "Veröffentlicht"
+msgstr ""
+
+#: src/document.rs:64
+msgid "Geplant"
+msgstr ""

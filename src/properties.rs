@@ -11,6 +11,7 @@ use adw::prelude::*;
 use gtk4::gio;
 
 use crate::document::{self, parse_list, Frontmatter, PostStatus};
+use crate::i18n::tr;
 use crate::{autocomplete, termcache};
 
 pub fn open(
@@ -22,43 +23,44 @@ pub fn open(
 ) {
     let current = frontmatter.borrow().clone();
 
-    let title_row = adw::EntryRow::builder().title("Titel").text(current.title.as_str()).build();
-    let slug_row = adw::EntryRow::builder().title("Slug").text(current.slug.as_str()).build();
+    let title_row = adw::EntryRow::builder().title(tr("Titel")).text(current.title.as_str()).build();
+    let slug_row = adw::EntryRow::builder().title(tr("Slug")).text(current.slug.as_str()).build();
     let categories_row = adw::EntryRow::builder()
-        .title("Kategorien (Komma-getrennt)")
+        .title(tr("Kategorien (Komma-getrennt)"))
         .text(current.categories.join(", ").as_str())
         .build();
     let tags_row = adw::EntryRow::builder()
-        .title("Tags (Komma-getrennt)")
+        .title(tr("Tags (Komma-getrennt)"))
         .text(current.tags.join(", ").as_str())
         .build();
     let featured_image_row = adw::EntryRow::builder()
-        .title("Featured Image (Pfad)")
+        .title(tr("Featured Image (Pfad)"))
         .text(current.featured_image.clone().unwrap_or_default().as_str())
         .build();
     let featured_image_picker_button = gtk4::Button::from_icon_name("insert-image-symbolic");
-    featured_image_picker_button.set_tooltip_text(Some("Bild auswählen…"));
+    featured_image_picker_button.set_tooltip_text(Some(&tr("Bild auswählen…")));
     featured_image_picker_button.set_valign(gtk4::Align::Center);
     featured_image_picker_button.add_css_class("flat");
     featured_image_row.add_suffix(&featured_image_picker_button);
 
-    let status_labels: Vec<&str> = PostStatus::ALL.iter().map(|s| s.label()).collect();
-    let status_model = gtk4::StringList::new(&status_labels);
+    let status_labels: Vec<String> = PostStatus::ALL.iter().map(|s| s.label()).collect();
+    let status_label_refs: Vec<&str> = status_labels.iter().map(String::as_str).collect();
+    let status_model = gtk4::StringList::new(&status_label_refs);
     let selected_index = PostStatus::ALL.iter().position(|s| *s == current.status).unwrap_or(0);
     let status_row = adw::ComboRow::builder()
-        .title("Status")
+        .title(tr("Status"))
         .model(&status_model)
         .selected(selected_index as u32)
         .build();
 
     let scheduled_row = adw::EntryRow::builder()
-        .title("Veröffentlichungstermin (JJJJ-MM-TT HH:MM)")
+        .title(tr("Veröffentlichungstermin (JJJJ-MM-TT HH:MM)"))
         .text(current.scheduled_at.as_deref().map(document::format_scheduled_at_for_display).unwrap_or_default().as_str())
         .build();
     scheduled_row.set_visible(current.status == PostStatus::Future);
 
     let refresh_button = gtk4::Button::from_icon_name("view-refresh-symbolic");
-    refresh_button.set_tooltip_text(Some("Kategorien & Tags von WordPress aktualisieren"));
+    refresh_button.set_tooltip_text(Some(&tr("Kategorien & Tags von WordPress aktualisieren")));
     refresh_button.add_css_class("flat");
     {
         let category_terms = category_terms.clone();
@@ -68,7 +70,7 @@ pub fn open(
         });
     }
 
-    let group = adw::PreferencesGroup::builder().title("Artikel-Eigenschaften").build();
+    let group = adw::PreferencesGroup::builder().title(tr("Artikel-Eigenschaften")).build();
     group.set_header_suffix(Some(&refresh_button));
     group.add(&title_row);
     group.add(&slug_row);
@@ -90,7 +92,7 @@ pub fn open(
     toolbar_view.set_content(Some(&scroller));
 
     let dialog = adw::Dialog::builder()
-        .title("Artikel-Eigenschaften")
+        .title(tr("Artikel-Eigenschaften"))
         .content_width(480)
         .content_height(520)
         .child(&toolbar_view)
@@ -133,11 +135,11 @@ pub fn open(
         featured_image_picker_button.connect_clicked(move |_| {
             let filter = gtk4::FileFilter::new();
             filter.add_mime_type("image/*");
-            filter.set_name(Some("Bilder"));
+            filter.set_name(Some(&tr("Bilder")));
             let filters = gio::ListStore::new::<gtk4::FileFilter>();
             filters.append(&filter);
 
-            let file_dialog = gtk4::FileDialog::builder().title("Featured Image auswählen").filters(&filters).build();
+            let file_dialog = gtk4::FileDialog::builder().title(tr("Featured Image auswählen")).filters(&filters).build();
 
             let featured_image_row = featured_image_row.clone();
             let doc_dir = doc_dir.clone();

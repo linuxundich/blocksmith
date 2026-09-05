@@ -1,0 +1,211 @@
+# English translation for Blocksmith.
+# Copyright (C) 2026 Christoph Langner
+# This file is distributed under the same license as the Blocksmith package
+# (GPL-3.0-or-later).
+# Christoph Langner <mail@christoph-langner.de>, 2026.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: Blocksmith 0.30.0\n"
+"Report-Msgid-Bugs-To: https://github.com/linuxundich/blocksmith/issues\n"
+"POT-Creation-Date: 2026-09-05 21:48+0200\n"
+"PO-Revision-Date: 2026-09-05 21:48+0200\n"
+"Last-Translator: Christoph Langner <mail@christoph-langner.de>\n"
+"Language-Team: none\n"
+"Language: en\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+#: src/window.rs:40
+msgid "Vorschau"
+msgstr "Preview"
+
+#: src/window.rs:41
+msgid "Gutenberg-Code"
+msgstr "Gutenberg code"
+
+#: src/window.rs:42
+msgid "Statistik"
+msgstr "Statistics"
+
+#: src/window.rs:43
+msgid "Chat"
+msgstr "Chat"
+
+#: src/window.rs:94 src/window.rs:319 src/window.rs:533
+msgid "Unbenannt"
+msgstr "Untitled"
+
+#: src/window.rs:97
+msgid "Neu (Strg+N)"
+msgstr "New (Ctrl+N)"
+
+#: src/window.rs:101
+msgid "Öffnen (Strg+O)"
+msgstr "Open (Ctrl+O)"
+
+#: src/window.rs:106
+msgid "Zuletzt geöffnet"
+msgstr "Recently opened"
+
+#: src/window.rs:115
+msgid "Von WordPress öffnen (Strg+Umschalt+O)"
+msgstr "Open from WordPress (Ctrl+Shift+O)"
+
+#: src/window.rs:119
+msgid "Speichern (Strg+S)"
+msgstr "Save (Ctrl+S)"
+
+#: src/window.rs:123 src/properties.rs:73 src/properties.rs:95
+msgid "Artikel-Eigenschaften"
+msgstr "Article Properties"
+
+#: src/window.rs:127
+msgid "Medienverwaltung (Strg+Umschalt+M)"
+msgstr "Media Manager (Ctrl+Shift+M)"
+
+#: src/window.rs:137 src/shortcuts.rs:28
+msgid "Einstellungen"
+msgstr "Preferences"
+
+#: src/window.rs:138
+msgid "Tastenkürzel"
+msgstr "Keyboard Shortcuts"
+
+#: src/window.rs:139
+msgid "Über Blocksmith"
+msgstr "About Blocksmith"
+
+#: src/window.rs:143
+msgid "Hauptmenü (Strg+,)"
+msgstr "Main menu (Ctrl+,)"
+
+#: src/window.rs:147
+msgid "Vorschau ein-/ausblenden"
+msgstr "Show/hide preview"
+
+#: src/window.rs:155
+msgid "Fokus-Schreibmodus (Strg+Umschalt+F)"
+msgstr "Focus writing mode (Ctrl+Shift+F)"
+
+#: src/window.rs:159
+msgid "Artikel exportieren (Strg+Umschalt+P)"
+msgstr "Export Article (Ctrl+Shift+P)"
+
+#: src/properties.rs:26
+msgid "Titel"
+msgstr "Title"
+
+#: src/properties.rs:27
+msgid "Slug"
+msgstr "Slug"
+
+#: src/properties.rs:29
+msgid "Kategorien (Komma-getrennt)"
+msgstr "Categories (comma-separated)"
+
+#: src/properties.rs:33
+msgid "Tags (Komma-getrennt)"
+msgstr "Tags (comma-separated)"
+
+#: src/properties.rs:37
+msgid "Featured Image (Pfad)"
+msgstr "Featured Image (path)"
+
+#: src/properties.rs:41
+msgid "Bild auswählen…"
+msgstr "Choose Image…"
+
+#: src/properties.rs:51
+msgid "Status"
+msgstr "Status"
+
+#: src/properties.rs:57
+msgid "Veröffentlichungstermin (JJJJ-MM-TT HH:MM)"
+msgstr "Publish Date (YYYY-MM-DD HH:MM)"
+
+#: src/properties.rs:63
+msgid "Kategorien & Tags von WordPress aktualisieren"
+msgstr "Refresh categories & tags from WordPress"
+
+#: src/properties.rs:138
+msgid "Bilder"
+msgstr "Images"
+
+#: src/properties.rs:142
+msgid "Featured Image auswählen"
+msgstr "Choose Featured Image"
+
+#: src/shortcuts.rs:19
+msgid "Allgemein"
+msgstr "General"
+
+#: src/shortcuts.rs:21
+msgid "Neuer Artikel"
+msgstr "New Article"
+
+#: src/shortcuts.rs:22
+msgid "Öffnen"
+msgstr "Open"
+
+#: src/shortcuts.rs:23
+msgid "Von WordPress öffnen"
+msgstr "Open from WordPress"
+
+#: src/shortcuts.rs:24
+msgid "Speichern"
+msgstr "Save"
+
+#: src/shortcuts.rs:25
+msgid "Artikel exportieren"
+msgstr "Export Article"
+
+#: src/shortcuts.rs:26
+msgid "Medienverwaltung"
+msgstr "Media Manager"
+
+#: src/shortcuts.rs:27
+msgid "Fokus-Schreibmodus"
+msgstr "Focus Writing Mode"
+
+#: src/shortcuts.rs:32
+msgid "Editor"
+msgstr "Editor"
+
+#: src/shortcuts.rs:34
+msgid "Fett"
+msgstr "Bold"
+
+#: src/shortcuts.rs:35
+msgid "Kursiv"
+msgstr "Italic"
+
+#: src/shortcuts.rs:36
+msgid "Link einfügen"
+msgstr "Insert Link"
+
+#: src/shortcuts.rs:37
+msgid "Bild aus der Zwischenablage einfügen"
+msgstr "Paste Image from Clipboard"
+
+#: src/shortcuts.rs:38
+msgid "Suchen und Ersetzen"
+msgstr "Find and Replace"
+
+#: src/document.rs:61
+msgid "Entwurf"
+msgstr "Draft"
+
+#: src/document.rs:62
+msgid "Ausstehend"
+msgstr "Pending"
+
+#: src/document.rs:63
+msgid "Veröffentlicht"
+msgstr "Published"
+
+#: src/document.rs:64
+msgid "Geplant"
+msgstr "Scheduled"

@@ -21,7 +21,12 @@ blocks. Implemented so far:
   maximized) across restarts, always opening with the editor/preview split
   exactly 50/50 regardless of that size; a header-bar toggle button
   collapses the whole right-hand pane for a full-width editor and restores
-  it again. A "Zuletzt geöffnet" button next to "Öffnen" lists the most
+  it again. A second toggle button next to it (Ctrl+Shift+F) is a
+  Fokus-Schreibmodus, additionally hiding the header bar and the editor's
+  own formatting toolbar down to just the editor text - `Adw.ToolbarView`'s
+  own animated reveal handles the header/status bar, so entering and
+  leaving is a smooth slide rather than an abrupt layout jump. A "Zuletzt
+  geöffnet" button next to "Öffnen" lists the most
   recently opened/saved articles (most-recent-first) for one-click
   reopening. Markdown editing pane (GtkSourceView, syntax
   highlighting, spell-checking via [`libspelling`](https://gitlab.gnome.org/GNOME/libspelling))
@@ -165,7 +170,14 @@ blocks. Implemented so far:
   hash still matches what's already on the server is reused rather than
   re-uploaded, and a changed one is uploaded as a new attachment with the
   superseded one cleaned up automatically, since WordPress can't replace
-  an existing attachment's file in place. Once published, the same dialog
+  an existing attachment's file in place. An oversized PNG/JPEG (above
+  ~300 KB) is downscaled to at most 2000px on its longer edge and
+  re-encoded before upload - an opaque PNG (no transparency) converts to
+  JPEG, since that's usually far smaller for a photo/screenshot saved as
+  PNG - via `gdk-pixbuf`, already part of the GTK stack this app links
+  against. An already-small image, or a result that somehow isn't smaller
+  than the original, is uploaded completely unchanged; only what's *sent*
+  is ever affected, never the local file. Once published, the same dialog
   offers a confirmed "Von WordPress löschen" to remove the post again.
 - **Primary menu** (the header bar's hamburger button) — "Einstellungen",
   "Tastenkürzel" (a native `Gtk.ShortcutsWindow`, also reachable via
@@ -173,6 +185,15 @@ blocks. Implemented so far:
   with the version (always in sync with `Cargo.toml`), GPL-3.0-or-later
   license text, issue tracker/repository links, and the full
   `CHANGELOG.md` history as its browsable "Neuigkeiten" release notes.
+- **Internationalization** — translatable via GNU gettext (`gettext-rs`).
+  Source strings are German (the app's original language); `po/en.po` is a
+  complete English translation proving the pipeline works end to end
+  (`build.rs` compiles every `po/*.po` into a `.mo` catalog on every
+  build, picked up automatically by a `cargo run` from this source tree).
+  Only a representative slice of the UI is converted so far - the main
+  window's header bar/menu/tabs, "Artikel-Eigenschaften", and
+  "Tastenkürzel" - see `po/README.md` for the full translator/contributor
+  workflow and how to convert more of the app.
 - **Flatpak packaging** — manifest, desktop entry, AppStream metainfo, and
   icon under `data/` and `build-aux/flatpak/`.
 
@@ -181,7 +202,11 @@ blocks. Implemented so far:
 Requires a Rust toolchain (stable) and the GTK4/libadwaita/GtkSourceView5/
 WebKitGTK 6.0/libspelling development packages (available on any recent
 GNOME-based Linux distribution). Spell-checking needs at least one hunspell
-dictionary installed for it to have anything to check against.
+dictionary installed for it to have anything to check against. GNU
+gettext's `msgfmt` (for compiling `po/*.po` translations - see
+`po/README.md`) is optional: `build.rs` only prints a build warning and
+skips it if not found, and the app runs fine without it, just always
+showing its original German source strings.
 
 ```sh
 cargo build

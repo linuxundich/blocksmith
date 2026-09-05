@@ -468,7 +468,8 @@ pub(crate) fn upload_image_file(client: &wpclient::Client, path_str: &str, base_
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_else(|| "image".to_string());
-    client.upload_media(&bytes, &filename, mime_from_extension(&filename))
+    let compressed = crate::imagecompress::maybe_compress(&bytes, &filename);
+    client.upload_media(&compressed.bytes, &compressed.filename, compressed.mime_type)
 }
 
 pub(crate) fn mime_from_extension(filename: &str) -> &'static str {

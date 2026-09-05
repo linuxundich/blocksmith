@@ -7,6 +7,7 @@ use adw::prelude::*;
 use gtk4::{gdk, gio, glib};
 
 use crate::document::{Document, Frontmatter};
+use crate::i18n::tr;
 use crate::{
     about, aimenu, autosave, chat, codeview, document, editor, export, formatting, imagealt, importer, linkpicker, media, mediapanel, preview,
     properties, recentfiles, searchbar, settings, shortcuts, stats, statusbar, termcache, windowstate,
@@ -24,9 +25,10 @@ pub fn build(app: &adw::Application) -> adw::ApplicationWindow {
     let toolbar = formatting::build(&view, &buffer);
     formatting::install_shortcuts(&view, &buffer);
     let search_bar = searchbar::SearchBar::new(&view, &buffer);
+    let toolbar_separator = gtk4::Separator::new(gtk4::Orientation::Horizontal);
     let editor_pane = gtk4::Box::builder().orientation(gtk4::Orientation::Vertical).build();
     editor_pane.append(&toolbar);
-    editor_pane.append(&gtk4::Separator::new(gtk4::Orientation::Horizontal));
+    editor_pane.append(&toolbar_separator);
     editor_pane.append(&editor_scroller);
     editor_scroller.set_vexpand(true);
     editor_pane.append(&search_bar.widget);
@@ -35,10 +37,10 @@ pub fn build(app: &adw::Application) -> adw::ApplicationWindow {
     let code_view = Rc::new(codeview::CodeView::new());
 
     let view_stack = adw::ViewStack::new();
-    view_stack.add_titled_with_icon(&preview_pane.widget, Some("preview"), "Vorschau", "view-reveal-symbolic");
-    view_stack.add_titled_with_icon(&code_view.widget, Some("code"), "Gutenberg-Code", "text-x-generic-symbolic");
-    view_stack.add_titled_with_icon(&stats_view.widget, Some("stats"), "Statistik", "view-list-symbolic");
-    view_stack.add_titled_with_icon(&chat_view.widget, Some("chat"), "Chat", "chat-message-new-symbolic");
+    view_stack.add_titled_with_icon(&preview_pane.widget, Some("preview"), &tr("Vorschau"), "view-reveal-symbolic");
+    view_stack.add_titled_with_icon(&code_view.widget, Some("code"), &tr("Gutenberg-Code"), "text-x-generic-symbolic");
+    view_stack.add_titled_with_icon(&stats_view.widget, Some("stats"), &tr("Statistik"), "view-list-symbolic");
+    view_stack.add_titled_with_icon(&chat_view.widget, Some("chat"), &tr("Chat"), "chat-message-new-symbolic");
     {
         // The active provider/model may have changed in Einstellungen since
         // the Chat tab was built (or since it was last shown), so refresh
@@ -89,19 +91,19 @@ pub fn build(app: &adw::Application) -> adw::ApplicationWindow {
         .position(saved_window_state.width / 2)
         .build();
 
-    let title = adw::WindowTitle::new("Blocksmith", "Unbenannt");
+    let title = adw::WindowTitle::new("Blocksmith", &tr("Unbenannt"));
 
     let new_button = gtk4::Button::from_icon_name("document-new-symbolic");
-    new_button.set_tooltip_text(Some("Neu (Strg+N)"));
+    new_button.set_tooltip_text(Some(&tr("Neu (Strg+N)")));
     new_button.set_action_name(Some("win.new"));
 
     let open_button = gtk4::Button::from_icon_name("document-open-symbolic");
-    open_button.set_tooltip_text(Some("Öffnen (Strg+O)"));
+    open_button.set_tooltip_text(Some(&tr("Öffnen (Strg+O)")));
     open_button.set_action_name(Some("win.open"));
 
     let recent_button = gtk4::MenuButton::new();
     recent_button.set_icon_name("document-open-recent-symbolic");
-    recent_button.set_tooltip_text(Some("Zuletzt geöffnet"));
+    recent_button.set_tooltip_text(Some(&tr("Zuletzt geöffnet")));
     let recent_list = gtk4::ListBox::new();
     recent_list.add_css_class("boxed-list");
     let recent_scroller = gtk4::ScrolledWindow::builder().child(&recent_list).min_content_width(320).max_content_height(360).propagate_natural_height(true).build();
@@ -110,19 +112,19 @@ pub fn build(app: &adw::Application) -> adw::ApplicationWindow {
     recent_button.set_popover(Some(&recent_popover));
 
     let open_from_wp_button = gtk4::Button::from_icon_name("folder-remote-symbolic");
-    open_from_wp_button.set_tooltip_text(Some("Von WordPress öffnen (Strg+Umschalt+O)"));
+    open_from_wp_button.set_tooltip_text(Some(&tr("Von WordPress öffnen (Strg+Umschalt+O)")));
     open_from_wp_button.set_action_name(Some("win.open-from-wordpress"));
 
     let save_button = gtk4::Button::from_icon_name("document-save-symbolic");
-    save_button.set_tooltip_text(Some("Speichern (Strg+S)"));
+    save_button.set_tooltip_text(Some(&tr("Speichern (Strg+S)")));
     save_button.set_action_name(Some("win.save"));
 
     let properties_button = gtk4::Button::from_icon_name("document-properties-symbolic");
-    properties_button.set_tooltip_text(Some("Artikel-Eigenschaften"));
+    properties_button.set_tooltip_text(Some(&tr("Artikel-Eigenschaften")));
     properties_button.set_action_name(Some("win.properties"));
 
     let media_button = gtk4::Button::from_icon_name("image-x-generic-symbolic");
-    media_button.set_tooltip_text(Some("Medienverwaltung (Strg+Umschalt+M)"));
+    media_button.set_tooltip_text(Some(&tr("Medienverwaltung (Strg+Umschalt+M)")));
     media_button.set_action_name(Some("win.media-manager"));
 
     // A real primary menu (rather than the plain "win.settings"-bound
@@ -132,21 +134,29 @@ pub fn build(app: &adw::Application) -> adw::ApplicationWindow {
     // directly, since that's the action-level shortcut, independent of
     // how the button itself triggers it.
     let primary_menu = gio::Menu::new();
-    primary_menu.append(Some("Einstellungen"), Some("win.settings"));
-    primary_menu.append(Some("Tastenkürzel"), Some("win.show-help-overlay"));
-    primary_menu.append(Some("Über Blocksmith"), Some("win.about"));
+    primary_menu.append(Some(&tr("Einstellungen")), Some("win.settings"));
+    primary_menu.append(Some(&tr("Tastenkürzel")), Some("win.show-help-overlay"));
+    primary_menu.append(Some(&tr("Über Blocksmith")), Some("win.about"));
 
     let settings_button = gtk4::MenuButton::new();
     settings_button.set_icon_name("open-menu-symbolic");
-    settings_button.set_tooltip_text(Some("Hauptmenü (Strg+,)"));
+    settings_button.set_tooltip_text(Some(&tr("Hauptmenü (Strg+,)")));
     settings_button.set_menu_model(Some(&primary_menu));
 
     let preview_toggle_button = gtk4::ToggleButton::builder().icon_name("sidebar-show-right-symbolic").active(true).build();
-    preview_toggle_button.set_tooltip_text(Some("Vorschau ein-/ausblenden"));
+    preview_toggle_button.set_tooltip_text(Some(&tr("Vorschau ein-/ausblenden")));
     preview_toggle_button.set_action_name(Some("win.toggle-preview"));
 
+    // No matching "exit" button by design: entering hides the whole header
+    // bar (see `toggle-focus-mode` below), so the only way back is the same
+    // shortcut - a button that vanishes along with the rest of the chrome
+    // it just hid would be pointless to also draw.
+    let focus_mode_toggle_button = gtk4::ToggleButton::builder().icon_name("view-fullscreen-symbolic").build();
+    focus_mode_toggle_button.set_tooltip_text(Some(&tr("Fokus-Schreibmodus (Strg+Umschalt+F)")));
+    focus_mode_toggle_button.set_action_name(Some("win.toggle-focus-mode"));
+
     let publish_button = gtk4::Button::from_icon_name("send-to-symbolic");
-    publish_button.set_tooltip_text(Some("Artikel exportieren (Strg+Umschalt+P)"));
+    publish_button.set_tooltip_text(Some(&tr("Artikel exportieren (Strg+Umschalt+P)")));
     publish_button.set_action_name(Some("win.publish"));
     publish_button.add_css_class("suggested-action");
 
@@ -161,6 +171,7 @@ pub fn build(app: &adw::Application) -> adw::ApplicationWindow {
     header_bar.pack_end(&properties_button);
     header_bar.pack_end(&media_button);
     header_bar.pack_end(&preview_toggle_button);
+    header_bar.pack_end(&focus_mode_toggle_button);
     header_bar.pack_end(&publish_button);
 
     let status_bar = Rc::new(statusbar::StatusBar::new());
@@ -208,6 +219,34 @@ pub fn build(app: &adw::Application) -> adw::ApplicationWindow {
         });
     }
     window.add_action(&toggle_preview_action);
+
+    // Hides everything but the editor text itself: the header bar and
+    // status bar via `Adw.ToolbarView`'s own animated reveal (built
+    // exactly for this "collapse chrome to fullscreen content" pattern),
+    // plus the formatting toolbar and the right-hand pane, which aren't
+    // part of that toolbar view at all. Restoring the right pane defers to
+    // `toggle_preview_action`'s own state rather than unconditionally
+    // showing it again, so a preview the user had already hidden on
+    // purpose stays hidden after leaving focus mode instead of reappearing.
+    let toggle_focus_mode_action = gio::SimpleAction::new_stateful("toggle-focus-mode", None, &false.to_variant());
+    {
+        let toolbar_view = toolbar_view.clone();
+        let toolbar = toolbar.clone();
+        let toolbar_separator = toolbar_separator.clone();
+        let right_pane = right_pane.clone();
+        let toggle_preview_action = toggle_preview_action.clone();
+        toggle_focus_mode_action.connect_activate(move |action, _| {
+            let focus_mode = !action.state().and_then(|state| state.get::<bool>()).unwrap_or(false);
+            action.set_state(&focus_mode.to_variant());
+            toolbar_view.set_reveal_top_bars(!focus_mode);
+            toolbar_view.set_reveal_bottom_bars(!focus_mode);
+            toolbar.set_visible(!focus_mode);
+            toolbar_separator.set_visible(!focus_mode);
+            let preview_wanted = toggle_preview_action.state().and_then(|state| state.get::<bool>()).unwrap_or(true);
+            right_pane.set_visible(!focus_mode && preview_wanted);
+        });
+    }
+    window.add_action(&toggle_focus_mode_action);
 
     let current_path: Rc<RefCell<Option<PathBuf>>> = Rc::new(RefCell::new(None));
     let frontmatter: Rc<RefCell<Frontmatter>> = Rc::new(RefCell::new(Frontmatter::default()));
@@ -277,7 +316,7 @@ fn subtitle_for(path: Option<&Path>, frontmatter: &Frontmatter) -> String {
     }
     path.and_then(|p| p.file_name())
         .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_else(|| "Unbenannt".to_string())
+        .unwrap_or_else(|| tr("Unbenannt"))
 }
 
 fn wire_live_preview(
@@ -491,7 +530,7 @@ fn wire_new_action(
         buffer.set_text("");
         *current_path.borrow_mut() = None;
         *frontmatter.borrow_mut() = Frontmatter::default();
-        title.set_subtitle("Unbenannt");
+        title.set_subtitle(&tr("Unbenannt"));
         preview_pane.set_doc_dir(None);
         *saved_text.borrow_mut() = String::new();
         autosave::clear();
