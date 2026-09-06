@@ -192,14 +192,14 @@ blocks. Implemented so far:
   license text, issue tracker/repository links, and the full
   `CHANGELOG.md` history as its browsable "Neuigkeiten" release notes.
 - **Internationalization** — translatable via GNU gettext (`gettext-rs`).
-  Source strings are German (the app's original language); `po/en.po` is a
-  complete English translation proving the pipeline works end to end
-  (`build.rs` compiles every `po/*.po` into a `.mo` catalog on every
-  build, picked up automatically by a `cargo run` from this source tree).
-  Only a representative slice of the UI is converted so far - the main
-  window's header bar/menu/tabs, "Artikel-Eigenschaften", and
-  "Tastenkürzel" - see `po/README.md` for the full translator/contributor
-  workflow and how to convert more of the app.
+  Source strings are German (the app's original language); essentially the
+  whole UI is wrapped for translation, and `po/en.po` is a complete,
+  real English translation (~270 strings) proving the pipeline works end
+  to end (`build.rs` compiles every `po/*.po` into a `.mo` catalog on
+  every build, picked up automatically by a `cargo run` from this source
+  tree). AI prompt content and proper nouns (WordPress, provider names)
+  deliberately stay untranslated by design - see `po/README.md` for the
+  full translator/contributor workflow.
 - **Flatpak packaging** — manifest, desktop entry, AppStream metainfo, and
   icon under `data/` and `build-aux/flatpak/`.
 

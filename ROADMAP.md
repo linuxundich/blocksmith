@@ -65,17 +65,15 @@ what's already shipped.
   spec) in favor of the simpler `.md`-plus-frontmatter approach this app
   still uses today - still valid, still a genuinely large undertaking,
   don't start without an explicit go-ahead.
-- **Internationalization (i18n) - infrastructure done, most strings still
-  German.** (see CHANGELOG.md) gettext is wired up end to end (a real,
-  working English translation proves it: `po/en.po`, compiled by
-  `build.rs`), but only applied to a representative slice so far
-  (`window.rs`'s header/menu/tabs, `properties.rs`, `shortcuts.rs`,
-  `PostStatus`'s labels). Converting the remaining ~25 files is the exact
-  same mechanical step repeated - wrap a literal in `i18n::tr("...")` -
-  see `po/README.md` for the full workflow and the one real gotcha
-  (`tr(variable)` isn't extractable by `xgettext`, only `tr("literal")`
-  is). Also still open: wiring a real installed/Flatpak build to find its
-  translations at all (`po/README.md`'s "Known limitation").
+- ~~**Internationalization (i18n) - infrastructure done, most strings
+  still German.**~~ Done (see CHANGELOG.md) - essentially the whole UI is
+  now wrapped in `i18n::tr("...")`, with a complete, real English
+  translation (`po/en.po`, ~270 strings) proving it end to end. AI prompt
+  content and proper nouns deliberately stay German/untranslated by
+  design - see `po/README.md`. Still open: wiring a real installed/
+  Flatpak build to find its compiled translations at all (`po/README.md`'s
+  "Known limitation" - right now only a `cargo run` from source finds
+  them).
 - **A CI pipeline.** There is no `.github/workflows` (or any other CI) at
   all right now - `cargo build`/`test`/`clippy` only ever run locally,
   by hand, before a commit. Not a user-facing feature, but real

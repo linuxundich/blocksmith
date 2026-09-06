@@ -23,6 +23,7 @@ use adw::prelude::*;
 use gtk4::glib;
 
 use crate::editor;
+use crate::i18n::tr;
 use crate::llm;
 use crate::mdpango;
 use crate::{chatconfig, secrets};
@@ -58,10 +59,10 @@ impl ChatView {
         model_row.append(&provider_label);
         model_row.append(&model_dropdown);
 
-        let entry = gtk4::Entry::builder().placeholder_text("Nachricht an die KI …").hexpand(true).build();
+        let entry = gtk4::Entry::builder().placeholder_text(tr("Nachricht an die KI …")).hexpand(true).build();
         let send_button = gtk4::Button::from_icon_name("mail-send-symbolic");
         send_button.add_css_class("suggested-action");
-        send_button.set_tooltip_text(Some("Senden (Enter)"));
+        send_button.set_tooltip_text(Some(&tr("Senden (Enter)")));
 
         let status_label = gtk4::Label::new(None);
         status_label.add_css_class("dim-label");
@@ -132,7 +133,7 @@ impl ChatView {
                 let system_prompt = chatconfig::load_system_prompt();
                 let history_snapshot = history.borrow().clone();
 
-                status_label.set_label(&format!("{} denkt nach …", provider.label()));
+                status_label.set_label(&tr("{provider} denkt nach …").replace("{provider}", provider.label()));
                 status_label.set_visible(true);
 
                 let (tx, rx) = mpsc::channel::<Result<String, String>>();
@@ -141,7 +142,7 @@ impl ChatView {
                         futures_lite::future::block_on(secrets::load_llm_api_key(provider.id()))
                             .map_err(|err| err.to_string())
                             .and_then(|maybe_key| {
-                                maybe_key.ok_or_else(|| format!("Kein {}-API-Key in den Einstellungen hinterlegt.", provider.label()))
+                                maybe_key.ok_or_else(|| tr("Kein {provider}-API-Key in den Einstellungen hinterlegt.").replace("{provider}", provider.label()))
                             })
                             .and_then(|key| {
                                 llm::Client::new(provider, &key, &model, &base_url)
@@ -177,14 +178,14 @@ impl ChatView {
                         glib::ControlFlow::Break
                     }
                     Ok(Err(err)) => {
-                        status_label.set_label(&format!("Fehler: {err}"));
+                        status_label.set_label(&tr("Fehler: {err}").replace("{err}", &err));
                         entry.set_sensitive(true);
                         send_button.set_sensitive(true);
                         glib::ControlFlow::Break
                     }
                     Err(mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
                     Err(mpsc::TryRecvError::Disconnected) => {
-                        status_label.set_label("Interner Fehler: Chat-Thread hat kein Ergebnis geliefert.");
+                        status_label.set_label(&tr("Interner Fehler: Chat-Thread hat kein Ergebnis geliefert."));
                         entry.set_sensitive(true);
                         send_button.set_sensitive(true);
                         glib::ControlFlow::Break

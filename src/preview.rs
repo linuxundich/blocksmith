@@ -27,6 +27,7 @@ use webkit6::prelude::*;
 
 use crate::document::{self, Frontmatter};
 use crate::fontutil;
+use crate::i18n::tr;
 use crate::media::{self, MediaItem};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -55,11 +56,11 @@ impl PreviewStyle {
         }
     }
 
-    pub fn label(&self) -> &'static str {
+    pub fn label(&self) -> String {
         match self {
-            PreviewStyle::Modern => "Modern",
-            PreviewStyle::Classic => "Klassisch",
-            PreviewStyle::Sepia => "Sepia",
+            PreviewStyle::Modern => tr("Modern"),
+            PreviewStyle::Classic => tr("Klassisch"),
+            PreviewStyle::Sepia => tr("Sepia"),
         }
     }
 }
@@ -257,7 +258,7 @@ impl PreviewPane {
                     crate::aialt::open(&window, frontmatter.clone(), index, doc_dir_value.clone(), preview_pane.clone());
                 });
             }
-            let item = webkit6::ContextMenuItem::from_gaction(&action, "KI-Alternativtext generieren…", None);
+            let item = webkit6::ContextMenuItem::from_gaction(&action, &tr("KI-Alternativtext generieren…"), None);
             context_menu.append(&item);
             false
         });
@@ -572,15 +573,15 @@ fn badges_html(src: &str, media: &[MediaItem]) -> String {
         return String::new();
     };
 
-    let mut badges: Vec<(String, &str)> = Vec::new();
+    let mut badges: Vec<(String, String)> = Vec::new();
     if item.wordpress.is_some() {
-        badges.push(("↑".to_string(), "Bereits zu WordPress hochgeladen"));
+        badges.push(("↑".to_string(), tr("Bereits zu WordPress hochgeladen")));
     }
     if !item.alt.is_undefined() {
-        badges.push(("Alt".to_string(), "Alternativtext ist definiert"));
+        badges.push((tr("Alt"), tr("Alternativtext ist definiert")));
     }
     if let Some(format) = image_format_label(&item.filename) {
-        badges.push((format, "Bildformat"));
+        badges.push((format, tr("Bildformat")));
     }
     if badges.is_empty() {
         return String::new();
@@ -590,7 +591,7 @@ fn badges_html(src: &str, media: &[MediaItem]) -> String {
     for (label, title) in badges {
         html.push_str(&format!(
             "<span class=\"img-badge\" title=\"{}\">{}</span>",
-            glib::markup_escape_text(title),
+            glib::markup_escape_text(&title),
             glib::markup_escape_text(&label)
         ));
     }

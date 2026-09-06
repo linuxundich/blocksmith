@@ -14,6 +14,7 @@ use std::time::Duration;
 use adw::prelude::*;
 use gtk4::glib;
 
+use crate::i18n::tr;
 use crate::llm::{self, Provider};
 use crate::{chatconfig, secrets};
 
@@ -22,21 +23,21 @@ pub fn build_page() -> adw::PreferencesPage {
 
     let provider_labels: Vec<&str> = Provider::ALL.iter().map(|p| p.label()).collect();
     let provider_row = adw::ComboRow::builder()
-        .title("Anbieter")
+        .title(tr("Anbieter"))
         .model(&gtk4::StringList::new(&provider_labels))
         .build();
     let active_index = Provider::ALL.iter().position(|p| *p == state.borrow().active).unwrap_or(0);
     provider_row.set_selected(active_index as u32);
 
     let api_key_row = adw::PasswordEntryRow::builder().title("API-Key").build();
-    let base_url_row = adw::EntryRow::builder().title("Basis-URL").build();
-    let model_row = adw::ComboRow::builder().title("Modell").build();
+    let base_url_row = adw::EntryRow::builder().title(tr("Basis-URL")).build();
+    let model_row = adw::ComboRow::builder().title(tr("Modell")).build();
     model_row.set_enable_search(true);
 
-    let connection_group = adw::PreferencesGroup::builder().title("KI-Verbindung").build();
-    connection_group.set_description(Some(
+    let connection_group = adw::PreferencesGroup::builder().title(tr("KI-Verbindung")).build();
+    connection_group.set_description(Some(&tr(
         "Der API-Key wird im Schlüsselbund gespeichert, nicht als Klartext. Er wird nach der Eingabe direkt gegen die API des Anbieters geprüft und bei Erfolg automatisch gespeichert.",
-    ));
+    )));
     connection_group.add(&provider_row);
     connection_group.add(&api_key_row);
     connection_group.add(&base_url_row);
@@ -91,7 +92,7 @@ pub fn build_page() -> adw::PreferencesPage {
             return;
         }
         status_label.remove_css_class("error");
-        status_label.set_label(if provider.needs_api_key() { "API-Key wird geprüft …" } else { "Verbindung wird geprüft …" });
+        status_label.set_label(&if provider.needs_api_key() { tr("API-Key wird geprüft …") } else { tr("Verbindung wird geprüft …") });
         status_label.set_visible(true);
 
         let key_to_store = api_key.clone();
@@ -105,14 +106,14 @@ pub fn build_page() -> adw::PreferencesPage {
             Ok(Ok(models)) => {
                 let _ = chatconfig::save_cached_models(provider, &models);
                 populate_model_row(&model_row, &models, &current_model);
-                let verified_message = format!("✓ Verbindung erfolgreich - {} Modelle gefunden.", models.len());
+                let verified_message = tr("✓ Verbindung erfolgreich - {n} Modelle gefunden.").replace("{n}", &models.len().to_string());
                 if provider.needs_api_key() {
                     let key = key_to_store.clone();
                     let status_label = status_label.clone();
                     glib::MainContext::default().spawn_local(async move {
                         match secrets::store_llm_api_key(provider.id(), &key).await {
-                            Ok(()) => status_label.set_label(&format!("{verified_message} Gespeichert.")),
-                            Err(err) => status_label.set_label(&format!("{verified_message} Fehler beim Speichern: {err}")),
+                            Ok(()) => status_label.set_label(&format!("{verified_message} {}", tr("Gespeichert."))),
+                            Err(err) => status_label.set_label(&format!("{verified_message} {}", tr("Fehler beim Speichern: {err}").replace("{err}", &err.to_string()))),
                         }
                         status_label.set_visible(true);
                     });
@@ -178,7 +179,7 @@ pub fn build_page() -> adw::PreferencesPage {
             let provider = Provider::ALL[row.selected() as usize];
             state.borrow_mut().active = provider;
             if let Err(err) = chatconfig::save_provider_config(&state.borrow()) {
-                connection_status.set_label(&format!("Fehler beim Speichern: {err}"));
+                connection_status.set_label(&tr("Fehler beim Speichern: {err}").replace("{err}", &err.to_string()));
                 connection_status.set_visible(true);
             }
             apply_provider_to_fields(provider, &state.borrow(), &api_key_row, &base_url_row, &model_row);
@@ -196,7 +197,7 @@ pub fn build_page() -> adw::PreferencesPage {
             let provider = state.borrow().active;
             state.borrow_mut().set_model_for(provider, combo_row_selected_string(row));
             if let Err(err) = chatconfig::save_provider_config(&state.borrow()) {
-                connection_status.set_label(&format!("Fehler beim Speichern: {err}"));
+                connection_status.set_label(&tr("Fehler beim Speichern: {err}").replace("{err}", &err.to_string()));
                 connection_status.set_visible(true);
             }
         });
@@ -252,7 +253,7 @@ pub fn build_page() -> adw::PreferencesPage {
                 let id = glib::timeout_add_local(Duration::from_millis(500), move || {
                     state.borrow_mut().ollama_base_url = base_url.clone();
                     if let Err(err) = chatconfig::save_provider_config(&state.borrow()) {
-                        connection_status.set_label(&format!("Fehler beim Speichern: {err}"));
+                        connection_status.set_label(&tr("Fehler beim Speichern: {err}").replace("{err}", &err.to_string()));
                         connection_status.set_visible(true);
                     }
                     *save_debounce_inner.borrow_mut() = None;
@@ -297,7 +298,7 @@ pub fn build_page() -> adw::PreferencesPage {
     let prompt_scroller = gtk4::ScrolledWindow::builder().child(&prompt_view).vexpand(true).min_content_height(320).build();
     prompt_scroller.add_css_class("card");
 
-    let reset_button = gtk4::Button::with_label("Auf Standard zurücksetzen");
+    let reset_button = gtk4::Button::with_label(&tr("Auf Standard zurücksetzen"));
     reset_button.set_sensitive(chatconfig::is_system_prompt_customized());
 
     let prompt_status = gtk4::Label::new(None);
@@ -329,8 +330,8 @@ pub fn build_page() -> adw::PreferencesPage {
             let reset_button = reset_button.clone();
             let id = glib::timeout_add_local(Duration::from_millis(500), move || {
                 match chatconfig::save_system_prompt(&text) {
-                    Ok(()) => prompt_status.set_label("Gespeichert."),
-                    Err(err) => prompt_status.set_label(&format!("Fehler beim Speichern: {err}")),
+                    Ok(()) => prompt_status.set_label(&tr("Gespeichert.")),
+                    Err(err) => prompt_status.set_label(&tr("Fehler beim Speichern: {err}").replace("{err}", &err.to_string())),
                 }
                 prompt_status.set_visible(true);
                 reset_button.set_sensitive(chatconfig::is_system_prompt_customized());
@@ -347,19 +348,19 @@ pub fn build_page() -> adw::PreferencesPage {
         let reset_button_for_click = reset_button.clone();
         reset_button.connect_clicked(move |_| {
             if let Err(err) = chatconfig::reset_system_prompt() {
-                prompt_status.set_label(&format!("Fehler beim Zurücksetzen: {err}"));
+                prompt_status.set_label(&tr("Fehler beim Zurücksetzen: {err}").replace("{err}", &err.to_string()));
                 prompt_status.set_visible(true);
                 return;
             }
             *suppress_autosave.borrow_mut() = true;
             prompt_buffer.set_text(&chatconfig::load_system_prompt());
-            prompt_status.set_label("Auf Standard zurückgesetzt.");
+            prompt_status.set_label(&tr("Auf Standard zurückgesetzt."));
             prompt_status.set_visible(true);
             reset_button_for_click.set_sensitive(false);
         });
     }
 
-    let prompt_label = gtk4::Label::builder().label("Systemprompt").xalign(0.0).hexpand(true).build();
+    let prompt_label = gtk4::Label::builder().label(tr("Systemprompt")).xalign(0.0).hexpand(true).build();
     prompt_label.add_css_class("heading");
 
     let prompt_header_row = gtk4::Box::builder().orientation(gtk4::Orientation::Horizontal).spacing(6).build();
@@ -374,7 +375,7 @@ pub fn build_page() -> adw::PreferencesPage {
     let prompt_group = adw::PreferencesGroup::new();
     prompt_group.add(&prompt_box);
 
-    let page = adw::PreferencesPage::builder().title("KI-Chat").icon_name("chat-message-new-symbolic").build();
+    let page = adw::PreferencesPage::builder().title(tr("KI-Chat")).icon_name("chat-message-new-symbolic").build();
     page.add(&connection_group);
     page.add(&connection_status_group);
     page.add(&prompt_group);

@@ -23,6 +23,7 @@ use sourceview5::prelude::*;
 use webkit6::prelude::*;
 
 use crate::fontutil;
+use crate::i18n::tr;
 use crate::preview::{self, PreviewStyle};
 
 const DEFAULT_SOURCE_SCHEME_ID: &str = "Adwaita";
@@ -33,9 +34,6 @@ const DEFAULT_SOURCE_SCHEME_ID: &str = "Adwaita";
 // resolving to a real font name (not "Keine"/"None") matters here.
 const DEFAULT_FONT_DISPLAY: &str = "Sans 11";
 const DEFAULT_MONOSPACE_FONT_DISPLAY: &str = "Monospace 11";
-
-const EDITOR_FONT_SAMPLE_MARKDOWN: &str = "# Überschrift\n\nEin **fetter** und *kursiver* Text mit `Inline-Code`.\n\n- Erster Listenpunkt\n- Zweiter Listenpunkt\n";
-const PREVIEW_STYLE_SAMPLE_MARKDOWN: &str = "# Beispielartikel\n\nDies ist ein **Beispieltext**, der zeigt, wie der gewählte *Stil* und die Schrift wirken.\n\n> Ein Zitat zur Veranschaulichung.\n";
 
 const PREVIEW_LIGHT_SVG: &[u8] = include_bytes!("../data/icons/appearance-preview/preview-light.svg");
 const PREVIEW_DARK_SVG: &[u8] = include_bytes!("../data/icons/appearance-preview/preview-dark.svg");
@@ -314,11 +312,11 @@ fn populate_scheme_flow_box(flow_box: &gtk4::FlowBox, buffers: &[sourceview5::Bu
 pub fn build_page(buffer: &sourceview5::Buffer, preview_pane: Rc<preview::PreviewPane>) -> adw::PreferencesPage {
     install_theme_card_css();
 
-    let interface_group = adw::PreferencesGroup::builder().title("Schnittstelle").build();
+    let interface_group = adw::PreferencesGroup::builder().title(tr("Schnittstelle")).build();
 
-    let follow_button = build_theme_card("Dem System folgen", PREVIEW_SYSTEM_SVG, None);
-    let light_button = build_theme_card("Hell", PREVIEW_LIGHT_SVG, Some(&follow_button));
-    let dark_button = build_theme_card("Dunkel", PREVIEW_DARK_SVG, Some(&follow_button));
+    let follow_button = build_theme_card(&tr("Dem System folgen"), PREVIEW_SYSTEM_SVG, None);
+    let light_button = build_theme_card(&tr("Hell"), PREVIEW_LIGHT_SVG, Some(&follow_button));
+    let dark_button = build_theme_card(&tr("Dunkel"), PREVIEW_DARK_SVG, Some(&follow_button));
 
     match load_color_scheme() {
         adw::ColorScheme::ForceLight => light_button.set_active(true),
@@ -352,7 +350,7 @@ pub fn build_page(buffer: &sourceview5::Buffer, preview_pane: Rc<preview::Previe
 
     interface_group.add(&scheme_row);
 
-    let color_group = adw::PreferencesGroup::builder().title("Farbe").build();
+    let color_group = adw::PreferencesGroup::builder().title(tr("Farbe")).build();
 
     let flow_box = gtk4::FlowBox::builder().column_spacing(12).row_spacing(12).max_children_per_line(4).selection_mode(gtk4::SelectionMode::None).homogeneous(true).build();
     flow_box.add_css_class("style-schemes");
@@ -365,7 +363,7 @@ pub fn build_page(buffer: &sourceview5::Buffer, preview_pane: Rc<preview::Previe
 
     let preview_group = build_preview_group(preview_pane);
 
-    let page = adw::PreferencesPage::builder().title("Erscheinungsbild").icon_name("preferences-desktop-appearance-symbolic").build();
+    let page = adw::PreferencesPage::builder().title(tr("Erscheinungsbild")).icon_name("preferences-desktop-appearance-symbolic").build();
     page.add(&interface_group);
     page.add(&color_group);
     page.add(&editor_font_group);
@@ -378,14 +376,14 @@ pub fn build_page(buffer: &sourceview5::Buffer, preview_pane: Rc<preview::Previe
 /// the current scheme *and* font, not just a static swatch) plus a
 /// `Gtk.FontDialogButton`/Reset pair for the custom-font override.
 fn build_editor_font_group(buffer: &sourceview5::Buffer, scheme_flow_box: &gtk4::FlowBox) -> adw::PreferencesGroup {
-    let group = adw::PreferencesGroup::builder().title("Editor-Schriftart").build();
+    let group = adw::PreferencesGroup::builder().title(tr("Editor-Schriftart")).build();
 
     let sample_buffer = sourceview5::Buffer::new(None::<&gtk4::TextTagTable>);
     sample_buffer.set_highlight_syntax(true);
     if let Some(lang) = sourceview5::LanguageManager::default().language("markdown") {
         sample_buffer.set_language(Some(&lang));
     }
-    sample_buffer.set_text(EDITOR_FONT_SAMPLE_MARKDOWN);
+    sample_buffer.set_text(&tr("# Überschrift\n\nEin **fetter** und *kursiver* Text mit `Inline-Code`.\n\n- Erster Listenpunkt\n- Zweiter Listenpunkt\n"));
     if let Some(scheme) = sourceview5::StyleSchemeManager::default().scheme(&load_source_scheme_id()) {
         sample_buffer.set_style_scheme(Some(&scheme));
     }
@@ -419,14 +417,14 @@ fn build_editor_font_group(buffer: &sourceview5::Buffer, scheme_flow_box: &gtk4:
         });
     }
 
-    let font_row = adw::ActionRow::builder().title("Schriftart").build();
-    let font_dialog = gtk4::FontDialog::builder().title("Editor-Schriftart wählen").build();
+    let font_row = adw::ActionRow::builder().title(tr("Schriftart")).build();
+    let font_dialog = gtk4::FontDialog::builder().title(tr("Editor-Schriftart wählen")).build();
     let font_button = gtk4::FontDialogButton::builder().dialog(&font_dialog).level(gtk4::FontLevel::Font).use_size(true).valign(gtk4::Align::Center).build();
     let initial_desc = load_editor_font_override().unwrap_or_else(|| DEFAULT_MONOSPACE_FONT_DISPLAY.to_string());
     font_button.set_font_desc(&pango::FontDescription::from_string(&initial_desc));
 
     let reset_button = gtk4::Button::from_icon_name("edit-undo-symbolic");
-    reset_button.set_tooltip_text(Some("Auf Systemschrift zurücksetzen"));
+    reset_button.set_tooltip_text(Some(&tr("Auf Systemschrift zurücksetzen")));
     reset_button.add_css_class("flat");
     reset_button.set_valign(gtk4::Align::Center);
     reset_button.set_sensitive(load_editor_font_override().is_some());
@@ -468,7 +466,7 @@ fn build_editor_font_group(buffer: &sourceview5::Buffer, scheme_flow_box: &gtk4:
 /// rendered-Markdown sample so a font or style choice's effect is visible
 /// immediately, the same way the editor's own font sample works.
 fn build_preview_group(preview_pane: Rc<preview::PreviewPane>) -> adw::PreferencesGroup {
-    let group = adw::PreferencesGroup::builder().title("Vorschau").build();
+    let group = adw::PreferencesGroup::builder().title(tr("Vorschau")).build();
 
     let sample_view = webkit6::WebView::new();
     sample_view.set_size_request(-1, 160);
@@ -482,7 +480,8 @@ fn build_preview_group(preview_pane: Rc<preview::PreviewPane>) -> adw::Preferenc
         let sample_view = sample_view.clone();
         Rc::new(move || {
             let dark = adw::StyleManager::default().is_dark();
-            sample_view.load_html(&preview::render_html(PREVIEW_STYLE_SAMPLE_MARKDOWN, preview_pane.style(), dark, &[]), None);
+            let sample_markdown = tr("# Beispielartikel\n\nDies ist ein **Beispieltext**, der zeigt, wie der gewählte *Stil* und die Schrift wirken.\n\n> Ein Zitat zur Veranschaulichung.\n");
+            sample_view.load_html(&preview::render_html(&sample_markdown, preview_pane.style(), dark, &[]), None);
         })
     };
     refresh_sample();
@@ -491,9 +490,10 @@ fn build_preview_group(preview_pane: Rc<preview::PreviewPane>) -> adw::Preferenc
         adw::StyleManager::default().connect_dark_notify(move |_| refresh_sample());
     }
 
-    let style_row = adw::ComboRow::builder().title("Stil").build();
-    let style_labels: Vec<&str> = PreviewStyle::ALL.iter().map(|s| s.label()).collect();
-    style_row.set_model(Some(&gtk4::StringList::new(&style_labels)));
+    let style_row = adw::ComboRow::builder().title(tr("Stil")).build();
+    let style_labels: Vec<String> = PreviewStyle::ALL.iter().map(|s| s.label()).collect();
+    let style_label_refs: Vec<&str> = style_labels.iter().map(String::as_str).collect();
+    style_row.set_model(Some(&gtk4::StringList::new(&style_label_refs)));
     let current_index = PreviewStyle::ALL.iter().position(|s| *s == preview_pane.style()).unwrap_or(0);
     style_row.set_selected(current_index as u32);
     {
@@ -508,14 +508,14 @@ fn build_preview_group(preview_pane: Rc<preview::PreviewPane>) -> adw::Preferenc
     }
     group.add(&style_row);
 
-    let font_row = adw::ActionRow::builder().title("Schriftart").build();
-    let font_dialog = gtk4::FontDialog::builder().title("Vorschau-Schriftart wählen").build();
+    let font_row = adw::ActionRow::builder().title(tr("Schriftart")).build();
+    let font_dialog = gtk4::FontDialog::builder().title(tr("Vorschau-Schriftart wählen")).build();
     let font_button = gtk4::FontDialogButton::builder().dialog(&font_dialog).level(gtk4::FontLevel::Font).use_size(true).valign(gtk4::Align::Center).build();
     let initial_desc = preview_pane.font_override().unwrap_or_else(|| DEFAULT_FONT_DISPLAY.to_string());
     font_button.set_font_desc(&pango::FontDescription::from_string(&initial_desc));
 
     let reset_button = gtk4::Button::from_icon_name("edit-undo-symbolic");
-    reset_button.set_tooltip_text(Some("Auf Stil-Standardschrift zurücksetzen"));
+    reset_button.set_tooltip_text(Some(&tr("Auf Stil-Standardschrift zurücksetzen")));
     reset_button.add_css_class("flat");
     reset_button.set_valign(gtk4::Align::Center);
     reset_button.set_sensitive(preview_pane.is_font_customized());

@@ -17,6 +17,8 @@ use std::rc::Rc;
 use gtk4::prelude::*;
 use sourceview5::prelude::*;
 
+use crate::i18n::tr;
+
 pub struct SearchBar {
     pub widget: gtk4::Revealer,
     view: sourceview5::View,
@@ -33,23 +35,23 @@ impl SearchBar {
         let settings = sourceview5::SearchSettings::builder().wrap_around(true).build();
         let context = sourceview5::SearchContext::builder().buffer(buffer).settings(&settings).highlight(true).build();
 
-        let search_entry = gtk4::SearchEntry::builder().placeholder_text("Suchen…").hexpand(true).build();
+        let search_entry = gtk4::SearchEntry::builder().placeholder_text(tr("Suchen…")).hexpand(true).build();
         let count_label = gtk4::Label::builder().css_classes(["dim-label"]).width_chars(10).build();
 
         let prev_button = gtk4::Button::from_icon_name("go-up-symbolic");
-        prev_button.set_tooltip_text(Some("Vorheriger Treffer"));
+        prev_button.set_tooltip_text(Some(&tr("Vorheriger Treffer")));
         let next_button = gtk4::Button::from_icon_name("go-down-symbolic");
-        next_button.set_tooltip_text(Some("Nächster Treffer (Eingabe)"));
+        next_button.set_tooltip_text(Some(&tr("Nächster Treffer (Eingabe)")));
         let nav_group = gtk4::Box::builder().orientation(gtk4::Orientation::Horizontal).build();
         nav_group.add_css_class("linked");
         nav_group.append(&prev_button);
         nav_group.append(&next_button);
 
-        let replace_entry = gtk4::Entry::builder().placeholder_text("Ersetzen mit…").hexpand(true).build();
-        let replace_button = gtk4::Button::with_label("Ersetzen");
-        let replace_all_button = gtk4::Button::with_label("Alle ersetzen");
+        let replace_entry = gtk4::Entry::builder().placeholder_text(tr("Ersetzen mit…")).hexpand(true).build();
+        let replace_button = gtk4::Button::with_label(&tr("Ersetzen"));
+        let replace_all_button = gtk4::Button::with_label(&tr("Alle ersetzen"));
         let close_button = gtk4::Button::from_icon_name("window-close-symbolic");
-        close_button.set_tooltip_text(Some("Schließen (Esc)"));
+        close_button.set_tooltip_text(Some(&tr("Schließen (Esc)")));
         close_button.add_css_class("flat");
 
         let row = gtk4::Box::builder()
@@ -204,9 +206,9 @@ impl SearchBar {
 fn count_label_text(count: i32) -> String {
     match count {
         n if n < 0 => String::new(),
-        0 => "Kein Treffer".to_string(),
-        1 => "1 Treffer".to_string(),
-        n => format!("{n} Treffer"),
+        0 => tr("Kein Treffer"),
+        1 => tr("1 Treffer"),
+        n => tr("{n} Treffer").replace("{n}", &n.to_string()),
     }
 }
 

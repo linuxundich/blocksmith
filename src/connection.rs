@@ -8,29 +8,30 @@
 use adw::prelude::*;
 use gtk4::glib;
 
+use crate::i18n::tr;
 use crate::{secrets, wpsite};
 
 pub fn build_page() -> adw::PreferencesPage {
     let config = wpsite::load();
 
     let url_row = adw::EntryRow::builder()
-        .title("Website-URL")
+        .title(tr("Website-URL"))
         .text(config.url.as_str())
         .build();
     let username_row = adw::EntryRow::builder()
-        .title("Benutzername")
+        .title(tr("Benutzername"))
         .text(config.username.as_str())
         .build();
     let password_row = adw::PasswordEntryRow::builder().title("Application Password").build();
 
     let save_button = gtk4::Button::from_icon_name("document-save-symbolic");
-    save_button.set_tooltip_text(Some("Speichern"));
+    save_button.set_tooltip_text(Some(&tr("Speichern")));
     save_button.add_css_class("flat");
 
-    let group = adw::PreferencesGroup::builder().title("WordPress-Verbindung").build();
-    group.set_description(Some(
+    let group = adw::PreferencesGroup::builder().title(tr("WordPress-Verbindung")).build();
+    group.set_description(Some(&tr(
         "Zugangsdaten werden im Schlüsselbund gespeichert, nicht als Klartext in dieser Datei.",
-    ));
+    )));
     group.set_header_suffix(Some(&save_button));
     group.add(&url_row);
     group.add(&username_row);
@@ -61,7 +62,7 @@ pub fn build_page() -> adw::PreferencesPage {
                 Ok(Some(password)) => password_row.set_text(&password),
                 Ok(None) => {}
                 Err(err) => {
-                    status_label.set_label(&format!("Passwort konnte nicht geladen werden: {err}"));
+                    status_label.set_label(&tr("Passwort konnte nicht geladen werden: {err}").replace("{err}", &err.to_string()));
                     status_label.set_visible(true);
                 }
             }
@@ -77,7 +78,7 @@ pub fn build_page() -> adw::PreferencesPage {
             url: url.clone(),
             username: username.clone(),
         }) {
-            status_label.set_label(&format!("Fehler beim Speichern: {err}"));
+            status_label.set_label(&tr("Fehler beim Speichern: {err}").replace("{err}", &err.to_string()));
             status_label.set_visible(true);
             return;
         }
@@ -86,11 +87,11 @@ pub fn build_page() -> adw::PreferencesPage {
         glib::MainContext::default().spawn_local(async move {
             match secrets::store_app_password(&url, &username, &password).await {
                 Ok(()) => {
-                    status_label.set_label("Gespeichert.");
+                    status_label.set_label(&tr("Gespeichert."));
                     status_label.set_visible(true);
                 }
                 Err(err) => {
-                    status_label.set_label(&format!("Fehler beim Speichern des Passworts: {err}"));
+                    status_label.set_label(&tr("Fehler beim Speichern des Passworts: {err}").replace("{err}", &err.to_string()));
                     status_label.set_visible(true);
                 }
             }

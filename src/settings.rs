@@ -11,13 +11,14 @@ use std::rc::Rc;
 use adw::prelude::*;
 
 use crate::aimenu::AiMenuHandles;
+use crate::i18n::tr;
 use crate::{appearance, chatsettings, connection, preview, promptsettings};
 
 pub fn open(parent: &adw::ApplicationWindow, buffer: &sourceview5::Buffer, ai_menu_handles: &AiMenuHandles, preview_pane: &Rc<preview::PreviewPane>) {
     // Wide enough that the "Farbe" page's 4-per-line style-scheme grid
     // (matching GNOME Builder's own layout) isn't cramped at its default,
     // content-driven size.
-    let dialog = adw::PreferencesDialog::builder().title("Einstellungen").content_width(1000).content_height(760).build();
+    let dialog = adw::PreferencesDialog::builder().title(tr("Einstellungen")).content_width(1000).content_height(760).build();
     dialog.add(&appearance::build_page(buffer, preview_pane.clone()));
     dialog.add(&connection::build_page());
     dialog.add(&chatsettings::build_page());

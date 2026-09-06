@@ -101,9 +101,21 @@ mod tests {
     /// `init()`'s own sequence (`setlocale` then bind), but forces
     /// `LANGUAGE=en` afterward rather than depending on whichever locale
     /// happens to be installed on the machine running the test.
+    ///
+    /// `LANGUAGE` and the bound gettext domain are both process-global C
+    /// library state, not thread-local - cargo's default test harness runs
+    /// every test in one process, so leaving `LANGUAGE=en` set after this
+    /// test would silently translate every other test's `tr()` calls too
+    /// (this was a real, reproducible bug: it broke `searchbar`'s
+    /// `count_label_text` tests, which assert the untranslated German
+    /// fallback). Restoring it - and rebinding to a domain with no catalog,
+    /// so gettext has nothing to translate through even if some other test
+    /// still has `LANGUAGE=en` from its own environment - undoes both
+    /// pieces of global state this test changes.
     #[test]
     fn the_compiled_english_catalog_actually_translates_a_real_string() {
         gettextrs::setlocale(LocaleCategory::LcAll, "");
+        let original_language = std::env::var("LANGUAGE").ok();
         std::env::set_var("LANGUAGE", "en");
 
         let dev_locale_dir = concat!(env!("CARGO_MANIFEST_DIR"), "/po/locale");
@@ -111,6 +123,14 @@ mod tests {
         gettextrs::bind_textdomain_codeset(DOMAIN, "UTF-8").expect("bind_textdomain_codeset failed");
         gettextrs::textdomain(DOMAIN).expect("textdomain failed");
 
-        assert_eq!(tr("Vorschau"), "Preview");
+        let result = tr("Vorschau");
+
+        match original_language {
+            Some(value) => std::env::set_var("LANGUAGE", value),
+            None => std::env::remove_var("LANGUAGE"),
+        }
+        gettextrs::textdomain("blocksmith-test-no-such-domain").ok();
+
+        assert_eq!(result, "Preview");
     }
 }

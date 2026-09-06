@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.33.0] - 2026-09-06
+
+### Added
+
+- Internationalization completed: essentially the whole UI is now
+  translatable (every dialog, menu, toolbar, tooltip, toast, and status/
+  error message), up from the representative slice shipped in v0.31.0.
+  `po/en.po` is a complete, real English translation of all ~270 extracted
+  strings. AI prompt content and proper nouns (WordPress, provider names,
+  "Application Password") deliberately stay untranslated - see
+  `po/README.md` for the full list and the pluralization convention used
+  for dynamic messages.
+
+### Fixed
+
+- A test in `i18n.rs` was leaking global `LANGUAGE=en` state into the rest
+  of the test process, causing other tests' `tr()` calls to unexpectedly
+  return English instead of the untranslated German they asserted -
+  discovered live once other tests started calling `tr()` too. Now
+  restores the environment/gettext domain it changes.
+
 ## [0.32.0] - 2026-09-05
 
 ### Added

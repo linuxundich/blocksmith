@@ -18,6 +18,7 @@ use adw::prelude::*;
 use gtk4::glib;
 
 use crate::document::{Frontmatter, PostStatus};
+use crate::i18n::tr;
 use crate::{media, mediapanel, preview, secrets, wpclient, wpsite};
 
 pub fn open(
@@ -30,7 +31,7 @@ pub fn open(
     let site = wpsite::load();
     let current_fm = frontmatter.borrow().clone();
 
-    let preview_label = gtk4::Label::builder().label("Zu sendendes Gutenberg-HTML:").xalign(0.0).build();
+    let preview_label = gtk4::Label::builder().label(tr("Zu sendendes Gutenberg-HTML:")).xalign(0.0).build();
 
     let preview_buffer = gtk4::TextBuffer::new(None::<&gtk4::TextTagTable>);
     preview_buffer.set_text(&gutenberg::markdown_to_gutenberg(&body));
@@ -73,8 +74,8 @@ pub fn open(
     let media_page = mediapanel::build_content(frontmatter.clone(), &body, doc_dir.clone(), preview_pane.clone());
 
     let view_stack = adw::ViewStack::new();
-    view_stack.add_titled_with_icon(&preview_page, Some("preview"), "Vorschau", "view-reveal-symbolic");
-    view_stack.add_titled_with_icon(&media_page, Some("media"), "Medien", "image-x-generic-symbolic");
+    view_stack.add_titled_with_icon(&preview_page, Some("preview"), &tr("Vorschau"), "view-reveal-symbolic");
+    view_stack.add_titled_with_icon(&media_page, Some("media"), &tr("Medien"), "image-x-generic-symbolic");
     view_stack.set_vexpand(true);
 
     let view_switcher = adw::InlineViewSwitcher::builder().stack(&view_stack).build();
@@ -97,15 +98,15 @@ pub fn open(
     status_label.set_wrap(true);
     status_label.set_xalign(0.0);
 
-    let publish_button = gtk4::Button::with_label(if current_fm.wp_post_id.is_some() {
-        "Aktualisieren"
+    let publish_button = gtk4::Button::with_label(&if current_fm.wp_post_id.is_some() {
+        tr("Aktualisieren")
     } else {
-        "Veröffentlichen"
+        tr("Veröffentlichen")
     });
     publish_button.add_css_class("suggested-action");
     publish_button.set_halign(gtk4::Align::End);
 
-    let draft_button = gtk4::Button::with_label("Als Entwurf hochladen");
+    let draft_button = gtk4::Button::with_label(&tr("Als Entwurf hochladen"));
     draft_button.set_halign(gtk4::Align::End);
 
     // Only shown when "Geplant" is actually selected in den Artikel-
@@ -113,11 +114,11 @@ pub fn open(
     // above can't express, since each forces its own fixed status
     // (`wire_publish_button`'s `target_status`) - visible so scheduling is
     // reachable at all, but only when it means something.
-    let schedule_button = gtk4::Button::with_label("Terminieren");
+    let schedule_button = gtk4::Button::with_label(&tr("Terminieren"));
     schedule_button.set_halign(gtk4::Align::End);
     schedule_button.set_visible(current_fm.status == PostStatus::Future);
 
-    let delete_button = gtk4::Button::with_label("Von WordPress löschen");
+    let delete_button = gtk4::Button::with_label(&tr("Von WordPress löschen"));
     delete_button.add_css_class("destructive-action");
     delete_button.set_halign(gtk4::Align::End);
     delete_button.set_visible(current_fm.wp_post_id.is_some());
@@ -129,13 +130,13 @@ pub fn open(
     button_row.append(&publish_button);
 
     if site.url.is_empty() {
-        status_label.set_label("Keine WordPress-Verbindung eingerichtet - bitte zuerst über den Verbindungs-Dialog konfigurieren.");
+        status_label.set_label(&tr("Keine WordPress-Verbindung eingerichtet - bitte zuerst über den Verbindungs-Dialog konfigurieren."));
         publish_button.set_sensitive(false);
         draft_button.set_sensitive(false);
         schedule_button.set_sensitive(false);
         delete_button.set_sensitive(false);
     } else if current_fm.title.is_empty() {
-        status_label.set_label("Bitte zuerst einen Titel in den Artikel-Eigenschaften setzen.");
+        status_label.set_label(&tr("Bitte zuerst einen Titel in den Artikel-Eigenschaften setzen."));
         publish_button.set_sensitive(false);
         draft_button.set_sensitive(false);
         schedule_button.set_sensitive(false);
@@ -147,7 +148,7 @@ pub fn open(
     toolbar_view.set_content(Some(&content_box));
 
     let dialog = adw::Dialog::builder()
-        .title("Artikel exportieren")
+        .title(tr("Artikel exportieren"))
         .content_width(680)
         .content_height(640)
         .child(&toolbar_view)
@@ -162,11 +163,11 @@ pub fn open(
         delete_button.connect_clicked(move |_| {
             let Some(post_id) = frontmatter.borrow().wp_post_id else { return };
             let confirm = adw::AlertDialog::new(
-                Some("Artikel wirklich löschen?"),
-                Some("Der Artikel wird unwiderruflich von der WordPress-Seite gelöscht."),
+                Some(&tr("Artikel wirklich löschen?")),
+                Some(&tr("Der Artikel wird unwiderruflich von der WordPress-Seite gelöscht.")),
             );
-            confirm.add_response("cancel", "Abbrechen");
-            confirm.add_response("delete", "Löschen");
+            confirm.add_response("cancel", &tr("Abbrechen"));
+            confirm.add_response("delete", &tr("Löschen"));
             confirm.set_response_appearance("delete", adw::ResponseAppearance::Destructive);
             confirm.set_default_response(Some("cancel"));
             confirm.set_close_response("cancel");
@@ -179,7 +180,7 @@ pub fn open(
                 if response != "delete" {
                     return;
                 }
-                status_label.set_label("Wird gelöscht …");
+                status_label.set_label(&tr("Wird gelöscht …"));
                 delete_button.set_sensitive(false);
 
                 let site = wpsite::load();
@@ -188,7 +189,7 @@ pub fn open(
                     let outcome = futures_lite::future::block_on(secrets::load_app_password(&site.url, &site.username))
                         .map_err(|err| err.to_string())
                         .and_then(|maybe_password| {
-                            maybe_password.ok_or_else(|| "Kein Application Password im Schlüsselbund gefunden.".to_string())
+                            maybe_password.ok_or_else(|| tr("Kein Application Password im Schlüsselbund gefunden."))
                         })
                         .and_then(|password| {
                             wpclient::Client::new(&site.url, &site.username, &password)
@@ -205,19 +206,19 @@ pub fn open(
                 glib::timeout_add_local(Duration::from_millis(150), move || match rx.try_recv() {
                     Ok(Ok(())) => {
                         frontmatter.borrow_mut().wp_post_id = None;
-                        status_label.set_label("Artikel wurde von WordPress gelöscht.");
-                        publish_button.set_label("Veröffentlichen");
+                        status_label.set_label(&tr("Artikel wurde von WordPress gelöscht."));
+                        publish_button.set_label(&tr("Veröffentlichen"));
                         delete_button.set_visible(false);
                         glib::ControlFlow::Break
                     }
                     Ok(Err(err)) => {
-                        status_label.set_label(&format!("Fehler beim Löschen: {err}"));
+                        status_label.set_label(&tr("Fehler beim Löschen: {err}").replace("{err}", &err));
                         delete_button.set_sensitive(true);
                         glib::ControlFlow::Break
                     }
                     Err(mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
                     Err(mpsc::TryRecvError::Disconnected) => {
-                        status_label.set_label("Interner Fehler: Lösch-Thread hat kein Ergebnis geliefert.");
+                        status_label.set_label(&tr("Interner Fehler: Lösch-Thread hat kein Ergebnis geliefert."));
                         delete_button.set_sensitive(true);
                         glib::ControlFlow::Break
                     }
@@ -265,7 +266,7 @@ fn wire_publish_button(
         for b in &other_buttons {
             b.set_sensitive(false);
         }
-        status_label.set_label("Wird gesendet …");
+        status_label.set_label(&tr("Wird gesendet …"));
 
         let site = wpsite::load();
         let mut current_fm = frontmatter.borrow().clone();
@@ -278,7 +279,7 @@ fn wire_publish_button(
             let outcome = futures_lite::future::block_on(secrets::load_app_password(&site.url, &site.username))
                 .map_err(|err| err.to_string())
                 .and_then(|maybe_password| {
-                    maybe_password.ok_or_else(|| "Kein Application Password im Schlüsselbund gefunden.".to_string())
+                    maybe_password.ok_or_else(|| tr("Kein Application Password im Schlüsselbund gefunden."))
                 })
                 .and_then(|password| run_export(&site, &password, &mut current_fm, &body, doc_dir.as_deref()))
                 .map(|post| (post, current_fm.media));
@@ -297,7 +298,7 @@ fn wire_publish_button(
                     fm.media = media;
                     fm.status = target_status;
                 }
-                status_label.set_label(&format!("Erfolgreich gesendet: {}", post.link));
+                status_label.set_label(&tr("Erfolgreich gesendet: {link}").replace("{link}", &post.link));
                 button.set_sensitive(true);
                 for b in &other_buttons {
                     b.set_sensitive(true);
@@ -305,7 +306,7 @@ fn wire_publish_button(
                 glib::ControlFlow::Break
             }
             Ok(Err(err)) => {
-                status_label.set_label(&format!("Fehler: {err}"));
+                status_label.set_label(&tr("Fehler: {err}").replace("{err}", &err));
                 button.set_sensitive(true);
                 for b in &other_buttons {
                     b.set_sensitive(true);
@@ -314,7 +315,7 @@ fn wire_publish_button(
             }
             Err(mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
             Err(mpsc::TryRecvError::Disconnected) => {
-                status_label.set_label("Interner Fehler: Export-Thread hat kein Ergebnis geliefert.");
+                status_label.set_label(&tr("Interner Fehler: Export-Thread hat kein Ergebnis geliefert."));
                 button.set_sensitive(true);
                 for b in &other_buttons {
                     b.set_sensitive(true);
@@ -338,7 +339,7 @@ fn run_export(
     // comment), so this is checked up front rather than letting that
     // surprise happen after an otherwise-successful export.
     if frontmatter.status == PostStatus::Future && frontmatter.scheduled_at.is_none() {
-        return Err("Für den Status „Geplant“ muss ein gültiger Veröffentlichungstermin gesetzt sein.".to_string());
+        return Err(tr("Für den Status „Geplant“ muss ein gültiger Veröffentlichungstermin gesetzt sein."));
     }
 
     let client = wpclient::Client::new(&site.url, &site.username, password);
@@ -450,11 +451,14 @@ pub(crate) fn read_image_bytes(source: &str, base_dir: Option<&Path>) -> Result<
     if source.starts_with("http://") || source.starts_with("https://") {
         let config = ureq::Agent::config_builder().timeout_global(Some(Duration::from_secs(30))).build();
         let agent = ureq::Agent::new_with_config(config);
-        let mut response = agent.get(source).call().map_err(|err| format!("Bild nicht abrufbar: {err}"))?;
-        response.body_mut().read_to_vec().map_err(|err| format!("Bild nicht lesbar: {err}"))
+        let mut response = agent.get(source).call().map_err(|err| tr("Bild nicht abrufbar: {err}").replace("{err}", &err.to_string()))?;
+        response
+            .body_mut()
+            .read_to_vec()
+            .map_err(|err| tr("Bild nicht lesbar: {err}").replace("{err}", &err.to_string()))
     } else {
         let resolved = resolve_local_path(source, base_dir);
-        std::fs::read(&resolved).map_err(|err| format!("Bild {} nicht lesbar: {err}", resolved.display()))
+        std::fs::read(&resolved).map_err(|err| tr("Bild {path} nicht lesbar: {err}").replace("{path}", &resolved.display().to_string()).replace("{err}", &err.to_string()))
     }
 }
 
@@ -462,7 +466,7 @@ pub(crate) fn upload_image_file(client: &wpclient::Client, path_str: &str, base_
     let resolved = resolve_local_path(path_str, base_dir);
     let bytes = std::fs::read(&resolved).map_err(|err| wpclient::ApiError {
         status: 0,
-        message: format!("Bild {} nicht lesbar: {err}", resolved.display()),
+        message: tr("Bild {path} nicht lesbar: {err}").replace("{path}", &resolved.display().to_string()).replace("{err}", &err.to_string()),
     })?;
     let filename = resolved
         .file_name()

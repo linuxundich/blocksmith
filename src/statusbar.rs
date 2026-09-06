@@ -7,6 +7,7 @@
 
 use adw::prelude::*;
 
+use crate::i18n::tr;
 use crate::stats;
 
 pub struct StatusBar {
@@ -48,9 +49,15 @@ impl StatusBar {
 
     fn render(&self) {
         let doc = self.document_stats.get();
-        let mut text = format!("{} Wörter · ≈ {} Min. Lesezeit", format_de(doc.words), doc.reading_minutes);
+        let mut text = tr("{words} Wörter · ≈ {minutes} Min. Lesezeit")
+            .replace("{words}", &format_de(doc.words))
+            .replace("{minutes}", &doc.reading_minutes.to_string());
         if let Some(selection) = self.selection_stats.get() {
-            text.push_str(&format!("  —  Auswahl: {} Wörter · ≈ {} Min.", format_de(selection.words), selection.reading_minutes));
+            text.push_str(
+                &tr("  —  Auswahl: {words} Wörter · ≈ {minutes} Min.")
+                    .replace("{words}", &format_de(selection.words))
+                    .replace("{minutes}", &selection.reading_minutes.to_string()),
+            );
         }
         self.label.set_label(&text);
     }

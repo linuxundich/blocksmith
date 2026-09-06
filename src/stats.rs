@@ -3,6 +3,8 @@
 
 use gtk4::prelude::*;
 
+use crate::i18n::tr;
+
 #[derive(Clone, Copy)]
 pub struct Stats {
     pub words: usize,
@@ -43,15 +45,15 @@ impl StatsView {
         let reading_minutes = value_label();
 
         let list = gtk4::Box::builder().orientation(gtk4::Orientation::Vertical).build();
-        list.append(&row("Wörter", &words));
+        list.append(&row(&tr("Wörter"), &words));
         list.append(&gtk4::Separator::new(gtk4::Orientation::Horizontal));
-        list.append(&row("Zeichen (mit Leerzeichen)", &chars_with_spaces));
+        list.append(&row(&tr("Zeichen (mit Leerzeichen)"), &chars_with_spaces));
         list.append(&gtk4::Separator::new(gtk4::Orientation::Horizontal));
-        list.append(&row("Zeichen (ohne Leerzeichen)", &chars_without_spaces));
+        list.append(&row(&tr("Zeichen (ohne Leerzeichen)"), &chars_without_spaces));
         list.append(&gtk4::Separator::new(gtk4::Orientation::Horizontal));
-        list.append(&row("Absätze", &paragraphs));
+        list.append(&row(&tr("Absätze"), &paragraphs));
         list.append(&gtk4::Separator::new(gtk4::Orientation::Horizontal));
-        list.append(&row("Geschätzte Lesezeit", &reading_minutes));
+        list.append(&row(&tr("Geschätzte Lesezeit"), &reading_minutes));
         list.add_css_class("boxed-list");
 
         let clamp = adw::Clamp::builder().maximum_size(420).child(&list).build();
@@ -80,7 +82,7 @@ impl StatsView {
         self.chars_with_spaces.set_label(&stats.chars_with_spaces.to_string());
         self.chars_without_spaces.set_label(&stats.chars_without_spaces.to_string());
         self.paragraphs.set_label(&stats.paragraphs.to_string());
-        self.reading_minutes.set_label(&format!("{} min", stats.reading_minutes));
+        self.reading_minutes.set_label(&tr("{n} min").replace("{n}", &stats.reading_minutes.to_string()));
     }
 }
 

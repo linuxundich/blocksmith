@@ -13,6 +13,7 @@ use std::time::Duration;
 use adw::prelude::*;
 use gtk4::glib;
 
+use crate::i18n::tr;
 use crate::{formatting, secrets, wpclient, wpsite};
 
 pub fn open(parent: &adw::ApplicationWindow, buffer: &sourceview5::Buffer) {
@@ -23,7 +24,7 @@ pub fn open(parent: &adw::ApplicationWindow, buffer: &sourceview5::Buffer) {
     status_label.set_xalign(0.0);
 
     let search_entry = gtk4::SearchEntry::new();
-    search_entry.set_placeholder_text(Some("Artikel suchen…"));
+    search_entry.set_placeholder_text(Some(&tr("Artikel suchen…")));
 
     let list_box = gtk4::ListBox::new();
     list_box.add_css_class("boxed-list");
@@ -50,14 +51,14 @@ pub fn open(parent: &adw::ApplicationWindow, buffer: &sourceview5::Buffer) {
     toolbar_view.set_content(Some(&content_box));
 
     let dialog = adw::Dialog::builder()
-        .title("Artikel verlinken")
+        .title(tr("Artikel verlinken"))
         .content_width(480)
         .content_height(520)
         .child(&toolbar_view)
         .build();
 
     if site.url.is_empty() {
-        status_label.set_label("Keine WordPress-Verbindung eingerichtet - bitte zuerst in den Einstellungen konfigurieren.");
+        status_label.set_label(&tr("Keine WordPress-Verbindung eingerichtet - bitte zuerst in den Einstellungen konfigurieren."));
         dialog.present(Some(parent));
         return;
     }
@@ -87,13 +88,13 @@ pub fn open(parent: &adw::ApplicationWindow, buffer: &sourceview5::Buffer) {
         search_entry.connect_search_changed(move |_| list_box.invalidate_filter());
     }
 
-    status_label.set_label("Lade Artikel …");
+    status_label.set_label(&tr("Lade Artikel …"));
     let (tx, rx) = mpsc::channel::<Result<Vec<wpclient::PostSummary>, String>>();
     std::thread::spawn(move || {
         let outcome = futures_lite::future::block_on(secrets::load_app_password(&site.url, &site.username))
             .map_err(|err| err.to_string())
             .and_then(|maybe_password| {
-                maybe_password.ok_or_else(|| "Kein Application Password im Schlüsselbund gefunden.".to_string())
+                maybe_password.ok_or_else(|| tr("Kein Application Password im Schlüsselbund gefunden."))
             })
             .and_then(|password| wpclient::Client::new(&site.url, &site.username, &password).list_posts().map_err(|err| err.to_string()));
         let _ = tx.send(outcome);
@@ -114,17 +115,17 @@ pub fn open(parent: &adw::ApplicationWindow, buffer: &sourceview5::Buffer) {
                         .build();
                     list_box.append(&row);
                 }
-                status_label.set_label(&format!("{} Artikel gefunden.", fetched.len()));
+                status_label.set_label(&tr("{n} Artikel gefunden.").replace("{n}", &fetched.len().to_string()));
                 *posts.borrow_mut() = fetched;
                 glib::ControlFlow::Break
             }
             Ok(Err(err)) => {
-                status_label.set_label(&format!("Fehler beim Laden: {err}"));
+                status_label.set_label(&tr("Fehler beim Laden: {err}").replace("{err}", &err));
                 glib::ControlFlow::Break
             }
             Err(mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
             Err(mpsc::TryRecvError::Disconnected) => {
-                status_label.set_label("Interner Fehler: Lade-Thread hat kein Ergebnis geliefert.");
+                status_label.set_label(&tr("Interner Fehler: Lade-Thread hat kein Ergebnis geliefert."));
                 glib::ControlFlow::Break
             }
         });

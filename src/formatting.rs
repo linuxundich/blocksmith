@@ -7,6 +7,8 @@ use gtk4::gdk;
 use gtk4::glib;
 use gtk4::prelude::*;
 
+use crate::i18n::tr;
+
 /// Keyboard shortcuts for the formatting actions that aren't already
 /// covered by GtkSourceView's own bindings (cut/copy/paste are).
 pub fn install_shortcuts(view: &sourceview5::View, buffer: &sourceview5::Buffer) {
@@ -46,38 +48,38 @@ pub fn build(view: &sourceview5::View, buffer: &sourceview5::Buffer) -> gtk4::Bo
         .build();
 
     toolbar.append(&group(&[
-        icon_button("edit-cut-symbolic", "Ausschneiden (Strg+X)", view, |v| v.emit_by_name::<()>("cut-clipboard", &[])),
-        icon_button("edit-copy-symbolic", "Kopieren (Strg+C)", view, |v| v.emit_by_name::<()>("copy-clipboard", &[])),
-        icon_button("edit-paste-symbolic", "Einfügen (Strg+V)", view, |v| v.emit_by_name::<()>("paste-clipboard", &[])),
+        icon_button("edit-cut-symbolic", &tr("Ausschneiden (Strg+X)"), view, |v| v.emit_by_name::<()>("cut-clipboard", &[])),
+        icon_button("edit-copy-symbolic", &tr("Kopieren (Strg+C)"), view, |v| v.emit_by_name::<()>("copy-clipboard", &[])),
+        icon_button("edit-paste-symbolic", &tr("Einfügen (Strg+V)"), view, |v| v.emit_by_name::<()>("paste-clipboard", &[])),
     ]));
 
     toolbar.append(&group(&[
-        icon_button("format-text-bold-symbolic", "Fett (Strg+B)", buffer, |b| wrap_selection(b, "**", "**")),
-        icon_button("format-text-italic-symbolic", "Kursiv (Strg+I)", buffer, |b| wrap_selection(b, "*", "*")),
-        icon_button("format-text-strikethrough-symbolic", "Durchgestrichen", buffer, |b| wrap_selection(b, "~~", "~~")),
+        icon_button("format-text-bold-symbolic", &tr("Fett (Strg+B)"), buffer, |b| wrap_selection(b, "**", "**")),
+        icon_button("format-text-italic-symbolic", &tr("Kursiv (Strg+I)"), buffer, |b| wrap_selection(b, "*", "*")),
+        icon_button("format-text-strikethrough-symbolic", &tr("Durchgestrichen"), buffer, |b| wrap_selection(b, "~~", "~~")),
     ]));
 
     toolbar.append(&group(&[
-        label_button("H2", "Überschrift", buffer, |b| insert_line_prefix(b, "## ")),
-        label_button("”", "Zitat", buffer, |b| insert_line_prefix(b, "> ")),
-        label_button("</>", "Code", buffer, |b| wrap_selection(b, "`", "`")),
-        label_button("{ }", "Codeblock", buffer, |b| insert_code_block(b)),
+        label_button("H2", &tr("Überschrift"), buffer, |b| insert_line_prefix(b, "## ")),
+        label_button("”", &tr("Zitat"), buffer, |b| insert_line_prefix(b, "> ")),
+        label_button("</>", &tr("Code"), buffer, |b| wrap_selection(b, "`", "`")),
+        label_button("{ }", &tr("Codeblock"), buffer, insert_code_block),
     ]));
 
     toolbar.append(&group(&[
-        label_button("•", "Liste", buffer, |b| insert_line_prefix(b, "- ")),
-        label_button("1.", "Nummerierte Liste", buffer, |b| insert_line_prefix(b, "1. ")),
-        label_button("▦", "Tabelle einfügen", buffer, |b| insert_table(b)),
+        label_button("•", &tr("Liste"), buffer, |b| insert_line_prefix(b, "- ")),
+        label_button("1.", &tr("Nummerierte Liste"), buffer, |b| insert_line_prefix(b, "1. ")),
+        label_button("▦", &tr("Tabelle einfügen"), buffer, insert_table),
     ]));
 
     toolbar.append(&group(&[
-        icon_button("insert-link-symbolic", "Link einfügen (Strg+K)", buffer, |b| insert_link(b)),
-        action_button("document-open-recent-symbolic", "Bestehenden Artikel verlinken…", "win.insert-post-link"),
-        action_button("insert-image-symbolic", "Bild einfügen…", "win.insert-image"),
-        action_button("video-x-generic-symbolic", "Video/Audio einfügen…", "win.insert-media"),
+        icon_button("insert-link-symbolic", &tr("Link einfügen (Strg+K)"), buffer, insert_link),
+        action_button("document-open-recent-symbolic", &tr("Bestehenden Artikel verlinken…"), "win.insert-post-link"),
+        action_button("insert-image-symbolic", &tr("Bild einfügen…"), "win.insert-image"),
+        action_button("video-x-generic-symbolic", &tr("Video/Audio einfügen…"), "win.insert-media"),
     ]));
 
-    toolbar.append(&group(&[label_button("⋯", "„Weiterlesen“-Marker einfügen", buffer, insert_more_marker)]));
+    toolbar.append(&group(&[label_button("⋯", &tr("„Weiterlesen“-Marker einfügen"), buffer, insert_more_marker)]));
 
     toolbar
 }
@@ -172,8 +174,13 @@ fn insert_code_block(buffer: &sourceview5::Buffer) {
 fn insert_table(buffer: &sourceview5::Buffer) {
     let mut iter = buffer.iter_at_mark(&buffer.get_insert());
     let pos = iter.offset();
-    buffer.insert(&mut iter, "| Spalte 1 | Spalte 2 |\n| --- | --- |\n| Zelle 1 | Zelle 2 |\n");
-    select(buffer, pos + 2, pos + 10); // "Spalte 1"
+    let col1 = tr("Spalte 1");
+    let col2 = tr("Spalte 2");
+    let cell1 = tr("Zelle 1");
+    let cell2 = tr("Zelle 2");
+    buffer.insert(&mut iter, &format!("| {col1} | {col2} |\n| --- | --- |\n| {cell1} | {cell2} |\n"));
+    let col1_len = col1.chars().count() as i32;
+    select(buffer, pos + 2, pos + 2 + col1_len);
 }
 
 /// Inserts WordPress's "Weiterlesen" marker - a lone `<!--more-->` HTML

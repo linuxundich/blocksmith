@@ -571,7 +571,7 @@ fn wire_open_action(window: &adw::ApplicationWindow, ctx: &DocContext) {
         filters.append(&filter);
 
         let dialog = gtk4::FileDialog::builder()
-            .title("Markdown-Datei öffnen")
+            .title(tr("Markdown-Datei öffnen"))
             .filters(&filters)
             .build();
 
@@ -604,7 +604,7 @@ fn open_document_at_path(path: PathBuf, ctx: &DocContext) {
             ctx.preview_pane.set_doc_dir(doc_dir);
             autosave::clear();
         }
-        Err(err) => show_toast(&ctx.toast_overlay, &format!("Öffnen fehlgeschlagen: {err}")),
+        Err(err) => show_toast(&ctx.toast_overlay, &tr("Öffnen fehlgeschlagen: {err}").replace("{err}", &err.to_string())),
     }
 }
 
@@ -635,7 +635,7 @@ fn wire_recent_files_button(widgets: &RecentFilesWidgets, ctx: &DocContext) {
 
         let entries = recentfiles::load();
         if entries.is_empty() {
-            let row = adw::ActionRow::builder().title("Keine zuletzt geöffneten Artikel").activatable(false).build();
+            let row = adw::ActionRow::builder().title(tr("Keine zuletzt geöffneten Artikel")).activatable(false).build();
             recent_list.append(&row);
             return;
         }
@@ -717,7 +717,7 @@ fn wire_save_action(window: &adw::ApplicationWindow, ctx: &DocContext) {
 
         if let Some(path) = ctx.current_path.borrow().clone() {
             if let Err(err) = document::write(&path, &doc) {
-                show_toast(&ctx.toast_overlay, &format!("Speichern fehlgeschlagen: {err}"));
+                show_toast(&ctx.toast_overlay, &tr("Speichern fehlgeschlagen: {err}").replace("{err}", &err.to_string()));
             } else {
                 *ctx.saved_text.borrow_mut() = doc.body.clone();
                 autosave::clear();
@@ -726,7 +726,7 @@ fn wire_save_action(window: &adw::ApplicationWindow, ctx: &DocContext) {
         }
 
         let dialog = gtk4::FileDialog::builder()
-            .title("Markdown-Datei speichern")
+            .title(tr("Markdown-Datei speichern"))
             .initial_name("artikel.md")
             .build();
 
@@ -735,7 +735,7 @@ fn wire_save_action(window: &adw::ApplicationWindow, ctx: &DocContext) {
             let Ok(file) = result else { return };
             let Some(path) = file.path() else { return };
             if let Err(err) = document::write(&path, &doc) {
-                show_toast(&ctx.toast_overlay, &format!("Speichern fehlgeschlagen: {err}"));
+                show_toast(&ctx.toast_overlay, &tr("Speichern fehlgeschlagen: {err}").replace("{err}", &err.to_string()));
                 return;
             }
             ctx.title.set_subtitle(&subtitle_for(Some(&path), &doc.frontmatter));
@@ -837,11 +837,11 @@ fn wire_insert_image_action(window: &adw::ApplicationWindow, buffer: &sourceview
 
         let filter = gtk4::FileFilter::new();
         filter.add_mime_type("image/*");
-        filter.set_name(Some("Bilder"));
+        filter.set_name(Some(&tr("Bilder")));
         let filters = gio::ListStore::new::<gtk4::FileFilter>();
         filters.append(&filter);
 
-        let dialog = gtk4::FileDialog::builder().title("Bild einfügen").filters(&filters).build();
+        let dialog = gtk4::FileDialog::builder().title(tr("Bild einfügen")).filters(&filters).build();
 
         let buffer = buffer.clone();
         let doc_dir = current_path.borrow().as_ref().and_then(|p| p.parent().map(Path::to_path_buf));
@@ -876,7 +876,7 @@ fn wire_insert_media_action(window: &adw::ApplicationWindow, buffer: &sourceview
         let filters = gio::ListStore::new::<gtk4::FileFilter>();
         filters.append(&filter);
 
-        let dialog = gtk4::FileDialog::builder().title("Video/Audio einfügen").filters(&filters).build();
+        let dialog = gtk4::FileDialog::builder().title(tr("Video/Audio einfügen")).filters(&filters).build();
 
         let buffer = buffer.clone();
         let doc_dir = current_path.borrow().as_ref().and_then(|p| p.parent().map(Path::to_path_buf));
@@ -928,7 +928,7 @@ fn wire_paste_image_shortcut(view: &sourceview5::View, buffer: &sourceview5::Buf
             return glib::Propagation::Proceed;
         }
         let Some(doc_dir) = current_path.borrow().as_ref().and_then(|p| p.parent().map(Path::to_path_buf)) else {
-            show_toast(&toast_overlay, "Bitte den Artikel zuerst speichern, um Bilder einzufügen.");
+            show_toast(&toast_overlay, &tr("Bitte den Artikel zuerst speichern, um Bilder einzufügen."));
             return glib::Propagation::Stop;
         };
         let buffer = buffer.clone();
@@ -937,13 +937,13 @@ fn wire_paste_image_shortcut(view: &sourceview5::View, buffer: &sourceview5::Buf
             let texture = match result {
                 Ok(Some(texture)) => texture,
                 _ => {
-                    show_toast(&toast_overlay, "Bild konnte nicht aus der Zwischenablage gelesen werden.");
+                    show_toast(&toast_overlay, &tr("Bild konnte nicht aus der Zwischenablage gelesen werden."));
                     return;
                 }
             };
             let path = document::unique_pasted_image_path(&doc_dir, |p| p.exists());
             if let Err(err) = texture.save_to_png(&path) {
-                show_toast(&toast_overlay, &format!("Bild konnte nicht gespeichert werden: {err}"));
+                show_toast(&toast_overlay, &tr("Bild konnte nicht gespeichert werden: {err}").replace("{err}", &err.to_string()));
                 return;
             }
             let reference = document::image_reference(&path, Some(&doc_dir));
@@ -1021,15 +1021,16 @@ fn wire_startup_recovery(
         .as_deref()
         .and_then(Path::file_name)
         .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_else(|| "einem unbenannten Artikel".to_string());
+        .unwrap_or_else(|| tr("einem unbenannten Artikel"));
     let dialog = adw::AlertDialog::new(
-        Some("Nicht gespeicherter Stand gefunden"),
-        Some(&format!(
-            "Von „{name}“ wurde ein nicht gespeicherter Stand gefunden - vermutlich nach einem Absturz oder weil Blocksmith ohne zu speichern beendet wurde. Wiederherstellen?"
-        )),
+        Some(&tr("Nicht gespeicherter Stand gefunden")),
+        Some(
+            &tr("Von „{name}“ wurde ein nicht gespeicherter Stand gefunden - vermutlich nach einem Absturz oder weil Blocksmith ohne zu speichern beendet wurde. Wiederherstellen?")
+                .replace("{name}", &name),
+        ),
     );
-    dialog.add_response("discard", "Verwerfen");
-    dialog.add_response("restore", "Wiederherstellen");
+    dialog.add_response("discard", &tr("Verwerfen"));
+    dialog.add_response("restore", &tr("Wiederherstellen"));
     dialog.set_response_appearance("restore", adw::ResponseAppearance::Suggested);
     dialog.set_default_response(Some("restore"));
     dialog.set_close_response("discard");

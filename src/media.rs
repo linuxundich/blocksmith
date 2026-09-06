@@ -19,6 +19,8 @@ use pulldown_cmark::{Event, Parser, Tag, TagEnd};
 use serde_json::Value;
 use sha2::Digest;
 
+use crate::i18n::tr;
+
 /// The three states an image's alt text can be in - collapsing "empty" and
 /// "not yet decided" into one falsy value (as plain Markdown does) would
 /// make every freshly-inserted image look identical to one a user
@@ -251,7 +253,8 @@ pub fn sync_uploads(
         }
 
         let resolved = crate::export::resolve_local_path(&item.source, doc_dir);
-        let bytes = std::fs::read(&resolved).map_err(|err| format!("Bild {} nicht lesbar: {err}", resolved.display()))?;
+        let bytes = std::fs::read(&resolved)
+            .map_err(|err| tr("Bild {path} nicht lesbar: {err}").replace("{path}", &resolved.display().to_string()).replace("{err}", &err.to_string()))?;
         let current_hash = hash_bytes(&bytes);
 
         if let Some(existing) = &item.wordpress {

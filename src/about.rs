@@ -8,6 +8,7 @@
 use adw::prelude::*;
 
 use crate::changelog;
+use crate::i18n::tr;
 
 const CHANGELOG_MARKDOWN: &str = include_str!("../CHANGELOG.md");
 
@@ -17,7 +18,7 @@ pub fn open(parent: &impl IsA<gtk4::Widget>) {
         .application_icon("de.christophlangner.Blocksmith")
         .developer_name("Christoph Langner")
         .version(env!("CARGO_PKG_VERSION"))
-        .comments("Markdown-Artikel als WordPress-Gutenberg-Blöcke veröffentlichen")
+        .comments(tr("Markdown-Artikel als WordPress-Gutenberg-Blöcke veröffentlichen"))
         .website("https://github.com/linuxundich/blocksmith")
         .issue_url("https://github.com/linuxundich/blocksmith/issues")
         .copyright("© 2026 Christoph Langner")

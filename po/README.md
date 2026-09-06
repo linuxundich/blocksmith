@@ -8,14 +8,48 @@ convention where English is the source.
 ## Current status
 
 Internationalization is set up and working end-to-end (locale detection,
-catalog lookup, a real translation), but only applied to a representative
-slice of the UI so far - not every string in the app yet:
+catalog lookup, a real translation), and applied throughout essentially the
+whole UI - every file in `POTFILES.in` (all dialogs, menus, toolbars,
+tooltips, toasts, and status/error messages). `po/en.po` is a complete,
+real English translation of all ~270 extracted strings.
 
-- `src/window.rs` - the main window's header bar, primary menu, and tab
-  titles
-- `src/properties.rs` - the "Artikel-Eigenschaften" dialog
-- `src/shortcuts.rs` - the "Tastenkürzel" window
-- `src/document.rs` - `PostStatus`'s labels (used by `properties.rs`)
+Deliberately **not** translated, by design:
+
+- **AI prompt content** (`src/aiprompts.rs`'s `default_template`s,
+  `src/aialt.rs`'s `DetailLevel::prompt()`, `src/default_prompt.rs`'s
+  system prompt) - this is prompt-engineering text sent to an LLM, not UI
+  chrome. It stays German so it reads as one coherent, grammatically
+  correct instruction regardless of the app's display language (the model
+  itself understands German fine) - only the short *labels* for these
+  prompts (`aiprompts::builtin_title()`) are translated. Users can already
+  edit this text directly in Einstellungen → KI-Prompts if they want it in
+  another language.
+- **Proper nouns and technical terms**: "Blocksmith", "WordPress",
+  "Application Password", "API-Key", provider names (`llm.rs`'s
+  `Provider::label()`), keyring item labels (`secrets.rs`) - translating
+  these would make them harder to recognize consistently across a locale
+  switch, not easier.
+
+**Pluralization / dynamic content**: `tr()` only takes a literal `msgid`
+and returns it verbatim or translated - there's no `ngettext`/plural-forms
+support wired up. Two conventions handle this without it:
+
+1. **Named placeholders**, filled in with `.replace("{name}", &value)`
+   after the `tr()` call (e.g. `tr("Fehler: {err}").replace("{err}",
+   &err)`) - the placeholder token itself is part of the translatable
+   text, so a translator sees it in context and just needs to preserve it
+   verbatim somewhere in their translation.
+2. **Never concatenate grammar fragments across a `tr()` boundary.** An
+   earlier version of `mediapanel.rs::summary_text` built one German
+   template and filled a `{plural}`/`{verb}` placeholder with hardcoded
+   German suffixes ("ern"/"haben") - translating the template to English
+   would have left literal German words stuck in the English sentence,
+   since those fragments never went through `tr()` themselves. The fix:
+   every count-dependent case (0/1/n, as needed) is its own complete,
+   self-contained `tr()` call - see `mediapanel.rs::summary_text` and
+   `searchbar.rs::count_label_text` for the pattern. A little more
+   repetition in the Rust source, but each translation is a real,
+   grammatically correct sentence in the target language.
 
 **Known limitation:** translations only actually load for a `cargo build`/
 `cargo run` from this source tree right now - `src/i18n.rs` points
@@ -26,11 +60,10 @@ step to place compiled `.mo` files under the app's own
 `/app/share/locale/<lang>/LC_MESSAGES/blocksmith.mo` and `i18n::init()`
 updated to bind there instead (or in addition) - not done yet.
 
-`po/en.po` is a complete, real English translation of exactly those
-strings, proving the pipeline works. Converting the rest of the app is the
-same mechanical step repeated for each remaining file: wrap a literal in
-`i18n::tr("...")` (see `src/i18n.rs`'s doc comment), add the file to
-`POTFILES.in`, and re-extract/re-translate as below.
+Adding a genuinely new string anywhere in the app is the same mechanical
+step as always: wrap the literal in `i18n::tr("...")` (see
+`src/i18n.rs`'s doc comment), add the file to `POTFILES.in` if it isn't
+there yet, and re-extract/re-translate as below.
 
 ## Adding a translation for a new language
 

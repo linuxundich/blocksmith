@@ -14,6 +14,8 @@ use std::time::Duration;
 use base64::Engine;
 use serde_json::Value;
 
+use crate::i18n::tr;
+
 pub struct Client {
     agent: ureq::Agent,
     base_url: String,
@@ -119,7 +121,7 @@ fn error_from_body(status: u16, body_text: &str) -> ApiError {
 fn unreadable_response(status: u16, err: impl std::fmt::Display) -> ApiError {
     ApiError {
         status,
-        message: format!("Antwort nicht lesbar: {err}"),
+        message: tr("Antwort nicht lesbar: {err}").replace("{err}", &err.to_string()),
     }
 }
 
@@ -182,7 +184,7 @@ impl Client {
         let id = value
             .get("id")
             .and_then(Value::as_u64)
-            .ok_or_else(|| ApiError { status, message: "Keine Medien-ID in der Antwort".into() })?;
+            .ok_or_else(|| ApiError { status, message: tr("Keine Medien-ID in der Antwort") })?;
         let source_url = value.get("source_url").and_then(Value::as_str).unwrap_or_default().to_string();
         Ok(MediaResult { id, source_url })
     }
@@ -435,7 +437,7 @@ impl Client {
         let id = value
             .get("id")
             .and_then(Value::as_u64)
-            .ok_or_else(|| ApiError { status, message: "Keine Post-ID in der Antwort".into() })?;
+            .ok_or_else(|| ApiError { status, message: tr("Keine Post-ID in der Antwort") })?;
         let link = value.get("link").and_then(Value::as_str).unwrap_or_default().to_string();
         Ok(PostResult { id, link })
     }
@@ -480,7 +482,7 @@ impl Client {
         value
             .get("id")
             .and_then(Value::as_u64)
-            .ok_or_else(|| ApiError { status, message: format!("Kein Term-ID für \"{name}\" erhalten") })
+            .ok_or_else(|| ApiError { status, message: tr("Kein Term-ID für \"{name}\" erhalten").replace("{name}", name) })
     }
 }
 

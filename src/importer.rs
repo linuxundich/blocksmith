@@ -15,6 +15,7 @@ use adw::prelude::*;
 use gtk4::glib;
 
 use crate::document::{Frontmatter, PostStatus};
+use crate::i18n::tr;
 use crate::{secrets, wpclient, wpsite};
 
 pub struct ImportedPost {
@@ -68,7 +69,7 @@ fn wire_group_row_activation(
         for list_box in &all_list_boxes {
             list_box.set_sensitive(false);
         }
-        status_label.set_label(&format!("Lade „{}“ …", post.title));
+        status_label.set_label(&tr("Lade „{title}“ …").replace("{title}", &post.title));
 
         let site = site.clone();
         let (tx, rx) = mpsc::channel::<Result<ImportedPost, String>>();
@@ -76,7 +77,7 @@ fn wire_group_row_activation(
             let outcome = futures_lite::future::block_on(secrets::load_app_password(&site.url, &site.username))
                 .map_err(|err| err.to_string())
                 .and_then(|maybe_password| {
-                    maybe_password.ok_or_else(|| "Kein Application Password im Schlüsselbund gefunden.".to_string())
+                    maybe_password.ok_or_else(|| tr("Kein Application Password im Schlüsselbund gefunden."))
                 })
                 .and_then(|password| fetch_and_convert(&site, &password, post.id));
             let _ = tx.send(outcome);
@@ -95,7 +96,7 @@ fn wire_group_row_activation(
                 glib::ControlFlow::Break
             }
             Ok(Err(err)) => {
-                status_label.set_label(&format!("Fehler: {err}"));
+                status_label.set_label(&tr("Fehler: {err}").replace("{err}", &err));
                 for list_box in &all_list_boxes {
                     list_box.set_sensitive(true);
                 }
@@ -103,7 +104,7 @@ fn wire_group_row_activation(
             }
             Err(mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
             Err(mpsc::TryRecvError::Disconnected) => {
-                status_label.set_label("Interner Fehler: Ladevorgang hat kein Ergebnis geliefert.");
+                status_label.set_label(&tr("Interner Fehler: Ladevorgang hat kein Ergebnis geliefert."));
                 for list_box in &all_list_boxes {
                     list_box.set_sensitive(true);
                 }
@@ -123,9 +124,9 @@ pub fn open(parent: &adw::ApplicationWindow, on_selected: impl Fn(ImportedPost) 
     // Drafts first - that's what the user is most likely mid-way through
     // and looking for - then published, then anything else (pending
     // review, scheduled, private) in a catch-all last section.
-    let drafts_group = build_post_group("Entwürfe");
-    let published_group = build_post_group("Veröffentlicht");
-    let other_group = build_post_group("Weitere");
+    let drafts_group = build_post_group(&tr("Entwürfe"));
+    let published_group = build_post_group(&tr("Veröffentlicht"));
+    let other_group = build_post_group(&tr("Weitere"));
 
     let lists_container = gtk4::Box::builder().orientation(gtk4::Orientation::Vertical).spacing(18).build();
     lists_container.append(&drafts_group.wrap);
@@ -135,7 +136,7 @@ pub fn open(parent: &adw::ApplicationWindow, on_selected: impl Fn(ImportedPost) 
     let list_scroller = gtk4::ScrolledWindow::builder().child(&lists_container).vexpand(true).min_content_height(360).build();
 
     let refresh_button = gtk4::Button::from_icon_name("view-refresh-symbolic");
-    refresh_button.set_tooltip_text(Some("Aktualisieren"));
+    refresh_button.set_tooltip_text(Some(&tr("Aktualisieren")));
 
     let header = adw::HeaderBar::new();
     header.pack_end(&refresh_button);
@@ -156,14 +157,14 @@ pub fn open(parent: &adw::ApplicationWindow, on_selected: impl Fn(ImportedPost) 
     toolbar_view.set_content(Some(&content_box));
 
     let dialog = adw::Dialog::builder()
-        .title("Von WordPress öffnen")
+        .title(tr("Von WordPress öffnen"))
         .content_width(560)
         .content_height(560)
         .child(&toolbar_view)
         .build();
 
     if site.url.is_empty() {
-        status_label.set_label("Keine WordPress-Verbindung eingerichtet - bitte zuerst in den Einstellungen konfigurieren.");
+        status_label.set_label(&tr("Keine WordPress-Verbindung eingerichtet - bitte zuerst in den Einstellungen konfigurieren."));
         dialog.present(Some(parent));
         return;
     }
@@ -198,13 +199,13 @@ fn load_posts(
     other_group: &PostGroup,
     status_label: gtk4::Label,
 ) {
-    status_label.set_label("Lade Artikel …");
+    status_label.set_label(&tr("Lade Artikel …"));
     let (tx, rx) = mpsc::channel::<Result<Vec<wpclient::PostSummary>, String>>();
     std::thread::spawn(move || {
         let outcome = futures_lite::future::block_on(secrets::load_app_password(&site.url, &site.username))
             .map_err(|err| err.to_string())
             .and_then(|maybe_password| {
-                maybe_password.ok_or_else(|| "Kein Application Password im Schlüsselbund gefunden.".to_string())
+                maybe_password.ok_or_else(|| tr("Kein Application Password im Schlüsselbund gefunden."))
             })
             .and_then(|password| wpclient::Client::new(&site.url, &site.username, &password).list_posts().map_err(|err| err.to_string()));
         let _ = tx.send(outcome);
@@ -242,16 +243,16 @@ fn load_posts(
             *published_posts.borrow_mut() = published;
             *other_posts.borrow_mut() = other;
 
-            status_label.set_label(&format!("{total} Artikel gefunden. Zum Öffnen auswählen."));
+            status_label.set_label(&tr("{n} Artikel gefunden. Zum Öffnen auswählen.").replace("{n}", &total.to_string()));
             glib::ControlFlow::Break
         }
         Ok(Err(err)) => {
-            status_label.set_label(&format!("Fehler beim Laden: {err}"));
+            status_label.set_label(&tr("Fehler beim Laden: {err}").replace("{err}", &err));
             glib::ControlFlow::Break
         }
         Err(mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
         Err(mpsc::TryRecvError::Disconnected) => {
-            status_label.set_label("Interner Fehler: Lade-Thread hat kein Ergebnis geliefert.");
+            status_label.set_label(&tr("Interner Fehler: Lade-Thread hat kein Ergebnis geliefert."));
             glib::ControlFlow::Break
         }
     });
@@ -275,14 +276,14 @@ fn populate_group(list_box: &gtk4::ListBox, wrap: &gtk4::Box, posts: &[wpclient:
     wrap.set_visible(!posts.is_empty());
 }
 
-fn status_display(status: &str) -> &str {
+fn status_display(status: &str) -> String {
     match status {
-        "publish" => "Veröffentlicht",
-        "draft" => "Entwurf",
-        "pending" => "Ausstehend",
-        "future" => "Geplant",
-        "private" => "Privat",
-        other => other,
+        "publish" => tr("Veröffentlicht"),
+        "draft" => tr("Entwurf"),
+        "pending" => tr("Ausstehend"),
+        "future" => tr("Geplant"),
+        "private" => tr("Privat"),
+        other => other.to_string(),
     }
 }
 

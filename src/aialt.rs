@@ -23,6 +23,7 @@ use adw::prelude::*;
 use gtk4::glib;
 
 use crate::document::Frontmatter;
+use crate::i18n::tr;
 use crate::media::AltText;
 use crate::{chatconfig, export, llm, preview, secrets};
 
@@ -36,11 +37,11 @@ enum DetailLevel {
 impl DetailLevel {
     const ALL: [DetailLevel; 3] = [DetailLevel::Standard, DetailLevel::Detailed, DetailLevel::Precise];
 
-    fn label(&self) -> &'static str {
+    fn label(&self) -> String {
         match self {
-            DetailLevel::Standard => "Standard (kurz & bündig)",
-            DetailLevel::Detailed => "Ausführlich",
-            DetailLevel::Precise => "Hohe Genauigkeit",
+            DetailLevel::Standard => tr("Standard (kurz & bündig)"),
+            DetailLevel::Detailed => tr("Ausführlich"),
+            DetailLevel::Precise => tr("Hohe Genauigkeit"),
         }
     }
 
@@ -81,10 +82,11 @@ impl DetailLevel {
 pub fn open(window: &gtk4::Window, frontmatter: Rc<RefCell<Frontmatter>>, index: usize, doc_dir: Option<PathBuf>, preview_pane: Rc<preview::PreviewPane>) {
     let Some(item) = frontmatter.borrow().media.get(index).cloned() else { return };
 
-    let level_labels: Vec<&str> = DetailLevel::ALL.iter().map(DetailLevel::label).collect();
-    let level_row = adw::ComboRow::builder().title("Detailgrad").model(&gtk4::StringList::new(&level_labels)).build();
+    let level_labels: Vec<String> = DetailLevel::ALL.iter().map(DetailLevel::label).collect();
+    let level_label_refs: Vec<&str> = level_labels.iter().map(String::as_str).collect();
+    let level_row = adw::ComboRow::builder().title(tr("Detailgrad")).model(&gtk4::StringList::new(&level_label_refs)).build();
 
-    let generate_button = gtk4::Button::with_label("Text generieren");
+    let generate_button = gtk4::Button::with_label(&tr("Text generieren"));
     generate_button.add_css_class("suggested-action");
 
     let status_label = gtk4::Label::builder().wrap(true).xalign(0.0).build();
@@ -98,7 +100,7 @@ pub fn open(window: &gtk4::Window, frontmatter: Rc<RefCell<Frontmatter>>, index:
         .right_margin(8)
         .build();
     let text_buffer = text_view.buffer();
-    text_buffer.set_text("Noch kein Text generiert - auf „Text generieren“ klicken.");
+    text_buffer.set_text(&tr("Noch kein Text generiert - auf „Text generieren“ klicken."));
 
     let frame = gtk4::Frame::new(None);
     frame.set_child(Some(&text_view));
@@ -123,7 +125,7 @@ pub fn open(window: &gtk4::Window, frontmatter: Rc<RefCell<Frontmatter>>, index:
     content.append(&status_label);
     content.append(&text_scroller);
 
-    let apply_button = gtk4::Button::with_label("Übernehmen");
+    let apply_button = gtk4::Button::with_label(&tr("Übernehmen"));
     apply_button.add_css_class("suggested-action");
 
     let header = adw::HeaderBar::new();
@@ -133,7 +135,7 @@ pub fn open(window: &gtk4::Window, frontmatter: Rc<RefCell<Frontmatter>>, index:
     toolbar_view.add_top_bar(&header);
     toolbar_view.set_content(Some(&content));
 
-    let dialog = adw::Dialog::builder().title("KI-Alternativtext").content_width(460).content_height(420).child(&toolbar_view).build();
+    let dialog = adw::Dialog::builder().title(tr("KI-Alternativtext")).content_width(460).content_height(420).child(&toolbar_view).build();
 
     {
         let source = item.source.clone();
@@ -182,7 +184,7 @@ fn run_generation(
     text_buffer: &gtk4::TextBuffer,
 ) {
     generate_button.set_sensitive(false);
-    status_label.set_label("Wird generiert …");
+    status_label.set_label(&tr("Wird generiert …"));
     status_label.set_visible(true);
 
     let source = source.to_string();
@@ -199,7 +201,7 @@ fn run_generation(
             let client = if provider.needs_api_key() {
                 let key = futures_lite::future::block_on(secrets::load_llm_api_key(provider.id()))
                     .map_err(|err| err.to_string())?
-                    .ok_or_else(|| format!("Kein {}-API-Key in den Einstellungen hinterlegt.", provider.label()))?;
+                    .ok_or_else(|| tr("Kein {provider}-API-Key in den Einstellungen hinterlegt.").replace("{provider}", provider.label()))?;
                 llm::Client::new(provider, &key, &model, &base_url)
             } else {
                 llm::Client::new(provider, "", &model, &base_url)
@@ -220,13 +222,13 @@ fn run_generation(
             glib::ControlFlow::Break
         }
         Ok(Err(err)) => {
-            status_label.set_label(&format!("Fehler: {err}"));
+            status_label.set_label(&tr("Fehler: {err}").replace("{err}", &err));
             generate_button.set_sensitive(true);
             glib::ControlFlow::Break
         }
         Err(mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
         Err(mpsc::TryRecvError::Disconnected) => {
-            status_label.set_label("Interner Fehler: Generierungs-Thread hat kein Ergebnis geliefert.");
+            status_label.set_label(&tr("Interner Fehler: Generierungs-Thread hat kein Ergebnis geliefert."));
             generate_button.set_sensitive(true);
             glib::ControlFlow::Break
         }

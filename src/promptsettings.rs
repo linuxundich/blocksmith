@@ -17,9 +17,10 @@ use adw::prelude::*;
 use gtk4::{gio, glib};
 
 use crate::aiprompts::{self, CustomPrompt};
+use crate::i18n::tr;
 
 pub fn build_page(custom_prompts_menu: gio::Menu) -> adw::PreferencesPage {
-    let page = adw::PreferencesPage::builder().title("KI-Prompts").icon_name("insert-text-symbolic").build();
+    let page = adw::PreferencesPage::builder().title(tr("KI-Prompts")).icon_name("insert-text-symbolic").build();
 
     page.add(&build_builtin_prompts_group());
     page.add(&build_custom_prompts_group(&custom_prompts_menu));
@@ -28,14 +29,14 @@ pub fn build_page(custom_prompts_menu: gio::Menu) -> adw::PreferencesPage {
 }
 
 fn build_builtin_prompts_group() -> adw::PreferencesGroup {
-    let group = adw::PreferencesGroup::builder().title("Standard-Prompts").build();
-    group.set_description(Some("Die vordefinierten KI-Aktionen im Editor-Kontextmenü. Änderungen lassen sich auf die Vorgabe zurücksetzen."));
+    let group = adw::PreferencesGroup::builder().title(tr("Standard-Prompts")).build();
+    group.set_description(Some(&tr("Die vordefinierten KI-Aktionen im Editor-Kontextmenü. Änderungen lassen sich auf die Vorgabe zurücksetzen.")));
 
     for prompt in aiprompts::BUILTIN_PROMPTS {
         // Titles are plain text (e.g. "Stil & Formatierung prüfen"), not
         // Pango markup - `use_markup(false)` avoids a parse failure on the
         // unescaped "&" (Adw.ExpanderRow's title is markup by default).
-        let expander = adw::ExpanderRow::builder().title(prompt.title).use_markup(false).build();
+        let expander = adw::ExpanderRow::builder().title(aiprompts::builtin_title(prompt.id)).use_markup(false).build();
         let (editor_row, _status) = build_prompt_editor(
             prompt.id,
             {
@@ -92,7 +93,7 @@ fn build_prompt_editor(
     status.set_xalign(0.0);
     status.set_visible(false);
 
-    let reset_button = gtk4::Button::with_label("Auf Standard zurücksetzen");
+    let reset_button = gtk4::Button::with_label(&tr("Auf Standard zurücksetzen"));
     reset_button.set_halign(gtk4::Align::Start);
     let has_reset = reset_fn.is_some();
     reset_button.set_visible(has_reset);
@@ -126,8 +127,8 @@ fn build_prompt_editor(
             let is_customized = is_customized.clone();
             let id = glib::timeout_add_local(Duration::from_millis(500), move || {
                 match save(&text) {
-                    Ok(()) => status.set_label("Gespeichert."),
-                    Err(err) => status.set_label(&format!("Fehler beim Speichern: {err}")),
+                    Ok(()) => status.set_label(&tr("Gespeichert.")),
+                    Err(err) => status.set_label(&tr("Fehler beim Speichern: {err}").replace("{err}", &err.to_string())),
                 }
                 status.set_visible(true);
                 if has_reset {
@@ -148,13 +149,13 @@ fn build_prompt_editor(
         let load_for_click = load.clone();
         reset_button.connect_clicked(move |_| {
             if let Err(err) = reset_fn() {
-                status.set_label(&format!("Fehler beim Zurücksetzen: {err}"));
+                status.set_label(&tr("Fehler beim Zurücksetzen: {err}").replace("{err}", &err.to_string()));
                 status.set_visible(true);
                 return;
             }
             *suppress_autosave.borrow_mut() = true;
             buffer.set_text(&load_for_click());
-            status.set_label("Auf Standard zurückgesetzt.");
+            status.set_label(&tr("Auf Standard zurückgesetzt."));
             status.set_visible(true);
             reset_button_for_click.set_sensitive(false);
         });
@@ -172,11 +173,11 @@ fn build_prompt_editor(
 }
 
 fn build_custom_prompts_group(custom_prompts_menu: &gio::Menu) -> adw::PreferencesGroup {
-    let group = adw::PreferencesGroup::builder().title("Eigene Prompts").build();
-    group.set_description(Some("Eigene KI-Aktionen, die zusätzlich im Editor-Kontextmenü erscheinen."));
+    let group = adw::PreferencesGroup::builder().title(tr("Eigene Prompts")).build();
+    group.set_description(Some(&tr("Eigene KI-Aktionen, die zusätzlich im Editor-Kontextmenü erscheinen.")));
 
     let add_button = gtk4::Button::from_icon_name("list-add-symbolic");
-    add_button.set_tooltip_text(Some("Neuen Prompt hinzufügen"));
+    add_button.set_tooltip_text(Some(&tr("Neuen Prompt hinzufügen")));
     add_button.add_css_class("flat");
     group.set_header_suffix(Some(&add_button));
 
@@ -213,11 +214,11 @@ fn build_custom_prompts_group(custom_prompts_menu: &gio::Menu) -> adw::Preferenc
     ) -> adw::ExpanderRow {
         let prompt = prompts.borrow()[index].clone();
         let expander = adw::ExpanderRow::builder()
-            .title(if prompt.title.is_empty() { "Neuer Prompt".to_string() } else { prompt.title.clone() })
+            .title(if prompt.title.is_empty() { tr("Neuer Prompt") } else { prompt.title.clone() })
             .use_markup(false)
             .build();
 
-        let title_row = adw::EntryRow::builder().title("Titel").text(prompt.title.as_str()).build();
+        let title_row = adw::EntryRow::builder().title(tr("Titel")).text(prompt.title.as_str()).build();
         {
             let prompts = prompts.clone();
             let custom_prompts_menu = custom_prompts_menu.clone();
@@ -236,7 +237,7 @@ fn build_custom_prompts_group(custom_prompts_menu: &gio::Menu) -> adw::Preferenc
                     if let Some(p) = prompts.borrow_mut().get_mut(index) {
                         p.title = text.clone();
                     }
-                    expander_for_title.set_title(if text.is_empty() { "Neuer Prompt" } else { &text });
+                    expander_for_title.set_title(&if text.is_empty() { tr("Neuer Prompt") } else { text.clone() });
                     persist_and_refresh_menu(&prompts.borrow(), &custom_prompts_menu);
                     *debounce_inner.borrow_mut() = None;
                     glib::ControlFlow::Break
@@ -282,7 +283,7 @@ fn build_custom_prompts_group(custom_prompts_menu: &gio::Menu) -> adw::Preferenc
         }
 
         let delete_button = gtk4::Button::from_icon_name("user-trash-symbolic");
-        delete_button.set_tooltip_text(Some("Diesen Prompt löschen"));
+        delete_button.set_tooltip_text(Some(&tr("Diesen Prompt löschen")));
         delete_button.add_css_class("flat");
         {
             let prompts = prompts.clone();
@@ -299,7 +300,7 @@ fn build_custom_prompts_group(custom_prompts_menu: &gio::Menu) -> adw::Preferenc
         }
 
         let template_box = gtk4::Box::builder().orientation(gtk4::Orientation::Vertical).spacing(4).margin_top(4).margin_bottom(8).margin_start(8).margin_end(8).build();
-        let template_label = gtk4::Label::builder().label("Prompt-Text").xalign(0.0).build();
+        let template_label = gtk4::Label::builder().label(tr("Prompt-Text")).xalign(0.0).build();
         template_label.add_css_class("dim-label");
         template_box.append(&template_label);
         template_box.append(&template_scroller);

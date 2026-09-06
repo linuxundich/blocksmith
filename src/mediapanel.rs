@@ -20,6 +20,7 @@ use adw::prelude::*;
 use gtk4::glib;
 
 use crate::document::Frontmatter;
+use crate::i18n::tr;
 use crate::media::{self, AltText, UploadStatus};
 use crate::{export, preview, secrets, wpclient, wpsite};
 
@@ -38,7 +39,7 @@ pub fn open(
     toolbar_view.set_content(Some(&content));
 
     let dialog = adw::Dialog::builder()
-        .title("Medienverwaltung")
+        .title(tr("Medienverwaltung"))
         .content_width(560)
         .content_height(600)
         .child(&toolbar_view)
@@ -91,30 +92,38 @@ pub fn build_content(frontmatter: Rc<RefCell<Frontmatter>>, body: &str, doc_dir:
     content_box.upcast()
 }
 
+/// Every branch here is a complete, self-contained sentence (never grammar
+/// fragments concatenated at runtime) precisely so a translation can use
+/// its own language's plural/verb agreement instead of inheriting German's -
+/// see `po/README.md`'s note on pluralization for why.
 fn summary_text(frontmatter: &Rc<RefCell<Frontmatter>>) -> String {
     let fm = frontmatter.borrow();
-    if fm.media.is_empty() {
-        return "Dieser Artikel enthält aktuell keine Bilder.".to_string();
+    let total = fm.media.len();
+    if total == 0 {
+        return tr("Dieser Artikel enthält aktuell keine Bilder.");
     }
     let missing_alt = fm.media.iter().filter(|item| item.alt.is_undefined()).count();
-    if missing_alt > 0 {
-        format!(
-            "{missing_alt} von {} Bild{} {} noch keinen Alternativtext.",
-            fm.media.len(),
-            if fm.media.len() == 1 { "" } else { "ern" },
-            if missing_alt == 1 { "hat" } else { "haben" }
-        )
-    } else {
-        format!("{} Bild{} in diesem Artikel.", fm.media.len(), if fm.media.len() == 1 { "" } else { "er" })
+    if missing_alt == 0 {
+        return match total {
+            1 => tr("1 Bild in diesem Artikel."),
+            n => tr("{n} Bilder in diesem Artikel.").replace("{n}", &n.to_string()),
+        };
+    }
+    match (missing_alt, total) {
+        (1, 1) => tr("1 Bild hat noch keinen Alternativtext."),
+        (1, total) => tr("1 von {total} Bildern hat noch keinen Alternativtext.").replace("{total}", &total.to_string()),
+        (missing, total) => tr("{missing} von {total} Bildern haben noch keinen Alternativtext.")
+            .replace("{missing}", &missing.to_string())
+            .replace("{total}", &total.to_string()),
     }
 }
 
 fn upload_status_text(status: &UploadStatus) -> String {
     match status {
-        UploadStatus::NotUploaded => "Noch nicht zu WordPress hochgeladen".to_string(),
-        UploadStatus::Uploading => "Wird hochgeladen …".to_string(),
-        UploadStatus::Uploaded(reference) => format!("Bereits hochgeladen (Medien-ID {})", reference.media_id),
-        UploadStatus::Failed(err) => format!("Fehler beim letzten Upload: {err}"),
+        UploadStatus::NotUploaded => tr("Noch nicht zu WordPress hochgeladen"),
+        UploadStatus::Uploading => tr("Wird hochgeladen …"),
+        UploadStatus::Uploaded(reference) => tr("Bereits hochgeladen (Medien-ID {id})").replace("{id}", &reference.media_id.to_string()),
+        UploadStatus::Failed(err) => tr("Fehler beim letzten Upload: {err}").replace("{err}", err),
     }
 }
 
@@ -131,12 +140,12 @@ fn build_row(
     expander.set_subtitle(&upload_status_text(&item.upload_status()));
 
     let alt_switch_row = adw::SwitchRow::builder()
-        .title("Alternativtext definieren")
-        .subtitle("Aus lassen für rein dekorative Bilder - das ist kein Fehler")
+        .title(tr("Alternativtext definieren"))
+        .subtitle(tr("Aus lassen für rein dekorative Bilder - das ist kein Fehler"))
         .active(!item.alt.is_undefined())
         .build();
 
-    let alt_entry_row = adw::EntryRow::builder().title("Alternativtext").build();
+    let alt_entry_row = adw::EntryRow::builder().title(tr("Alternativtext")).build();
     if let AltText::Text(text) = &item.alt {
         alt_entry_row.set_text(text);
     }
@@ -184,7 +193,7 @@ fn build_row(
         });
     }
 
-    let caption_row = adw::EntryRow::builder().title("Bildunterschrift").text(item.caption.as_deref().unwrap_or("")).build();
+    let caption_row = adw::EntryRow::builder().title(tr("Bildunterschrift")).text(item.caption.as_deref().unwrap_or("")).build();
     {
         let frontmatter = frontmatter.clone();
         caption_row.connect_changed(move |row| {
@@ -195,7 +204,7 @@ fn build_row(
         });
     }
 
-    let upload_button = gtk4::Button::with_label(if item.wordpress.is_some() { "Erneut hochladen" } else { "Zu WordPress hochladen" });
+    let upload_button = gtk4::Button::with_label(&if item.wordpress.is_some() { tr("Erneut hochladen") } else { tr("Zu WordPress hochladen") });
     let upload_status_label = gtk4::Label::new(None);
     upload_status_label.set_xalign(0.0);
     upload_status_label.set_wrap(true);
@@ -225,7 +234,7 @@ fn build_row(
             };
 
             upload_button_for_click.set_sensitive(false);
-            upload_status_label.set_label("Wird hochgeladen …");
+            upload_status_label.set_label(&tr("Wird hochgeladen …"));
             expander.set_subtitle(&upload_status_text(&UploadStatus::Uploading));
 
             let site = wpsite::load();
@@ -235,7 +244,7 @@ fn build_row(
                 let outcome = futures_lite::future::block_on(secrets::load_app_password(&site.url, &site.username))
                     .map_err(|err| err.to_string())
                     .and_then(|maybe_password| {
-                        maybe_password.ok_or_else(|| "Kein Application Password im Schlüsselbund gefunden.".to_string())
+                        maybe_password.ok_or_else(|| tr("Kein Application Password im Schlüsselbund gefunden."))
                     })
                     .and_then(|password| {
                         let client = wpclient::Client::new(&site.url, &site.username, &password);
@@ -271,20 +280,20 @@ fn build_row(
                     }
                     preview_pane.refresh_media(&frontmatter.borrow().media);
                     expander.set_subtitle(&upload_status_text(&UploadStatus::Uploaded(reference)));
-                    upload_status_label.set_label("Erfolgreich hochgeladen.");
-                    upload_button.set_label("Erneut hochladen");
+                    upload_status_label.set_label(&tr("Erfolgreich hochgeladen."));
+                    upload_button.set_label(&tr("Erneut hochladen"));
                     upload_button.set_sensitive(true);
                     glib::ControlFlow::Break
                 }
                 Ok(Err(err)) => {
                     expander.set_subtitle(&upload_status_text(&UploadStatus::Failed(err.clone())));
-                    upload_status_label.set_label(&format!("Fehler: {err}"));
+                    upload_status_label.set_label(&tr("Fehler: {err}").replace("{err}", &err));
                     upload_button.set_sensitive(true);
                     glib::ControlFlow::Break
                 }
                 Err(mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
                 Err(mpsc::TryRecvError::Disconnected) => {
-                    upload_status_label.set_label("Interner Fehler: Upload-Thread hat kein Ergebnis geliefert.");
+                    upload_status_label.set_label(&tr("Interner Fehler: Upload-Thread hat kein Ergebnis geliefert."));
                     upload_button.set_sensitive(true);
                     glib::ControlFlow::Break
                 }

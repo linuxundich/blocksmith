@@ -25,6 +25,7 @@ use gtk4::{gio, glib};
 
 use crate::aiprompts::{self, CustomPrompt};
 use crate::chat::ChatView;
+use crate::i18n::tr;
 
 pub struct AiMenuHandles {
     pub custom_prompts_menu: gio::Menu,
@@ -46,18 +47,19 @@ pub fn install(
 
     let builtin_actions = gio::Menu::new();
     for prompt in aiprompts::BUILTIN_PROMPTS {
+        let title = aiprompts::builtin_title(prompt.id);
         if prompt.id == "adjust-length" {
-            let item = gio::MenuItem::new(Some(&format!("{} …", prompt.title)), Some("ai.adjust-length"));
+            let item = gio::MenuItem::new(Some(&format!("{title} …")), Some("ai.adjust-length"));
             builtin_actions.append_item(&item);
         } else {
-            builtin_actions.append_item(&run_menu_item(prompt.title, prompt.id));
+            builtin_actions.append_item(&run_menu_item(&title, prompt.id));
         }
     }
 
     let combined_extra_menu = gio::Menu::new();
     combined_extra_menu.append_section(None, spelling_menu);
     combined_extra_menu.append_section(None, image_alt_menu);
-    combined_extra_menu.append_section(Some("KI-Aktionen"), &builtin_actions);
+    combined_extra_menu.append_section(Some(&tr("KI-Aktionen")), &builtin_actions);
     combined_extra_menu.append_section(None, &custom_prompts_menu);
     view.set_extra_menu(Some(&combined_extra_menu));
 
@@ -130,7 +132,7 @@ fn trigger_prompt_run(buffer: &sourceview5::Buffer, view_stack: &adw::ViewStack,
         };
         (prompt.title, prompt.template)
     } else {
-        (aiprompts::builtin_title(id).to_string(), aiprompts::load_prompt_text(id))
+        (aiprompts::builtin_title(id), aiprompts::load_prompt_text(id))
     };
     let full_prompt = format!("{template}\n\n---\n\n{content}");
     dispatch_to_chat(view_stack, chat_view, &title, full_prompt);
@@ -138,19 +140,19 @@ fn trigger_prompt_run(buffer: &sourceview5::Buffer, view_stack: &adw::ViewStack,
 
 fn open_adjust_length_dialog(window: &gtk4::Window, buffer: &sourceview5::Buffer, view_stack: &adw::ViewStack, chat_view: Rc<ChatView>) {
     let dialog = adw::AlertDialog::builder()
-        .heading("Länge anpassen")
-        .body("Wie soll die Auswahl (oder der ganze Artikel, falls nichts markiert ist) angepasst werden?")
+        .heading(tr("Länge anpassen"))
+        .body(tr("Wie soll die Auswahl (oder der ganze Artikel, falls nichts markiert ist) angepasst werden?"))
         .build();
-    dialog.add_response("cancel", "Abbrechen");
-    dialog.add_response("apply", "Anwenden");
+    dialog.add_response("cancel", &tr("Abbrechen"));
+    dialog.add_response("apply", &tr("Anwenden"));
     dialog.set_default_response(Some("apply"));
     dialog.set_response_appearance("apply", adw::ResponseAppearance::Suggested);
 
     let amount_adjustment = gtk4::Adjustment::new(800.0, 1.0, 100_000.0, 10.0, 100.0, 0.0);
-    let amount_row = adw::SpinRow::builder().title("Zielumfang").adjustment(&amount_adjustment).build();
+    let amount_row = adw::SpinRow::builder().title(tr("Zielumfang")).adjustment(&amount_adjustment).build();
 
-    let words_toggle = gtk4::ToggleButton::with_label("Wörter");
-    let chars_toggle = gtk4::ToggleButton::with_label("Zeichen");
+    let words_toggle = gtk4::ToggleButton::with_label(&tr("Wörter"));
+    let chars_toggle = gtk4::ToggleButton::with_label(&tr("Zeichen"));
     chars_toggle.set_group(Some(&words_toggle));
     words_toggle.set_active(true);
     let unit_box = gtk4::Box::builder().orientation(gtk4::Orientation::Horizontal).spacing(0).build();
@@ -158,8 +160,8 @@ fn open_adjust_length_dialog(window: &gtk4::Window, buffer: &sourceview5::Buffer
     unit_box.append(&words_toggle);
     unit_box.append(&chars_toggle);
 
-    let approx_toggle = gtk4::ToggleButton::with_label("Etwa");
-    let exact_toggle = gtk4::ToggleButton::with_label("Genau");
+    let approx_toggle = gtk4::ToggleButton::with_label(&tr("Etwa"));
+    let exact_toggle = gtk4::ToggleButton::with_label(&tr("Genau"));
     exact_toggle.set_group(Some(&approx_toggle));
     approx_toggle.set_active(true);
     let precision_box = gtk4::Box::builder().orientation(gtk4::Orientation::Horizontal).spacing(0).build();
@@ -187,7 +189,7 @@ fn open_adjust_length_dialog(window: &gtk4::Window, buffer: &sourceview5::Buffer
         let content = crate::editor::selected_or_full_text(&buffer);
         let template = aiprompts::load_prompt_text("adjust-length").replace("{length_instruction}", &length_instruction);
         let full_prompt = format!("{template}\n\n---\n\n{content}");
-        dispatch_to_chat(&view_stack, &chat_view, &format!("Länge anpassen ({length_instruction})"), full_prompt);
+        dispatch_to_chat(&view_stack, &chat_view, &format!("{} ({length_instruction})", tr("Länge anpassen")), full_prompt);
     });
 
     dialog.present(Some(window));

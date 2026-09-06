@@ -10,45 +10,54 @@ use std::path::PathBuf;
 use gtk4::glib;
 use serde_json::Value;
 
+use crate::i18n::tr;
+
 pub struct BuiltinPrompt {
     pub id: &'static str,
-    pub title: &'static str,
     pub default_template: &'static str,
 }
 
 /// The five built-in context-menu actions. `adjust-length`'s template
 /// contains a `{length_instruction}` placeholder filled in from the "Länge
-/// anpassen" dialog's inputs.
+/// anpassen" dialog's inputs. Display titles live in [`builtin_title`], not
+/// here - they need to go through `tr()`, which can't be called in a
+/// `const` initializer.
 pub const BUILTIN_PROMPTS: &[BuiltinPrompt] = &[
     BuiltinPrompt {
         id: "check-content",
-        title: "Inhalt prüfen",
         default_template: "Prüfe den folgenden Artikel bzw. Abschnitt auf inhaltliche und technische Korrektheit. Recherchiere bei Bedarf im Internet, um Fakten, Versionsnummern, Befehle und technische Zusammenhänge zu verifizieren. Liste gefundene Fehler oder fragwürdige Aussagen übersichtlich auf, jeweils mit kurzer Begründung und - falls zutreffend - einer Quelle. Schlage Korrekturen vor, gib aber keine komplette Neufassung des Textes aus, sondern nur die Liste der Befunde.",
     },
     BuiltinPrompt {
         id: "check-style",
-        title: "Stil & Formatierung prüfen",
         default_template: "Prüfe den folgenden Artikel bzw. Abschnitt auf Schreibstil und übliche Formatierung. Orientiere dich dabei an bestehenden Artikeln dieses Blogs (Tonfall, Ansprache der Leser, typische Satzlänge, Einsatz von Zwischenüberschriften, Code-Formatierung, Aufzählungen). Liste Abweichungen übersichtlich auf und schlage konkrete Verbesserungen vor. Gib im Anschluss zusätzlich eine überarbeitete Fassung des Textes aus, die Inhalt und Kernaussagen unverändert lässt.",
     },
     BuiltinPrompt {
         id: "check-spelling",
-        title: "Rechtschreibung prüfen",
         default_template: "Prüfe den folgenden Artikel bzw. Abschnitt auf Rechtschreibfehler. Stelle mir die gefundenen Fehler übersichtlich als Liste zusammen (jeweils die fehlerhafte Stelle und die Korrektur). Gib im Anschluss den vollständig korrigierten Text aus - inhaltlich und stilistisch unverändert, nur mit korrigierter Rechtschreibung.",
     },
     BuiltinPrompt {
         id: "check-punctuation",
-        title: "Zeichensetzung prüfen",
         default_template: "Prüfe den folgenden Artikel bzw. Abschnitt auf Fehler in der Zeichensetzung (Kommasetzung, Anführungszeichen, Bindestriche/Gedankenstriche, sonstige Satzzeichen). Stelle mir die gefundenen Fehler übersichtlich als Liste zusammen (jeweils die fehlerhafte Stelle und die Korrektur). Gib im Anschluss den vollständig korrigierten Text aus - inhaltlich und stilistisch unverändert, nur mit korrigierter Zeichensetzung.",
     },
     BuiltinPrompt {
         id: "adjust-length",
-        title: "Länge anpassen",
         default_template: "Passe die Länge des folgenden Artikels bzw. Abschnitts {length_instruction} an. Kürze bzw. erweitere passend zum bestehenden Schreibstil und behalte die Kernaussagen bei. Gib ausschließlich den angepassten Text aus, ohne zusätzliche Erklärungen.",
     },
 ];
 
-pub fn builtin_title(id: &str) -> &'static str {
-    BUILTIN_PROMPTS.iter().find(|p| p.id == id).map(|p| p.title).unwrap_or("KI-Aktion")
+/// The translated display title for a built-in prompt - `BuiltinPrompt.title`
+/// itself stays the fixed German key used for lookups/JSON, since `tr()`
+/// needs a literal at its call site (see `po/README.md`) and can't see
+/// through that field.
+pub fn builtin_title(id: &str) -> String {
+    match id {
+        "check-content" => tr("Inhalt prüfen"),
+        "check-style" => tr("Stil & Formatierung prüfen"),
+        "check-spelling" => tr("Rechtschreibung prüfen"),
+        "check-punctuation" => tr("Zeichensetzung prüfen"),
+        "adjust-length" => tr("Länge anpassen"),
+        _ => tr("KI-Aktion"),
+    }
 }
 
 fn default_template_for(id: &str) -> &'static str {

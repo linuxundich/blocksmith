@@ -26,6 +26,7 @@ use gtk4::gio;
 
 use crate::aialt;
 use crate::document::{self, Frontmatter};
+use crate::i18n::tr;
 use crate::media::{self, AltText};
 use crate::preview;
 
@@ -33,8 +34,8 @@ use crate::preview;
 /// `extra-menu` (see `aimenu.rs`, the sole caller of `view.set_extra_menu`).
 pub fn menu_section() -> gio::Menu {
     let menu = gio::Menu::new();
-    menu.append(Some("Alternativtext festlegen…"), Some("imagealt.set"));
-    menu.append(Some("KI-Alternativtext generieren…"), Some("imagealt.generate-ai"));
+    menu.append(Some(&tr("Alternativtext festlegen…")), Some("imagealt.set"));
+    menu.append(Some(&tr("KI-Alternativtext generieren…")), Some("imagealt.generate-ai"));
     menu
 }
 
@@ -122,10 +123,10 @@ fn generate_ai_for_line(
     let is_image = |source: &String| document::media_reference_kind(source) == document::MediaReferenceKind::Image;
     let Some(source) = image_source_on_line(&body, line).filter(is_image) else {
         let alert = adw::AlertDialog::builder()
-            .heading("Keine Bildreferenz gefunden")
-            .body("Für den KI-Alternativtext bitte mit der rechten Maustaste auf eine Zeile mit einem Bild (![Beschreibung](bild.png)) klicken.")
+            .heading(tr("Keine Bildreferenz gefunden"))
+            .body(tr("Für den KI-Alternativtext bitte mit der rechten Maustaste auf eine Zeile mit einem Bild (![Beschreibung](bild.png)) klicken."))
             .build();
-        alert.add_response("ok", "OK");
+        alert.add_response("ok", &tr("OK"));
         alert.present(Some(window));
         return;
     };
@@ -153,10 +154,10 @@ fn open_for_line(window: &gtk4::Window, buffer: &sourceview5::Buffer, frontmatte
 
     let Some(source) = image_source_on_line(&body, line) else {
         let alert = adw::AlertDialog::builder()
-            .heading("Keine Bildreferenz gefunden")
-            .body("Für den Alternativtext bitte mit der rechten Maustaste auf eine Zeile mit einem Bild (![Beschreibung](bild.png)) klicken.")
+            .heading(tr("Keine Bildreferenz gefunden"))
+            .body(tr("Für den Alternativtext bitte mit der rechten Maustaste auf eine Zeile mit einem Bild (![Beschreibung](bild.png)) klicken."))
             .build();
-        alert.add_response("ok", "OK");
+        alert.add_response("ok", &tr("OK"));
         alert.present(Some(window));
         return;
     };
@@ -171,12 +172,12 @@ fn open_for_line(window: &gtk4::Window, buffer: &sourceview5::Buffer, frontmatte
     let item = frontmatter.borrow().media[index].clone();
 
     let alt_switch_row = adw::SwitchRow::builder()
-        .title("Alternativtext definieren")
-        .subtitle("Aus lassen für rein dekorative Bilder - das ist kein Fehler")
+        .title(tr("Alternativtext definieren"))
+        .subtitle(tr("Aus lassen für rein dekorative Bilder - das ist kein Fehler"))
         .active(!item.alt.is_undefined())
         .build();
 
-    let alt_entry_row = adw::EntryRow::builder().title("Alternativtext").build();
+    let alt_entry_row = adw::EntryRow::builder().title(tr("Alternativtext")).build();
     if let AltText::Text(text) = &item.alt {
         alt_entry_row.set_text(text);
     }
@@ -216,7 +217,7 @@ fn open_for_line(window: &gtk4::Window, buffer: &sourceview5::Buffer, frontmatte
         });
     }
 
-    let caption_row = adw::EntryRow::builder().title("Bildunterschrift").text(item.caption.as_deref().unwrap_or("")).build();
+    let caption_row = adw::EntryRow::builder().title(tr("Bildunterschrift")).text(item.caption.as_deref().unwrap_or("")).build();
     {
         let frontmatter = frontmatter.clone();
         caption_row.connect_changed(move |row| {
@@ -240,7 +241,7 @@ fn open_for_line(window: &gtk4::Window, buffer: &sourceview5::Buffer, frontmatte
     toolbar_view.add_top_bar(&adw::HeaderBar::new());
     toolbar_view.set_content(Some(&content));
 
-    let dialog = adw::Dialog::builder().title("Alternativtext").content_width(420).content_height(340).child(&toolbar_view).build();
+    let dialog = adw::Dialog::builder().title(tr("Alternativtext")).content_width(420).content_height(340).child(&toolbar_view).build();
     dialog.present(Some(window));
 }
 

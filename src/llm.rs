@@ -10,6 +10,8 @@ use std::time::Duration;
 use base64::Engine;
 use serde_json::Value;
 
+use crate::i18n::tr;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Provider {
     Gemini,
@@ -160,7 +162,7 @@ impl Client {
             .and_then(Value::as_str)
             .map(str::to_string)
             .ok_or_else(|| ApiError {
-                message: "Keine Antwort erhalten (möglicherweise durch einen Sicherheitsfilter blockiert).".to_string(),
+                message: tr("Keine Antwort erhalten (möglicherweise durch einen Sicherheitsfilter blockiert)."),
             })
     }
 
@@ -187,7 +189,7 @@ impl Client {
             .pointer("/choices/0/message/content")
             .and_then(Value::as_str)
             .map(str::to_string)
-            .ok_or_else(|| ApiError { message: "Keine Antwort erhalten.".to_string() })
+            .ok_or_else(|| ApiError { message: tr("Keine Antwort erhalten.") })
     }
 
     fn send_claude(&self, system_prompt: &str, history: &[ChatMessage]) -> Result<String> {
@@ -218,7 +220,7 @@ impl Client {
             .pointer("/content/0/text")
             .and_then(Value::as_str)
             .map(str::to_string)
-            .ok_or_else(|| ApiError { message: "Keine Antwort erhalten.".to_string() })
+            .ok_or_else(|| ApiError { message: tr("Keine Antwort erhalten.") })
     }
 
     fn send_ollama(&self, system_prompt: &str, history: &[ChatMessage]) -> Result<String> {
@@ -275,7 +277,7 @@ impl Client {
             .and_then(Value::as_str)
             .map(str::to_string)
             .ok_or_else(|| ApiError {
-                message: "Keine Antwort erhalten (möglicherweise durch einen Sicherheitsfilter blockiert).".to_string(),
+                message: tr("Keine Antwort erhalten (möglicherweise durch einen Sicherheitsfilter blockiert)."),
             })
     }
 
@@ -291,7 +293,7 @@ impl Client {
             .pointer("/choices/0/message/content")
             .and_then(Value::as_str)
             .map(str::to_string)
-            .ok_or_else(|| ApiError { message: "Keine Antwort erhalten.".to_string() })
+            .ok_or_else(|| ApiError { message: tr("Keine Antwort erhalten.") })
     }
 
     fn describe_image_claude(&self, prompt: &str, mime_type: &str, data: &str) -> Result<String> {
@@ -309,7 +311,7 @@ impl Client {
             .pointer("/content/0/text")
             .and_then(Value::as_str)
             .map(str::to_string)
-            .ok_or_else(|| ApiError { message: "Keine Antwort erhalten.".to_string() })
+            .ok_or_else(|| ApiError { message: tr("Keine Antwort erhalten.") })
     }
 
     fn describe_image_ollama(&self, prompt: &str, data: &str) -> Result<String> {
@@ -510,7 +512,7 @@ fn extract_ollama_models(value: &Value) -> Vec<String> {
 
 fn parse_json(body_text: &str) -> Result<Value> {
     serde_json::from_str(body_text).map_err(|err| ApiError {
-        message: format!("Antwort nicht lesbar: {err}"),
+        message: tr("Antwort nicht lesbar: {err}").replace("{err}", &err.to_string()),
     })
 }
 
