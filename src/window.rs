@@ -15,7 +15,7 @@ use crate::{
 
 const DEBOUNCE_MS: u64 = 250;
 
-pub fn build(app: &adw::Application) -> adw::ApplicationWindow {
+pub fn build(app: &adw::Application, initial_path: Option<PathBuf>) -> adw::ApplicationWindow {
     let saved_window_state = windowstate::load();
 
     let (editor_scroller, view, buffer, spelling_menu) = editor::build();
@@ -282,6 +282,7 @@ pub fn build(app: &adw::Application) -> adw::ApplicationWindow {
     wire_status_bar(&buffer, &status_bar);
     wire_new_action(&window, &buffer, &current_path, &frontmatter, &title, &preview_pane, &saved_text);
     wire_open_action(&window, &doc_ctx);
+    wire_open_path_action(&window, &doc_ctx);
     wire_open_from_wordpress_action(&window, &buffer, &current_path, &frontmatter, &title, &preview_pane, &saved_text);
     wire_save_action(&window, &doc_ctx);
     let recent_files_widgets = RecentFilesWidgets {
@@ -303,6 +304,10 @@ pub fn build(app: &adw::Application) -> adw::ApplicationWindow {
     wire_startup_recovery(&window, &buffer, &current_path, &frontmatter, &title, &preview_pane);
     wire_find_action(&window, &search_bar);
     window.set_help_overlay(Some(&shortcuts::build()));
+
+    if let Some(path) = initial_path {
+        open_document_at_path(path, &doc_ctx);
+    }
 
     window
 }
@@ -585,6 +590,23 @@ fn wire_open_action(window: &adw::ApplicationWindow, ctx: &DocContext) {
     window.add_action(&action);
 }
 
+/// Backs `main.rs`'s `Gio::Application::connect_open` (the desktop
+/// double-click/"Open With" path, now that the `.desktop` file declares
+/// `MimeType=text/markdown;`): a plain string-parameter action so the
+/// already-running primary instance can be told to open a path via
+/// `window.activate_action("win.open-path", Some(&path.to_variant()))`,
+/// the same GAction plumbing every other window-level command here already
+/// uses, rather than reaching into the window for its private `DocContext`.
+fn wire_open_path_action(window: &adw::ApplicationWindow, ctx: &DocContext) {
+    let action = gio::SimpleAction::new("open-path", Some(&String::static_variant_type()));
+    let ctx = ctx.clone();
+    action.connect_activate(move |_, param| {
+        let Some(path_str) = param.and_then(glib::Variant::str) else { return };
+        open_document_at_path(PathBuf::from(path_str), &ctx);
+    });
+    window.add_action(&action);
+}
+
 /// Loads the article at `path` into the editor - shared by the "Öffnen"
 /// file-dialog callback and every "Zuletzt geöffnet" popover row, since
 /// both need to do exactly the same thing with a path once they have one.
@@ -600,12 +622,24 @@ fn open_document_at_path(path: PathBuf, ctx: &DocContext) {
             *ctx.frontmatter.borrow_mut() = doc.frontmatter;
             let doc_dir = path.parent().map(Path::to_path_buf);
             let _ = recentfiles::record(&path);
+            register_recent_file(&path);
             *ctx.current_path.borrow_mut() = Some(path);
             ctx.preview_pane.set_doc_dir(doc_dir);
             autosave::clear();
         }
         Err(err) => show_toast(&ctx.toast_overlay, &tr("Öffnen fehlgeschlagen: {err}").replace("{err}", &err.to_string())),
     }
+}
+
+/// Registers `path` with GLib's shared `Gio::RecentManager` - the
+/// system-wide "recently used" list GNOME Files' "Zuletzt verwendet" view
+/// and other apps' own file-open dialogs read from, distinct from
+/// `recentfiles`'s own private "Zuletzt geöffnet" popover list above.
+/// Best-effort: a failure here (e.g. no recent-files store available)
+/// isn't worth surfacing to the user over.
+fn register_recent_file(path: &Path) {
+    let uri = gio::File::for_path(path).uri();
+    gtk4::RecentManager::default().add_item(&uri);
 }
 
 /// The three widgets making up the "Zuletzt geöffnet" popover - bundled
@@ -741,6 +775,7 @@ fn wire_save_action(window: &adw::ApplicationWindow, ctx: &DocContext) {
             ctx.title.set_subtitle(&subtitle_for(Some(&path), &doc.frontmatter));
             let doc_dir = path.parent().map(Path::to_path_buf);
             let _ = recentfiles::record(&path);
+            register_recent_file(&path);
             *ctx.current_path.borrow_mut() = Some(path);
             ctx.preview_pane.set_doc_dir(doc_dir);
             *ctx.saved_text.borrow_mut() = doc.body.clone();

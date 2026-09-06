@@ -83,6 +83,16 @@ pub struct Frontmatter {
     /// falls back to an auto-truncated (often mid-sentence) chunk of the
     /// body instead.
     pub excerpt: Option<String>,
+    /// RankMath SEO plugin fields, sent as the WordPress post meta keys
+    /// RankMath itself registers (`rank_math_title`/
+    /// `rank_math_description`/`rank_math_focus_keyword`) - only
+    /// meaningful on a site that actually has RankMath active. WordPress's
+    /// REST API silently drops an unrecognized meta key rather than
+    /// erroring, so sending these is always safe even against a site
+    /// without RankMath.
+    pub rank_math_title: Option<String>,
+    pub rank_math_description: Option<String>,
+    pub rank_math_focus_keyword: Option<String>,
     pub featured_image: Option<String>,
     /// Set once the document has been published/updated via the WordPress
     /// REST API (see M5), so re-exporting updates the same post.
@@ -164,6 +174,15 @@ pub fn parse(input: &str) -> Document {
             "excerpt" => {
                 frontmatter.excerpt = (!value.is_empty()).then(|| unquote(value));
             }
+            "rank_math_title" => {
+                frontmatter.rank_math_title = (!value.is_empty()).then(|| unquote(value));
+            }
+            "rank_math_description" => {
+                frontmatter.rank_math_description = (!value.is_empty()).then(|| unquote(value));
+            }
+            "rank_math_focus_keyword" => {
+                frontmatter.rank_math_focus_keyword = (!value.is_empty()).then(|| unquote(value));
+            }
             "featured_image" => {
                 frontmatter.featured_image = (!value.is_empty()).then(|| unquote(value));
             }
@@ -203,6 +222,15 @@ pub fn serialize(doc: &Document) -> String {
     out.push_str(&format!("tags: {}\n", render_list(&fm.tags)));
     if let Some(excerpt) = &fm.excerpt {
         out.push_str(&format!("excerpt: \"{}\"\n", escape(excerpt)));
+    }
+    if let Some(title) = &fm.rank_math_title {
+        out.push_str(&format!("rank_math_title: \"{}\"\n", escape(title)));
+    }
+    if let Some(description) = &fm.rank_math_description {
+        out.push_str(&format!("rank_math_description: \"{}\"\n", escape(description)));
+    }
+    if let Some(keyword) = &fm.rank_math_focus_keyword {
+        out.push_str(&format!("rank_math_focus_keyword: \"{}\"\n", escape(keyword)));
     }
     if let Some(img) = &fm.featured_image {
         out.push_str(&format!("featured_image: \"{}\"\n", escape(img)));
@@ -481,6 +509,9 @@ mod tests {
                      categories: [\"Tech\", \"Rust\"]\n\
                      tags: [\"gtk\", \"wordpress\"]\n\
                      excerpt: \"A short summary.\"\n\
+                     rank_math_title: \"SEO Title\"\n\
+                     rank_math_description: \"SEO description.\"\n\
+                     rank_math_focus_keyword: \"gtk markdown editor\"\n\
                      featured_image: \"/tmp/cat.png\"\n\
                      wp_post_id: 42\n\
                      wp_featured_media_id: 7\n\
@@ -494,6 +525,9 @@ mod tests {
         assert_eq!(doc.frontmatter.categories, vec!["Tech", "Rust"]);
         assert_eq!(doc.frontmatter.tags, vec!["gtk", "wordpress"]);
         assert_eq!(doc.frontmatter.excerpt.as_deref(), Some("A short summary."));
+        assert_eq!(doc.frontmatter.rank_math_title.as_deref(), Some("SEO Title"));
+        assert_eq!(doc.frontmatter.rank_math_description.as_deref(), Some("SEO description."));
+        assert_eq!(doc.frontmatter.rank_math_focus_keyword.as_deref(), Some("gtk markdown editor"));
         assert_eq!(doc.frontmatter.featured_image.as_deref(), Some("/tmp/cat.png"));
         assert_eq!(doc.frontmatter.wp_post_id, Some(42));
         assert_eq!(doc.frontmatter.featured_media_id, Some(7));
@@ -520,6 +554,9 @@ mod tests {
                 categories: vec!["Cat A".to_string(), "Cat B".to_string()],
                 tags: vec!["one".to_string()],
                 excerpt: Some("A short excerpt with \"quotes\".".to_string()),
+                rank_math_title: Some("SEO Title".to_string()),
+                rank_math_description: Some("An SEO description.".to_string()),
+                rank_math_focus_keyword: Some("gtk markdown editor".to_string()),
                 featured_image: None,
                 wp_post_id: Some(7),
                 featured_media_id: Some(99),

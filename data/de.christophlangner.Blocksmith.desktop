@@ -8,3 +8,4 @@ Type=Application
 Categories=Office;TextEditor;
 Keywords=Markdown;WordPress;Gutenberg;Blog;Editor;
 StartupNotify=true
+MimeType=text/markdown;

@@ -15,7 +15,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use pulldown_cmark::{Event, Parser, Tag, TagEnd};
+use pulldown_cmark::{CodeBlockKind, Event, Parser, Tag, TagEnd};
 use serde_json::Value;
 use sha2::Digest;
 
@@ -130,15 +130,34 @@ impl MediaItem {
 /// seen for the first time (see `reconcile`) - Markdown itself still can't
 /// distinguish "alt intentionally left blank" from "alt never set", so that
 /// distinction is only made in `reconcile` too.
+///
+/// Also looks *inside* a ` ```columns `/` ```gallery ` fenced block
+/// (`crates/gutenberg`'s syntax for `wp:columns`/`wp:gallery`) by
+/// recursing into its raw text - pulldown-cmark never re-parses a fenced
+/// code block's content as Markdown on its own, so an image referenced only
+/// there would otherwise never reach Medienverwaltung's alt-text/upload
+/// tracking, and `export.rs::rewrite_image_urls`'s local-to-uploaded-URL
+/// substitution would then have nothing to rewrite - shipping a broken
+/// local path straight into the published post.
 fn scan_images(markdown: &str) -> Vec<(String, String, String)> {
     let mut out = Vec::new();
     let mut in_image = false;
     let mut current_source = String::new();
     let mut current_title = String::new();
     let mut current_alt = String::new();
+    let mut fenced_block_text: Option<String> = None;
 
     for event in Parser::new(markdown) {
         match event {
+            Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(lang))) if lang.as_ref() == "columns" || lang.as_ref() == "gallery" => {
+                fenced_block_text = Some(String::new());
+            }
+            Event::Text(text) if fenced_block_text.is_some() => {
+                fenced_block_text.as_mut().expect("checked Some above").push_str(&text);
+            }
+            Event::End(TagEnd::CodeBlock) if fenced_block_text.is_some() => {
+                out.extend(scan_images(&fenced_block_text.take().expect("checked Some above")));
+            }
             Event::Start(Tag::Image { dest_url, title, .. }) => {
                 in_image = true;
                 current_source = dest_url.to_string();
@@ -373,6 +392,32 @@ mod tests {
                 ("b.png".to_string(), String::new(), String::new()),
             ]
         );
+    }
+
+    #[test]
+    fn scan_finds_images_inside_a_fenced_gallery_block() {
+        let markdown = "```gallery\n![first](a.jpg)\n![second](b.jpg)\n```\n";
+        let found = scan_images(markdown);
+        assert_eq!(
+            found,
+            vec![
+                ("a.jpg".to_string(), "first".to_string(), String::new()),
+                ("b.jpg".to_string(), "second".to_string(), String::new()),
+            ]
+        );
+    }
+
+    #[test]
+    fn scan_finds_images_inside_a_fenced_columns_block() {
+        let markdown = "```columns\n![left image](left.jpg)\n+++\nJust text, no image.\n```\n";
+        let found = scan_images(markdown);
+        assert_eq!(found, vec![("left.jpg".to_string(), "left image".to_string(), String::new())]);
+    }
+
+    #[test]
+    fn scan_does_not_mistake_an_ordinary_fenced_code_block_for_a_gallery() {
+        let markdown = "```rust\nlet img = \"![not an image](fake.png)\";\n```\n";
+        assert!(scan_images(markdown).is_empty());
     }
 
     #[test]

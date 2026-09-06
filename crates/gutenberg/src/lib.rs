@@ -37,10 +37,36 @@ pub enum Block {
         header: Vec<String>,
         rows: Vec<Vec<String>>,
     },
+    /// `wp:columns` - side-by-side columns, each an independent block list.
+    /// Markdown has no native syntax for this, so it's written as a fenced
+    /// ` ```columns ` block whose content is split into columns on a line
+    /// containing exactly `+++`, each side re-parsed as ordinary Markdown -
+    /// see `parse_fenced_columns`.
+    Columns { columns: Vec<Vec<Block>> },
+    /// `wp:buttons` - one or more call-to-action buttons. Written as a
+    /// fenced ` ```buttons ` block containing one Markdown link per line -
+    /// see `parse_fenced_buttons`.
+    Buttons { buttons: Vec<ButtonItem> },
+    /// `wp:gallery` - a photo gallery. Written as a fenced ` ```gallery `
+    /// block containing one Markdown image reference per line - see
+    /// `parse_fenced_gallery`.
+    Gallery { images: Vec<GalleryImage> },
     /// Passthrough for constructs not (yet) mapped to a specific Gutenberg
     /// block (footnotes, definition lists, ...) and for raw HTML the author
     /// wrote directly in the Markdown source.
     RawHtml { html: String },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ButtonItem {
+    pub text: String,
+    pub url: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct GalleryImage {
+    pub url: String,
+    pub alt: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -226,6 +252,79 @@ fn as_lone_embed(events: &[Event]) -> Option<Block> {
     (url.starts_with("http://") || url.starts_with("https://")).then(|| Block::Embed { url: url.to_string() })
 }
 
+/// Splits a ` ```columns ` block's raw text into one section per column, on
+/// any line containing exactly `+++` - chosen over Markdown's own `---`
+/// thematic break so a real thematic break can still be written *inside* a
+/// column without being mistaken for a column separator. Each section is
+/// re-parsed as ordinary Markdown, so a column can hold anything a normal
+/// article body can (paragraphs, images, lists, ...).
+fn parse_fenced_columns(text: &str) -> Block {
+    let mut sections: Vec<String> = vec![String::new()];
+    for line in text.lines() {
+        if line.trim() == "+++" {
+            sections.push(String::new());
+        } else {
+            let current = sections.last_mut().expect("sections always has at least one element");
+            current.push_str(line);
+            current.push('\n');
+        }
+    }
+    Block::Columns {
+        columns: sections.iter().map(|s| parse_markdown(s)).collect(),
+    }
+}
+
+/// Splits a ` ```buttons ` block's raw text into one button per Markdown
+/// link found in it (one per line is the intended usage, but this scans the
+/// whole block rather than requiring exactly one link per line). A link's
+/// visible text becomes the button's label, stripped of any inline
+/// formatting - matching how alt text is handled elsewhere, since
+/// WordPress's own button block only ever holds plain text.
+fn parse_fenced_buttons(text: &str) -> Block {
+    let mut options = Options::empty();
+    options.insert(Options::ENABLE_STRIKETHROUGH);
+    let events: Vec<Event> = Parser::new_ext(text, options).collect();
+    let mut buttons = Vec::new();
+    let mut i = 0;
+    while i < events.len() {
+        if let Event::Start(Tag::Link { dest_url, .. }) = &events[i] {
+            let end = find_matching_end(&events, i, &TagEnd::Link);
+            buttons.push(ButtonItem {
+                text: collect_text(&events[i + 1..end]),
+                url: dest_url.to_string(),
+            });
+            i = end + 1;
+        } else {
+            i += 1;
+        }
+    }
+    Block::Buttons { buttons }
+}
+
+/// Splits a ` ```gallery ` block's raw text into one image per Markdown
+/// image reference found in it (one per line is the intended usage, same
+/// scanning approach as `parse_fenced_buttons`).
+fn parse_fenced_gallery(text: &str) -> Block {
+    let mut options = Options::empty();
+    options.insert(Options::ENABLE_STRIKETHROUGH);
+    let events: Vec<Event> = Parser::new_ext(text, options).collect();
+    let mut images = Vec::new();
+    let mut i = 0;
+    while i < events.len() {
+        if let Event::Start(Tag::Image { dest_url, .. }) = &events[i] {
+            let end = find_matching_end(&events, i, &TagEnd::Image);
+            images.push(GalleryImage {
+                alt: collect_text(&events[i + 1..end]),
+                url: dest_url.to_string(),
+            });
+            i = end + 1;
+        } else {
+            i += 1;
+        }
+    }
+    Block::Gallery { images }
+}
+
 fn parse_blocks(events: &[Event], mut i: usize, stop: usize) -> Vec<Block> {
     let mut blocks = Vec::new();
     while i < stop {
@@ -269,9 +368,12 @@ fn parse_blocks(events: &[Event], mut i: usize, stop: usize) -> Vec<Block> {
                             }
                             _ => None,
                         };
-                        blocks.push(Block::CodeBlock {
-                            lang,
-                            text: collect_text(&events[i + 1..end]),
+                        let text = collect_text(&events[i + 1..end]);
+                        blocks.push(match lang.as_deref() {
+                            Some("columns") => parse_fenced_columns(&text),
+                            Some("buttons") => parse_fenced_buttons(&text),
+                            Some("gallery") => parse_fenced_gallery(&text),
+                            _ => Block::CodeBlock { lang, text },
                         });
                     }
                     Tag::HtmlBlock => {
@@ -514,6 +616,57 @@ fn render_table(alignments: &[ColumnAlignment], header: &[String], rows: &[Vec<S
     )
 }
 
+fn render_columns(columns: &[Vec<Block>]) -> String {
+    let inner = columns
+        .iter()
+        .map(|col| wrap("column", None, &format!("<div class=\"wp-block-column\">{}</div>", render_blocks(col))))
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    wrap("columns", None, &format!("<div class=\"wp-block-columns\">\n{inner}\n</div>"))
+}
+
+fn render_buttons(buttons: &[ButtonItem]) -> String {
+    let inner = buttons
+        .iter()
+        .map(|b| {
+            wrap(
+                "button",
+                None,
+                &format!(
+                    "<div class=\"wp-block-button\"><a class=\"wp-block-button__link wp-element-button\" href=\"{}\">{}</a></div>",
+                    escape_html(&b.url),
+                    escape_html(&b.text)
+                ),
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    wrap("buttons", None, &format!("<div class=\"wp-block-buttons\">\n{inner}\n</div>"))
+}
+
+fn render_gallery(images: &[GalleryImage]) -> String {
+    let inner = images
+        .iter()
+        .map(|img| {
+            wrap(
+                "image",
+                Some("{\"sizeSlug\":\"large\"}".to_string()),
+                &format!(
+                    "<figure class=\"wp-block-image size-large\"><img src=\"{}\" alt=\"{}\"/></figure>",
+                    escape_html(&img.url),
+                    escape_html(&img.alt)
+                ),
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    wrap(
+        "gallery",
+        Some("{\"linkTo\":\"none\"}".to_string()),
+        &format!("<figure class=\"wp-block-gallery has-nested-images columns-default is-cropped\">\n{inner}\n</figure>"),
+    )
+}
+
 fn render_block(block: &Block) -> String {
     match block {
         Block::Paragraph { html } => wrap("paragraph", None, &format!("<p>{html}</p>")),
@@ -566,6 +719,9 @@ fn render_block(block: &Block) -> String {
             header,
             rows,
         } => render_table(alignments, header, rows),
+        Block::Columns { columns } => render_columns(columns),
+        Block::Buttons { buttons } => render_buttons(buttons),
+        Block::Gallery { images } => render_gallery(images),
         // WordPress's "Weiterlesen" marker is, unusually among Gutenberg
         // blocks, still just the bare `<!--more-->` HTML comment as its own
         // inner content - `pulldown-cmark` already hands that to us as an
@@ -743,6 +899,42 @@ mod tests {
             "<!-- wp:paragraph -->\n<p>Erster Absatz.</p>\n<!-- /wp:paragraph -->\n\n\
              <!-- wp:more -->\n<!--more-->\n<!-- /wp:more -->\n\n\
              <!-- wp:paragraph -->\n<p>Zweiter Absatz.</p>\n<!-- /wp:paragraph -->"
+        );
+    }
+
+    #[test]
+    fn fenced_columns_block_becomes_wp_columns() {
+        let out = markdown_to_gutenberg("```columns\nColumn A text.\n+++\nColumn B text.\n```");
+        assert_eq!(
+            out,
+            "<!-- wp:columns -->\n<div class=\"wp-block-columns\">\n\
+             <!-- wp:column -->\n<div class=\"wp-block-column\"><!-- wp:paragraph -->\n<p>Column A text.</p>\n<!-- /wp:paragraph --></div>\n<!-- /wp:column -->\n\n\
+             <!-- wp:column -->\n<div class=\"wp-block-column\"><!-- wp:paragraph -->\n<p>Column B text.</p>\n<!-- /wp:paragraph --></div>\n<!-- /wp:column -->\n\
+             </div>\n<!-- /wp:columns -->"
+        );
+    }
+
+    #[test]
+    fn fenced_buttons_block_becomes_wp_buttons() {
+        let out = markdown_to_gutenberg("```buttons\n[Get Started](https://example.com/start)\n[Learn More](https://example.com/more)\n```");
+        assert_eq!(
+            out,
+            "<!-- wp:buttons -->\n<div class=\"wp-block-buttons\">\n\
+             <!-- wp:button -->\n<div class=\"wp-block-button\"><a class=\"wp-block-button__link wp-element-button\" href=\"https://example.com/start\">Get Started</a></div>\n<!-- /wp:button -->\n\n\
+             <!-- wp:button -->\n<div class=\"wp-block-button\"><a class=\"wp-block-button__link wp-element-button\" href=\"https://example.com/more\">Learn More</a></div>\n<!-- /wp:button -->\n\
+             </div>\n<!-- /wp:buttons -->"
+        );
+    }
+
+    #[test]
+    fn fenced_gallery_block_becomes_wp_gallery() {
+        let out = markdown_to_gutenberg("```gallery\n![First](one.jpg)\n![Second](two.jpg)\n```");
+        assert_eq!(
+            out,
+            "<!-- wp:gallery {\"linkTo\":\"none\"} -->\n<figure class=\"wp-block-gallery has-nested-images columns-default is-cropped\">\n\
+             <!-- wp:image {\"sizeSlug\":\"large\"} -->\n<figure class=\"wp-block-image size-large\"><img src=\"one.jpg\" alt=\"First\"/></figure>\n<!-- /wp:image -->\n\n\
+             <!-- wp:image {\"sizeSlug\":\"large\"} -->\n<figure class=\"wp-block-image size-large\"><img src=\"two.jpg\" alt=\"Second\"/></figure>\n<!-- /wp:image -->\n\
+             </figure>\n<!-- /wp:gallery -->"
         );
     }
 

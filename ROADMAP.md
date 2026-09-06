@@ -114,21 +114,16 @@ speculation.
 
 ### Moderate scope, higher value
 
-- **Broken-link checker.** Nothing in the app ever validates a URL - not
-  Markdown links, not `wp:embed` sources. A "check links" action (in the
-  export dialog, alongside the existing Medienverwaltung tab) that HEADs
-  every unique link in the article and flags anything returning 4xx/5xx
-  or timing out would catch real pre-publish mistakes (typo'd URLs,
-  since-deleted pages) that currently ship silently.
-- **Gutenberg block coverage: Columns, Buttons, Gallery.** The `Block`
-  enum covers paragraph/heading/list/quote/code/image/video/audio/embed/
-  separator/table plus a raw-HTML catch-all - genuinely common Gutenberg
-  blocks like side-by-side columns, a call-to-action button, or a photo
-  gallery have no representation at all and would either fall through to
-  `wp:html` or not round-trip cleanly. Since Markdown has no native
-  syntax for these, this needs a deliberate syntax choice (e.g. a fenced
-  block like ` ```columns ` or a shortcode-style marker) - a real design
-  decision to make before implementing, not just a mechanical addition.
+- ~~**Broken-link checker.**~~ Done (see CHANGELOG.md) - a "Links" tab in
+  the export dialog scans every unique URL in the article (Markdown
+  links/images plus bare-URL `wp:embed` lines) and HEADs each one
+  on-demand, flagging anything outside 2xx/3xx or timing out.
+- ~~**Gutenberg block coverage: Columns, Buttons, Gallery.**~~ Done (see
+  CHANGELOG.md) - fenced code blocks with a special "language" tag
+  (` ```columns `, ` ```buttons `, ` ```gallery `) since Markdown has no
+  native syntax for these; full round-trip both ways, and local images
+  inside a columns/gallery block now participate in Medienverwaltung's
+  alt-text/upload tracking like any other image.
 - **Edit WordPress Pages, not just Posts.** `wpclient.rs` is hardcoded to
   the `posts` endpoint throughout; there's no `pages` support and no
   concept of post type in `Frontmatter` at all. A post-type picker in
@@ -152,13 +147,82 @@ speculation.
   format and converting it to Markdown on paste would make drafting from
   outside sources far less lossy - a genuinely bigger feature (HTML→MD
   conversion, GTK clipboard format negotiation) than anything above.
-- **SEO plugin field support (Yoast/RankMath).** No `meta` fields are
-  ever sent in a post payload - a focus keyword, custom SEO title, and
-  meta description for whichever SEO plugin the target site runs would
-  need per-plugin field-name knowledge and is only valuable to a site
-  that actually has one of those plugins active, unlike the plain
-  `excerpt` quick win above.
+- ~~**SEO plugin field support (RankMath).**~~ Done (see CHANGELOG.md) -
+  a "RankMath SEO" group in Artikel-Eigenschaften (SEO-Titel,
+  SEO-Beschreibung, Fokus-Keyword) sends RankMath's own post meta keys on
+  export and reads them back on import. Scoped to RankMath specifically,
+  per the user's request - Yoast's equivalent fields use different meta
+  key names and would need their own, separate mapping if ever wanted.
 
 **Why:** same reason as the original 2026-09-04 analysis - a periodic
 fresh look grounded in the actual code, not a re-statement of ideas
 already shipped or already rejected.
+
+## GNOME/Linux-specific candidate features (2026-09-06 analysis)
+
+The lists above are about the editor/WordPress side. This pass asked a
+different question: which platform integrations is Blocksmith missing
+that a GNOME/Flatpak-native app is expected to have? Checked against
+`data/de.christophlangner.Blocksmith.desktop`,
+`build-aux/flatpak/de.christophlangner.Blocksmith.json`, and `src/i18n.rs`
+- not speculation.
+
+### Quick wins
+
+- ~~**`.desktop` file has no `MimeType=`.**~~ Done (see CHANGELOG.md) -
+  `MimeType=text/markdown;` plus `Gio::ApplicationFlags::HANDLES_OPEN`
+  and a `Gio::Application::connect_open` handler, so double-clicking a
+  `.md` file (or "Open With" → Blocksmith) in Nautilus works, loading into
+  the already-running window rather than spawning a second one.
+- ~~**Opened articles never reach `Gio::RecentManager`.**~~ Done (see
+  CHANGELOG.md) - opening or saving a file now also registers it with
+  `Gtk.RecentManager` (GTK4 kept the type in the `gtk` namespace, not
+  `gio`), alongside `recentfiles.rs`'s own private list.
+- ~~**No desktop notification for a background action finishing.**~~ Done
+  (see CHANGELOG.md) - a new `notify.rs` sends a `Gio::Notification` when
+  publishing, an image upload, or a link check finishes while the app has
+  no focused window, gated so it doesn't double-announce something
+  already visible in an open dialog.
+
+### Moderate scope, higher value
+
+- **Flatpak sandbox is wider than the app needs.** The manifest's
+  `finish-args` includes `--filesystem=host:rw` - full read/write access
+  to the entire home directory (and beyond) with no portal in between.
+  Every file operation in the app already goes through `gtk4::FileDialog`
+  (confirmed via grep - `window.rs`, `properties.rs`), which is portal-
+  backed and sandbox-safe on its own; the broad `host:rw` grant looks like
+  a leftover from before that, not something the app's actual file access
+  pattern requires. Narrowing or dropping it would make Blocksmith an
+  honestly-sandboxed Flatpak instead of one that only nominally is - this
+  is also a concrete blocker Flathub's own review process flags for new
+  submissions.
+- **A GNOME Shell search provider.** Implementing the
+  `org.gnome.Shell.SearchProvider2` D-Bus interface over the same data
+  `recentfiles.rs` already tracks would let a partial article title typed
+  into the Activities Overview jump straight to opening that file in
+  Blocksmith - a small D-Bus service on top of existing state, not a new
+  subsystem, and the kind of integration that makes a GNOME app feel like
+  it belongs on the desktop rather than being "a Linux port."
+- **A `~/Templates` entry for Nautilus's "New Document."** Nautilus's
+  right-click "New Document" submenu is populated straight from files
+  placed in `~/Templates`; shipping a `.md` template there (with the
+  standard frontmatter block already filled in) would let a new article
+  be started from the Files app directly, without opening Blocksmith
+  first.
+
+### Larger / architectural
+
+- **Adaptive/narrow-width layout via libadwaita breakpoints.** The
+  editor+preview split-pane assumes a wide window; on a tiling window
+  manager (common among the kind of Linux user who'd pick a keyboard-
+  driven Markdown editor in the first place) or a narrower Linux tablet
+  screen, the fixed split doesn't reflow. An `Adw.Breakpoint` collapsing
+  to a single pane with a view-switcher below a certain width is the
+  standard GNOME HIG pattern for this - a real layout change, not a
+  one-line addition, since the current `Gtk.Paned` structure would need
+  reworking around it.
+
+**Why:** the earlier 2026-09-04/2026-09-06 passes were both scoped to the
+editor/WordPress domain; this pass asked specifically what's missing on
+the "feels native on GNOME/Linux" axis instead, per the user's request.

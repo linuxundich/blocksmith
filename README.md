@@ -83,10 +83,17 @@ blocks. Implemented so far:
   `wp:embed` block (YouTube, X/Twitter, Vimeo, Instagram, SoundCloud,
   Spotify recognized by name for a nicer immediate block-editor preview;
   any other URL still embeds generically, the same way WordPress's own
-  editor falls back to oEmbed discovery for it).
+  editor falls back to oEmbed discovery for it). Since Markdown has no
+  native syntax for side-by-side columns, buttons, or a photo gallery,
+  those are written as fenced code blocks with a special "language" tag -
+  ` ```columns ` (split into columns on a `+++` line, each side re-parsed
+  as ordinary Markdown), ` ```buttons ` (one Markdown link per line), and
+  ` ```gallery ` (one Markdown image per line) - all with full round-trip
+  support back to the same Markdown when re-opening an existing post.
 - **Document model** — per-article frontmatter (title, slug, status,
   scheduled publish date/time, categories, tags, excerpt/meta description,
-  featured image, WordPress post id) stored in the `.md` file itself,
+  RankMath SEO title/description/focus keyword, featured image, WordPress
+  post id) stored in the `.md` file itself,
   editable via an "Artikel-Eigenschaften" dialog with autocomplete for
   existing WordPress
   categories/tags (backed by an on-disk cache, `src/termcache.rs`,
@@ -171,6 +178,15 @@ blocks. Implemented so far:
   date/time set there - exporting without one is refused with a clear
   error rather than silently publishing immediately, which is what
   WordPress itself does with a scheduled status and no real future date.
+- **Broken-link checker** — a "Links" tab in the same "Artikel
+  exportieren" dialog, next to "Vorschau" and "Medien". It scans the
+  article for every unique `http(s)://` URL (Markdown link/image
+  destinations, plus a bare URL alone on its own line that exports as a
+  `wp:embed` block) and, on "Links prüfen", HEADs each one on a
+  background thread (falling back to GET if a server rejects HEAD),
+  flagging anything outside the 2xx/3xx range or timing out - catching a
+  typo'd URL or a since-deleted page before it ships as part of the
+  published post.
   Category/tag names are resolved to
   WordPress term ids (creating them if they don't exist yet). Locally-referenced images
   are uploaded to the media library "bei Bedarf" (as needed), sharing the
@@ -204,6 +220,15 @@ blocks. Implemented so far:
   full translator/contributor workflow.
 - **Flatpak packaging** — manifest, desktop entry, AppStream metainfo, and
   icon under `data/` and `build-aux/flatpak/`.
+- **GNOME desktop integration** — the `.desktop` file declares
+  `MimeType=text/markdown;` and the app handles being launched with a file
+  argument, so double-clicking a `.md` file (or "Open With" → Blocksmith)
+  in GNOME Files opens it directly, loading into the already-running
+  window rather than a second one if Blocksmith is already open. Opening
+  or saving a file also registers it with `Gtk.RecentManager`, GNOME's
+  shared recent-files list, alongside Blocksmith's own "Zuletzt geöffnet"
+  popover. Publishing, an image upload, or a link check finishing while
+  the window isn't focused raises a desktop notification.
 
 ## Building & running
 

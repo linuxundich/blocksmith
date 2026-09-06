@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Blocksmith 0.34.0\n"
 "Report-Msgid-Bugs-To: https://github.com/linuxundich/blocksmith/issues\n"
-"POT-Creation-Date: 2026-09-06 09:41+0200\n"
+"POT-Creation-Date: 2026-09-06 10:56+0200\n"
 "PO-Revision-Date: 2026-09-06 09:50+0200\n"
 "Last-Translator: Christoph Langner <mail@christoph-langner.de>\n"
 "Language-Team: none\n"
@@ -62,8 +62,8 @@ msgstr "Generating …"
 msgid "Kein {provider}-API-Key in den Einstellungen hinterlegt."
 msgstr "No {provider} API key set in Settings."
 
-#: src/aialt.rs:225 src/chat.rs:181 src/export.rs:309 src/importer.rs:99
-#: src/mediapanel.rs:290
+#: src/aialt.rs:225 src/chat.rs:181 src/export.rs:316 src/importer.rs:99
+#: src/mediapanel.rs:293
 msgid "Fehler: {err}"
 msgstr "Error: {err}"
 
@@ -87,7 +87,7 @@ msgstr ""
 "How should the selection (or the whole article, if nothing is selected) be "
 "adjusted?"
 
-#: src/aimenu.rs:146 src/export.rs:169 src/taxonomy.rs:225
+#: src/aimenu.rs:146 src/export.rs:174 src/taxonomy.rs:225
 msgid "Abbrechen"
 msgstr "Cancel"
 
@@ -191,7 +191,7 @@ msgstr "Choose Editor Font"
 msgid "Auf Systemschrift zurücksetzen"
 msgstr "Reset to System Font"
 
-#: src/appearance.rs:469 src/export.rs:77 src/window.rs:40
+#: src/appearance.rs:469 src/export.rs:81 src/window.rs:40
 msgid "Vorschau"
 msgstr "Preview"
 
@@ -345,7 +345,7 @@ msgstr "Draft"
 msgid "Ausstehend"
 msgstr "Pending"
 
-#: src/document.rs:63 src/importer.rs:128 src/importer.rs:281
+#: src/document.rs:63 src/export.rs:308 src/importer.rs:128 src/importer.rs:281
 msgid "Veröffentlicht"
 msgstr "Published"
 
@@ -357,31 +357,35 @@ msgstr "Scheduled"
 msgid "Zu sendendes Gutenberg-HTML:"
 msgstr "Gutenberg HTML to be sent:"
 
-#: src/export.rs:78
+#: src/export.rs:82
 msgid "Medien"
 msgstr "Media"
 
-#: src/export.rs:102 src/importer.rs:139
+#: src/export.rs:83
+msgid "Links"
+msgstr "Links"
+
+#: src/export.rs:107 src/importer.rs:139
 msgid "Aktualisieren"
 msgstr "Update"
 
-#: src/export.rs:104 src/export.rs:210
+#: src/export.rs:109 src/export.rs:215
 msgid "Veröffentlichen"
 msgstr "Publish"
 
-#: src/export.rs:109
+#: src/export.rs:114
 msgid "Als Entwurf hochladen"
 msgstr "Upload as Draft"
 
-#: src/export.rs:117
+#: src/export.rs:122
 msgid "Terminieren"
 msgstr "Schedule"
 
-#: src/export.rs:121
+#: src/export.rs:126
 msgid "Von WordPress löschen"
 msgstr "Delete from WordPress"
 
-#: src/export.rs:133
+#: src/export.rs:138
 msgid ""
 "Keine WordPress-Verbindung eingerichtet - bitte zuerst über den Verbindungs-"
 "Dialog konfigurieren."
@@ -389,75 +393,83 @@ msgstr ""
 "No WordPress connection set up - please configure one via the Connection "
 "dialog first."
 
-#: src/export.rs:139
+#: src/export.rs:144
 msgid "Bitte zuerst einen Titel in den Artikel-Eigenschaften setzen."
 msgstr "Please set a title in Article Properties first."
 
-#: src/export.rs:151 src/shortcuts.rs:25
+#: src/export.rs:156 src/shortcuts.rs:25
 msgid "Artikel exportieren"
 msgstr "Export Article"
 
-#: src/export.rs:166
+#: src/export.rs:171
 msgid "Artikel wirklich löschen?"
 msgstr "Really delete the article?"
 
-#: src/export.rs:167
+#: src/export.rs:172
 msgid "Der Artikel wird unwiderruflich von der WordPress-Seite gelöscht."
 msgstr "The article will be permanently deleted from the WordPress site."
 
-#: src/export.rs:170 src/taxonomy.rs:132 src/taxonomy.rs:226
+#: src/export.rs:175 src/taxonomy.rs:132 src/taxonomy.rs:226
 msgid "Löschen"
 msgstr "Delete"
 
-#: src/export.rs:183
+#: src/export.rs:188
 msgid "Wird gelöscht …"
 msgstr "Deleting …"
 
-#: src/export.rs:192 src/export.rs:282 src/importer.rs:80 src/importer.rs:208
-#: src/linkpicker.rs:97 src/mediapanel.rs:247 src/taxonomy.rs:66
+#: src/export.rs:197 src/export.rs:287 src/importer.rs:80 src/importer.rs:208
+#: src/linkpicker.rs:97 src/mediapanel.rs:248 src/taxonomy.rs:66
 #: src/taxonomy.rs:167 src/taxonomy.rs:250
 msgid "Kein Application Password im Schlüsselbund gefunden."
 msgstr "No Application Password found in the keyring."
 
-#: src/export.rs:209
+#: src/export.rs:214
 msgid "Artikel wurde von WordPress gelöscht."
 msgstr "The article was deleted from WordPress."
 
-#: src/export.rs:215
+#: src/export.rs:220
 msgid "Fehler beim Löschen: {err}"
 msgstr "Error deleting: {err}"
 
-#: src/export.rs:221
+#: src/export.rs:226
 msgid "Interner Fehler: Lösch-Thread hat kein Ergebnis geliefert."
 msgstr "Internal error: the delete thread returned no result."
 
-#: src/export.rs:269
+#: src/export.rs:274
 msgid "Wird gesendet …"
 msgstr "Sending …"
 
-#: src/export.rs:301
+#: src/export.rs:307
 msgid "Erfolgreich gesendet: {link}"
 msgstr "Successfully sent: {link}"
 
-#: src/export.rs:318
+#: src/export.rs:308
+msgid "„{title}“ wurde erfolgreich gesendet."
+msgstr "\"{title}\" was sent successfully."
+
+#: src/export.rs:317
+msgid "Veröffentlichen fehlgeschlagen"
+msgstr "Publishing failed"
+
+#: src/export.rs:326
 msgid "Interner Fehler: Export-Thread hat kein Ergebnis geliefert."
 msgstr "Internal error: the export thread returned no result."
 
-#: src/export.rs:342
+#: src/export.rs:350
 msgid ""
 "Für den Status „Geplant“ muss ein gültiger Veröffentlichungstermin gesetzt "
 "sein."
 msgstr "A valid publish date must be set for the “Scheduled” status."
 
-#: src/export.rs:457
+#: src/export.rs:484
 msgid "Bild nicht abrufbar: {err}"
 msgstr "Couldn't fetch image: {err}"
 
-#: src/export.rs:461
+#: src/export.rs:488
 msgid "Bild nicht lesbar: {err}"
 msgstr "Couldn't read image: {err}"
 
-#: src/export.rs:464 src/export.rs:472 src/media.rs:257
+#: src/export.rs:491 src/export.rs:499 src/media.rs:257
 msgid "Bild {path} nicht lesbar: {err}"
 msgstr "Couldn't read image {path}: {err}"
 
@@ -644,6 +656,58 @@ msgstr "Internal error: the load thread returned no result."
 msgid "Privat"
 msgstr "Private"
 
+#: src/linkcheck.rs:93
+msgid "OK ({code})"
+msgstr "OK ({code})"
+
+#: src/linkcheck.rs:94
+msgid "Fehler: {reason}"
+msgstr "Error: {reason}"
+
+#: src/linkcheck.rs:100
+msgid "Dieser Artikel enthält keine Links."
+msgstr "This article contains no links."
+
+#: src/linkcheck.rs:104
+msgid "1 Link gefunden - noch nicht geprüft."
+msgstr "1 link found - not checked yet."
+
+#: src/linkcheck.rs:105
+msgid "{n} Links gefunden - noch nicht geprüft."
+msgstr "{n} links found - not checked yet."
+
+#: src/linkcheck.rs:108
+msgid "{broken} von {total} Links fehlerhaft."
+msgstr "{broken} of {total} links broken."
+
+#: src/linkcheck.rs:113
+msgid "Der eine Link funktioniert."
+msgstr "The one link works."
+
+#: src/linkcheck.rs:114
+msgid "Alle {n} Links funktionieren."
+msgstr "All {n} links work."
+
+#: src/linkcheck.rs:140
+msgid "Links prüfen"
+msgstr "Check Links"
+
+#: src/linkcheck.rs:150
+msgid "Noch nicht geprüft"
+msgstr "Not checked yet"
+
+#: src/linkcheck.rs:169 src/linkcheck.rs:172
+msgid "Wird geprüft …"
+msgstr "Checking …"
+
+#: src/linkcheck.rs:208
+msgid "Links geprüft"
+msgstr "Links Checked"
+
+#: src/linkcheck.rs:214
+msgid "Interner Fehler: Prüf-Thread hat kein Ergebnis geliefert."
+msgstr "Internal error: the check thread returned no result."
+
 #: src/linkpicker.rs:27
 msgid "Artikel suchen…"
 msgstr "Search Articles…"
@@ -666,7 +730,7 @@ msgstr "No response received (possibly blocked by a safety filter)."
 msgid "Keine Antwort erhalten."
 msgstr "No response received."
 
-#: src/llm.rs:515 src/wpclient.rs:129
+#: src/llm.rs:515 src/wpclient.rs:135
 msgid "Antwort nicht lesbar: {err}"
 msgstr "Couldn't read the response: {err}"
 
@@ -702,7 +766,7 @@ msgstr "{missing} of {total} images have no alt text yet."
 msgid "Noch nicht zu WordPress hochgeladen"
 msgstr "Not uploaded to WordPress yet"
 
-#: src/mediapanel.rs:124 src/mediapanel.rs:237
+#: src/mediapanel.rs:124 src/mediapanel.rs:238
 msgid "Wird hochgeladen …"
 msgstr "Uploading …"
 
@@ -714,7 +778,7 @@ msgstr "Already uploaded (media ID {id})"
 msgid "Fehler beim letzten Upload: {err}"
 msgstr "Error during the last upload: {err}"
 
-#: src/mediapanel.rs:207 src/mediapanel.rs:284
+#: src/mediapanel.rs:207 src/mediapanel.rs:287
 msgid "Erneut hochladen"
 msgstr "Upload Again"
 
@@ -722,11 +786,27 @@ msgstr "Upload Again"
 msgid "Zu WordPress hochladen"
 msgstr "Upload to WordPress"
 
-#: src/mediapanel.rs:283
+#: src/mediapanel.rs:285
 msgid "Erfolgreich hochgeladen."
 msgstr "Uploaded successfully."
 
-#: src/mediapanel.rs:296
+#: src/mediapanel.rs:286
+msgid "Bild hochgeladen"
+msgstr "Image Uploaded"
+
+#: src/mediapanel.rs:286
+msgid "„{filename}“ wurde erfolgreich hochgeladen."
+msgstr "\"{filename}\" was uploaded successfully."
+
+#: src/mediapanel.rs:294
+msgid "Upload fehlgeschlagen"
+msgstr "Upload Failed"
+
+#: src/mediapanel.rs:294
+msgid "„{filename}“: {err}"
+msgstr "\"{filename}\": {err}"
+
+#: src/mediapanel.rs:300
 msgid "Interner Fehler: Upload-Thread hat kein Ergebnis geliefert."
 msgstr "Internal error: the upload thread returned no result."
 
@@ -811,46 +891,62 @@ msgid "Auszug / Meta-Beschreibung"
 msgstr "Excerpt / Meta Description"
 
 #: src/properties.rs:33
+msgid "SEO-Titel"
+msgstr "SEO Title"
+
+#: src/properties.rs:37
+msgid "SEO-Beschreibung"
+msgstr "SEO Description"
+
+#: src/properties.rs:41
+msgid "Fokus-Keyword"
+msgstr "Focus Keyword"
+
+#: src/properties.rs:45
 msgid "Kategorien (Komma-getrennt)"
 msgstr "Categories (comma-separated)"
 
-#: src/properties.rs:37
+#: src/properties.rs:49
 msgid "Tags (Komma-getrennt)"
 msgstr "Tags (comma-separated)"
 
-#: src/properties.rs:41
+#: src/properties.rs:53
 msgid "Featured Image (Pfad)"
 msgstr "Featured Image (path)"
 
-#: src/properties.rs:45
+#: src/properties.rs:57
 msgid "Bild auswählen…"
 msgstr "Choose Image…"
 
-#: src/properties.rs:55
+#: src/properties.rs:67
 msgid "Status"
 msgstr "Status"
 
-#: src/properties.rs:61
+#: src/properties.rs:73
 msgid "Veröffentlichungstermin (JJJJ-MM-TT HH:MM)"
 msgstr "Publish Date (YYYY-MM-DD HH:MM)"
 
-#: src/properties.rs:67
+#: src/properties.rs:79
 msgid "Kategorien & Tags von WordPress aktualisieren"
 msgstr "Refresh categories & tags from WordPress"
 
-#: src/properties.rs:78
+#: src/properties.rs:90
 msgid "Kategorien & Tags verwalten…"
 msgstr "Manage Categories & Tags…"
 
-#: src/properties.rs:93 src/properties.rs:116 src/window.rs:123
+#: src/properties.rs:105 src/properties.rs:142 src/window.rs:123
 msgid "Artikel-Eigenschaften"
 msgstr "Article Properties"
 
-#: src/properties.rs:166 src/window.rs:840
+#: src/properties.rs:124
+msgid "RankMath SEO"
+msgstr "RankMath SEO"
+
+#: src/properties.rs:213 src/window.rs:875
 msgid "Bilder"
 msgstr "Images"
 
-#: src/properties.rs:170
+#: src/properties.rs:217
 msgid "Featured Image auswählen"
 msgstr "Choose Featured Image"
 
@@ -1070,7 +1166,7 @@ msgstr "Statistics"
 msgid "Chat"
 msgstr "Chat"
 
-#: src/window.rs:94 src/window.rs:320 src/window.rs:534
+#: src/window.rs:94 src/window.rs:325 src/window.rs:539
 msgid "Unbenannt"
 msgstr "Untitled"
 
@@ -1122,55 +1218,55 @@ msgstr "Focus writing mode (Ctrl+Shift+F)"
 msgid "Artikel exportieren (Strg+Umschalt+P)"
 msgstr "Export Article (Ctrl+Shift+P)"
 
-#: src/window.rs:574
+#: src/window.rs:579
 msgid "Markdown-Datei öffnen"
 msgstr "Open Markdown File"
 
-#: src/window.rs:607
+#: src/window.rs:630
 msgid "Öffnen fehlgeschlagen: {err}"
 msgstr "Failed to open: {err}"
 
-#: src/window.rs:638
+#: src/window.rs:672
 msgid "Keine zuletzt geöffneten Artikel"
 msgstr "No recently opened articles"
 
-#: src/window.rs:720 src/window.rs:738
+#: src/window.rs:754 src/window.rs:772
 msgid "Speichern fehlgeschlagen: {err}"
 msgstr "Failed to save: {err}"
 
-#: src/window.rs:729
+#: src/window.rs:763
 msgid "Markdown-Datei speichern"
 msgstr "Save Markdown File"
 
-#: src/window.rs:844
+#: src/window.rs:879
 msgid "Bild einfügen"
 msgstr "Insert Image"
 
-#: src/window.rs:879
+#: src/window.rs:914
 msgid "Video/Audio einfügen"
 msgstr "Insert Video/Audio"
 
-#: src/window.rs:931
+#: src/window.rs:966
 msgid "Bitte den Artikel zuerst speichern, um Bilder einzufügen."
 msgstr "Please save the article first to insert images."
 
-#: src/window.rs:940
+#: src/window.rs:975
 msgid "Bild konnte nicht aus der Zwischenablage gelesen werden."
 msgstr "Couldn't read the image from the clipboard."
 
-#: src/window.rs:946
+#: src/window.rs:981
 msgid "Bild konnte nicht gespeichert werden: {err}"
 msgstr "Couldn't save the image: {err}"
 
-#: src/window.rs:1024
+#: src/window.rs:1059
 msgid "einem unbenannten Artikel"
 msgstr "an untitled article"
 
-#: src/window.rs:1026
+#: src/window.rs:1061
 msgid "Nicht gespeicherter Stand gefunden"
 msgstr "Unsaved State Found"
 
-#: src/window.rs:1028
+#: src/window.rs:1063
 msgid ""
 "Von „{name}“ wurde ein nicht gespeicherter Stand gefunden - vermutlich nach "
 "einem Absturz oder weil Blocksmith ohne zu speichern beendet wurde. "
@@ -1179,22 +1275,22 @@ msgstr ""
 "An unsaved state was found for “{name}” - probably after a crash, or because "
 "Blocksmith was closed without saving. Restore it?"
 
-#: src/window.rs:1032
+#: src/window.rs:1067
 msgid "Verwerfen"
 msgstr "Discard"
 
-#: src/window.rs:1033
+#: src/window.rs:1068
 msgid "Wiederherstellen"
 msgstr "Restore"
 
-#: src/wpclient.rs:192
+#: src/wpclient.rs:198
 msgid "Keine Medien-ID in der Antwort"
 msgstr "No media ID in the response"
 
-#: src/wpclient.rs:446
+#: src/wpclient.rs:461
 msgid "Keine Post-ID in der Antwort"
 msgstr "No post ID in the response"
 
-#: src/wpclient.rs:491
+#: src/wpclient.rs:506
 msgid "Kein Term-ID für \"{name}\" erhalten"
 msgstr "No term ID received for \"{name}\""

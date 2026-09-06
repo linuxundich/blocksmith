@@ -21,11 +21,13 @@ mod i18n;
 mod imagealt;
 mod imagecompress;
 mod importer;
+mod linkcheck;
 mod linkpicker;
 mod llm;
 mod mdpango;
 mod media;
 mod mediapanel;
+mod notify;
 mod preview;
 mod promptsettings;
 mod properties;
@@ -44,7 +46,7 @@ mod wpclient;
 mod wpsite;
 
 use adw::prelude::*;
-use gtk4::glib;
+use gtk4::{gio, glib};
 
 const APP_ID: &str = "de.christophlangner.Blocksmith";
 
@@ -54,7 +56,11 @@ fn main() -> glib::ExitCode {
     // other threads, and nothing here has spawned any yet.
     i18n::init();
 
-    let app = adw::Application::builder().application_id(APP_ID).build();
+    // HANDLES_OPEN: the `.desktop` file declares `MimeType=text/markdown;`,
+    // so double-clicking a `.md` file (or "Open With" → Blocksmith) in
+    // Nautilus launches with a file argument - without this flag GTK
+    // refuses that outright ("This application can not open files").
+    let app = adw::Application::builder().application_id(APP_ID).flags(gio::ApplicationFlags::HANDLES_OPEN).build();
 
     app.set_accels_for_action("win.new", &["<Ctrl>n"]);
     app.set_accels_for_action("win.open", &["<Ctrl>o"]);
@@ -70,7 +76,28 @@ fn main() -> glib::ExitCode {
     app.connect_activate(|app| {
         appearance::apply_saved_color_scheme();
         load_chat_bubble_css();
-        let win = window::build(app);
+        let win = window::build(app, None);
+        win.present();
+    });
+
+    // Single-window app (see ROADMAP.md's "Deliberately not recommended" -
+    // multi-window is a poor fit here), so a file opened while an instance
+    // is already running loads into that same window via the `open-path`
+    // action (`window.rs::wire_open_path_action`) rather than spawning a
+    // second one; only the very first launch-with-a-file builds the window
+    // itself with the path preloaded.
+    app.connect_open(|app, files, _hint| {
+        let Some(path) = files.first().and_then(gtk4::gio::File::path) else {
+            return;
+        };
+        if let Some(win) = app.windows().into_iter().next() {
+            win.activate_action("win.open-path", Some(&path.display().to_string().to_variant())).ok();
+            win.present();
+            return;
+        }
+        appearance::apply_saved_color_scheme();
+        load_chat_bubble_css();
+        let win = window::build(app, Some(path));
         win.present();
     });
 

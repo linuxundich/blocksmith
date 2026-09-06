@@ -22,7 +22,7 @@ use gtk4::glib;
 use crate::document::Frontmatter;
 use crate::i18n::tr;
 use crate::media::{self, AltText, UploadStatus};
-use crate::{export, preview, secrets, wpclient, wpsite};
+use crate::{export, notify, preview, secrets, wpclient, wpsite};
 
 pub fn open(
     parent: &adw::ApplicationWindow,
@@ -226,6 +226,7 @@ fn build_row(
         let expander = expander.clone();
         let upload_button_for_click = upload_button.clone();
         let upload_status_label = upload_status_label.clone();
+        let filename = item.filename.clone();
         upload_button.connect_clicked(move |_| {
             let (source, alt_for_upload, caption_for_upload, previous) = {
                 let fm = frontmatter.borrow();
@@ -272,6 +273,7 @@ fn build_row(
             let upload_button = upload_button_for_click.clone();
             let upload_status_label = upload_status_label.clone();
             let preview_pane = preview_pane.clone();
+            let filename = filename.clone();
             glib::timeout_add_local(Duration::from_millis(150), move || match rx.try_recv() {
                 Ok(Ok((media_result, content_hash))) => {
                     let reference = media::WordPressMediaRef { media_id: media_result.id, url: media_result.source_url.clone(), content_hash };
@@ -281,6 +283,7 @@ fn build_row(
                     preview_pane.refresh_media(&frontmatter.borrow().media);
                     expander.set_subtitle(&upload_status_text(&UploadStatus::Uploaded(reference)));
                     upload_status_label.set_label(&tr("Erfolgreich hochgeladen."));
+                    notify::send("media-upload", &tr("Bild hochgeladen"), &tr("„{filename}“ wurde erfolgreich hochgeladen.").replace("{filename}", &filename));
                     upload_button.set_label(&tr("Erneut hochladen"));
                     upload_button.set_sensitive(true);
                     glib::ControlFlow::Break
@@ -288,6 +291,7 @@ fn build_row(
                 Ok(Err(err)) => {
                     expander.set_subtitle(&upload_status_text(&UploadStatus::Failed(err.clone())));
                     upload_status_label.set_label(&tr("Fehler: {err}").replace("{err}", &err));
+                    notify::send("media-upload", &tr("Upload fehlgeschlagen"), &tr("„{filename}“: {err}").replace("{filename}", &filename).replace("{err}", &err));
                     upload_button.set_sensitive(true);
                     glib::ControlFlow::Break
                 }

@@ -7,6 +7,76 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.38.0] - 2026-09-06
+
+### Added
+
+- Gutenberg block coverage: Columns, Buttons, Gallery. Since Markdown has
+  no native syntax for these, they're written as fenced code blocks with
+  a special "language" tag - ` ```columns `, splitting its content into
+  side-by-side columns on any line containing exactly `+++` (each side
+  re-parsed as ordinary Markdown, so a column can hold anything an
+  article body can); ` ```buttons `, one Markdown link per line, each
+  becoming a call-to-action button; ` ```gallery `, one Markdown image
+  reference per line. Full round-trip support both ways (export to real
+  `wp:columns`/`wp:buttons`/`wp:gallery` block HTML, and back to the same
+  Markdown when re-opening an existing post via "Von WordPress öffnen").
+  Local images referenced inside a `columns`/`gallery` block are now also
+  found by Medienverwaltung (alt text, upload tracking) and get their
+  local path substituted for the real WordPress URL on export, the same
+  as an image anywhere else in the article.
+
+## [0.37.0] - 2026-09-06
+
+### Added
+
+- RankMath SEO field support - a new "RankMath SEO" group in
+  Artikel-Eigenschaften (SEO-Titel, SEO-Beschreibung, Fokus-Keyword) sends
+  RankMath's own post meta keys (`rank_math_title`/
+  `rank_math_description`/`rank_math_focus_keyword`) on export and reads
+  them back when opening an existing post - previously the app never sent
+  any `meta` fields at all, so any SEO plugin data had to be re-entered
+  by hand in wp-admin after every publish from Blocksmith. Harmless on a
+  site without RankMath active, since WordPress's REST API silently
+  drops an unrecognized meta key rather than erroring.
+
+## [0.36.0] - 2026-09-06
+
+### Added
+
+- GNOME/Linux desktop integration - the three quick wins from that
+  analysis:
+  - **File association**: the `.desktop` file now declares
+    `MimeType=text/markdown;`, and the app handles being launched with a
+    file argument (`Gio::ApplicationFlags::HANDLES_OPEN`) - double-
+    clicking a `.md` file, or "Open With" → Blocksmith, in Nautilus now
+    works. Since this is a single-window app, a file opened while an
+    instance is already running loads into that same window instead of
+    spawning a second one.
+  - **Shared "recently used" list**: opening or saving a `.md` file now
+    also registers it with `Gtk.RecentManager`, GNOME's own shared
+    recent-files list - the file now shows up in GNOME Files' "Zuletzt
+    verwendet" view and other apps' native file-open dialogs, not just
+    Blocksmith's own "Zuletzt geöffnet" popover.
+  - **Desktop notifications**: publishing, an image upload, or a link
+    check finishing while the window isn't focused now raises a
+    `Gio::Notification` (works under Flatpak via the notification portal,
+    no extra permission needed) - previously the only sign anything
+    happened was an in-dialog status label, invisible if you'd switched
+    away during a slow upload.
+
+## [0.35.0] - 2026-09-06
+
+### Added
+
+- Broken-link checker: a new "Links" tab in the export dialog, alongside
+  Vorschau and Medien. It scans the article for every unique `http(s)://`
+  URL - Markdown link and image destinations, plus bare URLs on their own
+  line that export as `wp:embed` blocks - and, on demand ("Links
+  prüfen"), HEADs each one (falling back to GET if a server rejects HEAD)
+  to catch a typo'd URL or a since-deleted page before it ships silently
+  as part of the published post.
+
 ## [0.34.0] - 2026-09-06
 
 ### Added

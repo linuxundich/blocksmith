@@ -29,6 +29,18 @@ pub fn open(
         .title(tr("Auszug / Meta-Beschreibung"))
         .text(current.excerpt.clone().unwrap_or_default().as_str())
         .build();
+    let seo_title_row = adw::EntryRow::builder()
+        .title(tr("SEO-Titel"))
+        .text(current.rank_math_title.clone().unwrap_or_default().as_str())
+        .build();
+    let seo_description_row = adw::EntryRow::builder()
+        .title(tr("SEO-Beschreibung"))
+        .text(current.rank_math_description.clone().unwrap_or_default().as_str())
+        .build();
+    let focus_keyword_row = adw::EntryRow::builder()
+        .title(tr("Fokus-Keyword"))
+        .text(current.rank_math_focus_keyword.clone().unwrap_or_default().as_str())
+        .build();
     let categories_row = adw::EntryRow::builder()
         .title(tr("Kategorien (Komma-getrennt)"))
         .text(current.categories.join(", ").as_str())
@@ -104,7 +116,21 @@ pub fn open(
     autocomplete::attach(&categories_row, category_terms);
     autocomplete::attach(&tags_row, tag_terms);
 
-    let clamp = adw::Clamp::builder().maximum_size(480).child(&group).build();
+    // A separate group, not just more rows in "Artikel-Eigenschaften": these
+    // three only matter on a site that actually has RankMath active (see
+    // `Frontmatter::rank_math_title`'s doc comment), so keeping them
+    // visually distinct signals that up front rather than implying they're
+    // as universally applicable as the fields above.
+    let seo_group = adw::PreferencesGroup::builder().title(tr("RankMath SEO")).build();
+    seo_group.add(&seo_title_row);
+    seo_group.add(&seo_description_row);
+    seo_group.add(&focus_keyword_row);
+
+    let groups_box = gtk4::Box::builder().orientation(gtk4::Orientation::Vertical).spacing(24).build();
+    groups_box.append(&group);
+    groups_box.append(&seo_group);
+
+    let clamp = adw::Clamp::builder().maximum_size(480).child(&groups_box).build();
     let scroller = gtk4::ScrolledWindow::builder().child(&clamp).vexpand(true).build();
 
     let header = adw::HeaderBar::new();
@@ -136,6 +162,27 @@ pub fn open(
         excerpt_row.connect_changed(move |row| {
             let text = row.text().to_string();
             frontmatter.borrow_mut().excerpt = (!text.is_empty()).then_some(text);
+        });
+    }
+    {
+        let frontmatter = frontmatter.clone();
+        seo_title_row.connect_changed(move |row| {
+            let text = row.text().to_string();
+            frontmatter.borrow_mut().rank_math_title = (!text.is_empty()).then_some(text);
+        });
+    }
+    {
+        let frontmatter = frontmatter.clone();
+        seo_description_row.connect_changed(move |row| {
+            let text = row.text().to_string();
+            frontmatter.borrow_mut().rank_math_description = (!text.is_empty()).then_some(text);
+        });
+    }
+    {
+        let frontmatter = frontmatter.clone();
+        focus_keyword_row.connect_changed(move |row| {
+            let text = row.text().to_string();
+            frontmatter.borrow_mut().rank_math_focus_keyword = (!text.is_empty()).then_some(text);
         });
     }
     {

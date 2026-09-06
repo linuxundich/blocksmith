@@ -13,7 +13,7 @@
 //! Gutenberg blocks); anything unrecognized passes through as raw HTML
 //! rather than silently losing content.
 
-use crate::{Block, ColumnAlignment};
+use crate::{Block, ButtonItem, ColumnAlignment, GalleryImage};
 
 pub fn gutenberg_to_markdown(html: &str) -> String {
     render_markdown(&parse_gutenberg_blocks(html))
@@ -158,6 +158,15 @@ fn make_block(name: &str, attrs: Option<&str>, inner: &str) -> Block {
         "audio" => Block::Audio { url: extract_attr(inner, "src").unwrap_or_default() },
         "embed" => Block::Embed { url: extract_json_string(attrs, "url").unwrap_or_default() },
         "table" => parse_table_block(inner),
+        "columns" => Block::Columns {
+            columns: parse_columns(&strip_wrapper_tag(inner, "div")),
+        },
+        "buttons" => Block::Buttons {
+            buttons: parse_buttons(&strip_wrapper_tag(inner, "div")),
+        },
+        "gallery" => Block::Gallery {
+            images: parse_gallery(&strip_wrapper_tag(inner, "figure")),
+        },
         // Unrecognized block types (custom blocks, embeds, ...) and our own
         // "html" passthrough both just keep their raw HTML - nothing lost.
         _ => Block::RawHtml { html: inner.trim().to_string() },
@@ -258,6 +267,122 @@ fn parse_list_item_content(li_wrapped: &str) -> Vec<Block> {
     vec![Block::Paragraph {
         html: inline_html_to_markdown(li_inner.trim()),
     }]
+}
+
+/// Scans a `wp:columns` block's stripped `<div>` content for its `wp:column`
+/// children - same depth-aware comment-scanning structure as
+/// `parse_list_items`, just one nesting level shallower since a column has
+/// no sibling-name ambiguity to worry about.
+fn parse_columns(columns_inner: &str) -> Vec<Vec<Block>> {
+    let mut columns = Vec::new();
+    let mut pos = 0;
+    while pos < columns_inner.len() {
+        let Some((inner, _cstart, cend)) = next_comment(columns_inner, pos) else {
+            break;
+        };
+        let Some(parsed) = parse_wp_comment(inner) else {
+            pos = cend;
+            continue;
+        };
+        if parsed.closing || parsed.name != "column" {
+            pos = cend;
+            continue;
+        }
+        match find_block_end(columns_inner, cend, "column") {
+            Some((inner_end, after)) => {
+                columns.push(parse_gutenberg_blocks(&strip_wrapper_tag(&columns_inner[cend..inner_end], "div")));
+                pos = after;
+            }
+            None => {
+                columns.push(parse_gutenberg_blocks(&strip_wrapper_tag(&columns_inner[cend..], "div")));
+                pos = columns_inner.len();
+            }
+        }
+    }
+    columns
+}
+
+/// Scans a `wp:buttons` block's stripped `<div>` content for its `wp:button`
+/// children, reading each one's `<a href>`/link text directly rather than
+/// going through `make_block` - a button's inner HTML is a single `<a>`
+/// element, not a nested block tree.
+fn parse_buttons(buttons_inner: &str) -> Vec<ButtonItem> {
+    let mut buttons = Vec::new();
+    let mut pos = 0;
+    while pos < buttons_inner.len() {
+        let Some((inner, _cstart, cend)) = next_comment(buttons_inner, pos) else {
+            break;
+        };
+        let Some(parsed) = parse_wp_comment(inner) else {
+            pos = cend;
+            continue;
+        };
+        if parsed.closing || parsed.name != "button" {
+            pos = cend;
+            continue;
+        }
+        match find_block_end(buttons_inner, cend, "button") {
+            Some((inner_end, after)) => {
+                buttons.push(button_from_html(&buttons_inner[cend..inner_end]));
+                pos = after;
+            }
+            None => {
+                buttons.push(button_from_html(&buttons_inner[cend..]));
+                pos = buttons_inner.len();
+            }
+        }
+    }
+    buttons
+}
+
+fn button_from_html(html: &str) -> ButtonItem {
+    let url = extract_attr(html, "href").unwrap_or_default();
+    let text = html
+        .find("<a")
+        .and_then(|a_start| html[a_start..].find('>').map(|gt| a_start + gt + 1))
+        .and_then(|text_start| html[text_start..].find("</a>").map(|rel_end| &html[text_start..text_start + rel_end]))
+        .map(|t| unescape_entities(t.trim()))
+        .unwrap_or_default();
+    ButtonItem { text, url }
+}
+
+/// Scans a `wp:gallery` block's stripped `<figure>` content for its
+/// `wp:image` children, reading each one's `src`/`alt` directly - same
+/// reasoning as `parse_buttons` above.
+fn parse_gallery(gallery_inner: &str) -> Vec<GalleryImage> {
+    let mut images = Vec::new();
+    let mut pos = 0;
+    while pos < gallery_inner.len() {
+        let Some((inner, _cstart, cend)) = next_comment(gallery_inner, pos) else {
+            break;
+        };
+        let Some(parsed) = parse_wp_comment(inner) else {
+            pos = cend;
+            continue;
+        };
+        if parsed.closing || parsed.name != "image" {
+            pos = cend;
+            continue;
+        }
+        match find_block_end(gallery_inner, cend, "image") {
+            Some((inner_end, after)) => {
+                images.push(image_from_html(&gallery_inner[cend..inner_end]));
+                pos = after;
+            }
+            None => {
+                images.push(image_from_html(&gallery_inner[cend..]));
+                pos = gallery_inner.len();
+            }
+        }
+    }
+    images
+}
+
+fn image_from_html(html: &str) -> GalleryImage {
+    GalleryImage {
+        url: extract_attr(html, "src").unwrap_or_default(),
+        alt: extract_attr(html, "alt").unwrap_or_default(),
+    }
 }
 
 fn parse_table_block(inner: &str) -> Block {
@@ -431,6 +556,9 @@ fn render_block_markdown(block: &Block) -> String {
         Block::Embed { url } => url.clone(),
         Block::ThematicBreak => "---".to_string(),
         Block::Table { alignments, header, rows } => render_table_markdown(alignments, header, rows),
+        Block::Columns { columns } => render_columns_markdown(columns),
+        Block::Buttons { buttons } => render_buttons_markdown(buttons),
+        Block::Gallery { images } => render_gallery_markdown(images),
         Block::RawHtml { html } => html.clone(),
     }
 }
@@ -471,6 +599,24 @@ fn render_list_markdown(ordered: bool, items: &[Vec<Block>], indent: usize) -> S
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// The `+++`-separator inverse of `parse_fenced_columns` - each column's own
+/// blocks are rendered as ordinary Markdown, then joined back together on
+/// that same separator line.
+fn render_columns_markdown(columns: &[Vec<Block>]) -> String {
+    let body = columns.iter().map(|col| render_markdown(col)).collect::<Vec<_>>().join("\n+++\n");
+    format!("```columns\n{body}\n```")
+}
+
+fn render_buttons_markdown(buttons: &[ButtonItem]) -> String {
+    let body = buttons.iter().map(|b| format!("[{}]({})", b.text, markdown_destination(&b.url))).collect::<Vec<_>>().join("\n");
+    format!("```buttons\n{body}\n```")
+}
+
+fn render_gallery_markdown(images: &[GalleryImage]) -> String {
+    let body = images.iter().map(|img| format!("![{}]({})", img.alt, markdown_destination(&img.url))).collect::<Vec<_>>().join("\n");
+    format!("```gallery\n{body}\n```")
 }
 
 fn render_table_markdown(alignments: &[ColumnAlignment], header: &[String], rows: &[Vec<String>]) -> String {
@@ -606,6 +752,38 @@ mod tests {
     #[test]
     fn multiple_blocks_round_trip_with_blank_line_separation() {
         assert_eq!(round_trip("# Title\n\nSome text.\n"), "# Title\n\nSome text.");
+    }
+
+    #[test]
+    fn fenced_columns_round_trip() {
+        assert_eq!(
+            round_trip("```columns\nColumn A text.\n+++\nColumn B text.\n```"),
+            "```columns\nColumn A text.\n+++\nColumn B text.\n```"
+        );
+    }
+
+    #[test]
+    fn fenced_columns_with_multiple_blocks_per_column_round_trip() {
+        assert_eq!(
+            round_trip("```columns\n## Left\n\nSome text.\n+++\n## Right\n\nMore text.\n```"),
+            "```columns\n## Left\n\nSome text.\n+++\n## Right\n\nMore text.\n```"
+        );
+    }
+
+    #[test]
+    fn fenced_buttons_round_trip() {
+        assert_eq!(
+            round_trip("```buttons\n[Get Started](https://example.com/start)\n[Learn More](https://example.com/more)\n```"),
+            "```buttons\n[Get Started](https://example.com/start)\n[Learn More](https://example.com/more)\n```"
+        );
+    }
+
+    #[test]
+    fn fenced_gallery_round_trip() {
+        assert_eq!(
+            round_trip("```gallery\n![First](one.jpg)\n![Second](two.jpg)\n```"),
+            "```gallery\n![First](one.jpg)\n![Second](two.jpg)\n```"
+        );
     }
 
     #[test]

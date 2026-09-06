@@ -101,6 +101,12 @@ pub struct PostDetail {
     /// render time, so `context=edit`'s `excerpt.raw` is genuinely blank
     /// rather than a truncated-body fallback).
     pub excerpt: String,
+    /// RankMath's own post meta keys, empty when RankMath isn't active on
+    /// the site or hasn't set a value for this post - see
+    /// `Frontmatter::rank_math_title` and friends.
+    pub rank_math_title: String,
+    pub rank_math_description: String,
+    pub rank_math_focus_keyword: String,
     /// `0` means no featured image is set.
     pub featured_media: u64,
     /// Site-local `"YYYY-MM-DDTHH:MM:SS"` - the post's publish date, or for
@@ -405,18 +411,27 @@ impl Client {
     /// Markdown.
     pub fn get_post(&self, id: u64) -> Result<PostDetail> {
         let url = format!(
-            "{}?context=edit&_fields=id,title,content,excerpt,status,slug,categories,tags,featured_media,date",
+            "{}?context=edit&_fields=id,title,content,excerpt,status,slug,categories,tags,featured_media,date,meta",
             self.endpoint(&format!("posts/{id}"))
         );
         let value = self.get_json(&url)?;
         let u64_array = |key: &str| -> Vec<u64> {
             value.get(key).and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_u64).collect()).unwrap_or_default()
         };
+        // RankMath registers its own meta keys with `show_in_rest`, so
+        // they come back in the normal `meta` object like any other
+        // registered post meta - empty (not missing) when RankMath isn't
+        // active on the site at all, since WordPress's REST API always
+        // includes `meta` as an object, just without unregistered keys.
+        let meta_str = |key: &str| -> String { value.get("meta").and_then(|m| m.get(key)).and_then(Value::as_str).unwrap_or_default().to_string() };
         Ok(PostDetail {
             id,
             title: post_title(&value),
             content: value.get("content").and_then(|c| c.get("raw")).and_then(Value::as_str).unwrap_or_default().to_string(),
             excerpt: value.get("excerpt").and_then(|c| c.get("raw")).and_then(Value::as_str).unwrap_or_default().to_string(),
+            rank_math_title: meta_str("rank_math_title"),
+            rank_math_description: meta_str("rank_math_description"),
+            rank_math_focus_keyword: meta_str("rank_math_focus_keyword"),
             status: value.get("status").and_then(Value::as_str).unwrap_or("draft").to_string(),
             slug: value.get("slug").and_then(Value::as_str).unwrap_or_default().to_string(),
             categories: u64_array("categories"),

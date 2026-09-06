@@ -11,6 +11,7 @@ src/export.rs
 src/formatting.rs
 src/imagealt.rs
 src/importer.rs
+src/linkcheck.rs
 src/linkpicker.rs
 src/llm.rs
 src/media.rs

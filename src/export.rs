@@ -19,7 +19,7 @@ use gtk4::glib;
 
 use crate::document::{Frontmatter, PostStatus};
 use crate::i18n::tr;
-use crate::{media, mediapanel, preview, secrets, wpclient, wpsite};
+use crate::{linkcheck, media, mediapanel, notify, preview, secrets, wpclient, wpsite};
 
 pub fn open(
     parent: &adw::ApplicationWindow,
@@ -73,9 +73,14 @@ pub fn open(
     // the current body even if Medienverwaltung was never opened before.
     let media_page = mediapanel::build_content(frontmatter.clone(), &body, doc_dir.clone(), preview_pane.clone());
 
+    // Same one-shot-scan-at-open-time approach as the media tab above: a
+    // pre-publish sanity pass, not a live watcher.
+    let links_page = linkcheck::build_content(&body);
+
     let view_stack = adw::ViewStack::new();
     view_stack.add_titled_with_icon(&preview_page, Some("preview"), &tr("Vorschau"), "view-reveal-symbolic");
     view_stack.add_titled_with_icon(&media_page, Some("media"), &tr("Medien"), "image-x-generic-symbolic");
+    view_stack.add_titled_with_icon(&links_page, Some("links"), &tr("Links"), "insert-link-symbolic");
     view_stack.set_vexpand(true);
 
     let view_switcher = adw::InlineViewSwitcher::builder().stack(&view_stack).build();
@@ -292,13 +297,15 @@ fn wire_publish_button(
         let other_buttons = other_buttons.clone();
         glib::timeout_add_local(Duration::from_millis(150), move || match rx.try_recv() {
             Ok(Ok((post, media))) => {
-                {
+                let title = {
                     let mut fm = frontmatter.borrow_mut();
                     fm.wp_post_id = Some(post.id);
                     fm.media = media;
                     fm.status = target_status;
-                }
+                    fm.title.clone()
+                };
                 status_label.set_label(&tr("Erfolgreich gesendet: {link}").replace("{link}", &post.link));
+                notify::send("export", &tr("Veröffentlicht"), &tr("„{title}“ wurde erfolgreich gesendet.").replace("{title}", &title));
                 button.set_sensitive(true);
                 for b in &other_buttons {
                     b.set_sensitive(true);
@@ -307,6 +314,7 @@ fn wire_publish_button(
             }
             Ok(Err(err)) => {
                 status_label.set_label(&tr("Fehler: {err}").replace("{err}", &err));
+                notify::send("export", &tr("Veröffentlichen fehlgeschlagen"), &err);
                 button.set_sensitive(true);
                 for b in &other_buttons {
                     b.set_sensitive(true);
@@ -373,6 +381,25 @@ fn run_export(
     if let Some(excerpt) = &frontmatter.excerpt {
         payload["excerpt"] = serde_json::Value::String(excerpt.clone());
     }
+    // RankMath registers these meta keys with `show_in_rest`, so they're
+    // writable the same way as any other post meta; sent only when set, so
+    // an unset field never overwrites a value already set directly in
+    // RankMath's own editor. Harmless against a site without RankMath -
+    // WordPress's REST API silently drops an unrecognized meta key rather
+    // than erroring.
+    let mut meta = serde_json::Map::new();
+    if let Some(title) = &frontmatter.rank_math_title {
+        meta.insert("rank_math_title".to_string(), serde_json::Value::String(title.clone()));
+    }
+    if let Some(description) = &frontmatter.rank_math_description {
+        meta.insert("rank_math_description".to_string(), serde_json::Value::String(description.clone()));
+    }
+    if let Some(keyword) = &frontmatter.rank_math_focus_keyword {
+        meta.insert("rank_math_focus_keyword".to_string(), serde_json::Value::String(keyword.clone()));
+    }
+    if !meta.is_empty() {
+        payload["meta"] = serde_json::Value::Object(meta);
+    }
     if frontmatter.status == PostStatus::Future {
         if let Some(scheduled_at) = &frontmatter.scheduled_at {
             payload["date"] = serde_json::Value::String(scheduled_at.clone());
@@ -422,6 +449,18 @@ fn rewrite_image_urls(blocks: &mut [gutenberg::Block], urls: &std::collections::
             gutenberg::Block::List { items, .. } => {
                 for item in items.iter_mut() {
                     rewrite_image_urls(item, urls);
+                }
+            }
+            gutenberg::Block::Columns { columns } => {
+                for column in columns.iter_mut() {
+                    rewrite_image_urls(column, urls);
+                }
+            }
+            gutenberg::Block::Gallery { images } => {
+                for image in images.iter_mut() {
+                    if let Some(new_url) = urls.get(&image.url) {
+                        image.url = new_url.clone();
+                    }
                 }
             }
             _ => {}
@@ -503,6 +542,28 @@ pub(crate) fn mime_from_extension(filename: &str) -> &'static str {
 mod tests {
     use super::*;
 
+    #[test]
+    fn rewrite_image_urls_recurses_into_columns_and_gallery_blocks() {
+        let urls: std::collections::HashMap<String, String> =
+            [("local-a.png".to_string(), "https://example.com/a.png".to_string()), ("local-b.png".to_string(), "https://example.com/b.png".to_string())]
+                .into_iter()
+                .collect();
+        let mut blocks = vec![
+            gutenberg::Block::Columns {
+                columns: vec![vec![gutenberg::Block::Image { url: "local-a.png".to_string(), alt: String::new(), title: None }]],
+            },
+            gutenberg::Block::Gallery {
+                images: vec![gutenberg::GalleryImage { url: "local-b.png".to_string(), alt: String::new() }],
+            },
+        ];
+        rewrite_image_urls(&mut blocks, &urls);
+        let gutenberg::Block::Columns { columns } = &blocks[0] else { panic!("expected Columns") };
+        let gutenberg::Block::Image { url, .. } = &columns[0][0] else { panic!("expected Image") };
+        assert_eq!(url, "https://example.com/a.png");
+        let gutenberg::Block::Gallery { images } = &blocks[1] else { panic!("expected Gallery") };
+        assert_eq!(images[0].url, "https://example.com/b.png");
+    }
+
     /// Exercises the "Als Entwurf hochladen" vs "Veröffentlichen" choice
     /// directly: `run_export` must send whatever `frontmatter.status` holds
     /// at the time of the call (the two export-dialog buttons each force
@@ -529,6 +590,9 @@ mod tests {
             categories: Vec::new(),
             tags: Vec::new(),
             excerpt: None,
+            rank_math_title: None,
+            rank_math_description: None,
+            rank_math_focus_keyword: None,
             featured_image: None,
             wp_post_id: None,
             featured_media_id: None,
@@ -573,6 +637,9 @@ mod tests {
             categories: vec!["Blocksmith Export Test".to_string()],
             tags: vec!["blocksmith-test".to_string()],
             excerpt: None,
+            rank_math_title: None,
+            rank_math_description: None,
+            rank_math_focus_keyword: None,
             featured_image: None,
             wp_post_id: None,
             featured_media_id: None,
@@ -620,6 +687,9 @@ mod tests {
             categories: Vec::new(),
             tags: Vec::new(),
             excerpt: None,
+            rank_math_title: None,
+            rank_math_description: None,
+            rank_math_focus_keyword: None,
             featured_image: None,
             wp_post_id: None,
             featured_media_id: None,
