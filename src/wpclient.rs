@@ -96,6 +96,11 @@ pub struct PostDetail {
     pub slug: String,
     pub categories: Vec<u64>,
     pub tags: Vec<u64>,
+    /// The post excerpt/meta description, if one is set - empty when
+    /// WordPress has nothing stored (it doesn't auto-generate one until
+    /// render time, so `context=edit`'s `excerpt.raw` is genuinely blank
+    /// rather than a truncated-body fallback).
+    pub excerpt: String,
     /// `0` means no featured image is set.
     pub featured_media: u64,
     /// Site-local `"YYYY-MM-DDTHH:MM:SS"` - the post's publish date, or for
@@ -400,7 +405,7 @@ impl Client {
     /// Markdown.
     pub fn get_post(&self, id: u64) -> Result<PostDetail> {
         let url = format!(
-            "{}?context=edit&_fields=id,title,content,status,slug,categories,tags,featured_media,date",
+            "{}?context=edit&_fields=id,title,content,excerpt,status,slug,categories,tags,featured_media,date",
             self.endpoint(&format!("posts/{id}"))
         );
         let value = self.get_json(&url)?;
@@ -411,6 +416,7 @@ impl Client {
             id,
             title: post_title(&value),
             content: value.get("content").and_then(|c| c.get("raw")).and_then(Value::as_str).unwrap_or_default().to_string(),
+            excerpt: value.get("excerpt").and_then(|c| c.get("raw")).and_then(Value::as_str).unwrap_or_default().to_string(),
             status: value.get("status").and_then(Value::as_str).unwrap_or("draft").to_string(),
             slug: value.get("slug").and_then(Value::as_str).unwrap_or_default().to_string(),
             categories: u64_array("categories"),

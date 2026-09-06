@@ -6,10 +6,10 @@
 #
 msgid ""
 msgstr ""
-"Project-Id-Version: Blocksmith 0.32.0\n"
+"Project-Id-Version: Blocksmith 0.34.0\n"
 "Report-Msgid-Bugs-To: https://github.com/linuxundich/blocksmith/issues\n"
-"POT-Creation-Date: 2026-09-06 00:12+0200\n"
-"PO-Revision-Date: 2026-09-06 00:30+0200\n"
+"POT-Creation-Date: 2026-09-06 09:41+0200\n"
+"PO-Revision-Date: 2026-09-06 09:50+0200\n"
 "Last-Translator: Christoph Langner <mail@christoph-langner.de>\n"
 "Language-Team: none\n"
 "Language: en\n"
@@ -99,7 +99,7 @@ msgstr "Apply"
 msgid "Zielumfang"
 msgstr "Target length"
 
-#: src/aimenu.rs:154 src/stats.rs:48
+#: src/aimenu.rs:154 src/stats.rs:114
 msgid "Wörter"
 msgstr "Words"
 
@@ -449,15 +449,15 @@ msgid ""
 "sein."
 msgstr "A valid publish date must be set for the “Scheduled” status."
 
-#: src/export.rs:454
+#: src/export.rs:457
 msgid "Bild nicht abrufbar: {err}"
 msgstr "Couldn't fetch image: {err}"
 
-#: src/export.rs:458
+#: src/export.rs:461
 msgid "Bild nicht lesbar: {err}"
 msgstr "Couldn't read image: {err}"
 
-#: src/export.rs:461 src/export.rs:469 src/media.rs:257
+#: src/export.rs:464 src/export.rs:472 src/media.rs:257
 msgid "Bild {path} nicht lesbar: {err}"
 msgstr "Couldn't read image {path}: {err}"
 
@@ -566,8 +566,8 @@ msgid ""
 "Für den KI-Alternativtext bitte mit der rechten Maustaste auf eine Zeile mit "
 "einem Bild (![Beschreibung](bild.png)) klicken."
 msgstr ""
-"For AI alt text, please right-click a line containing an image "
-"(![description](image.png))."
+"For AI alt text, please right-click a line containing an image (!"
+"[description](image.png))."
 
 #: src/imagealt.rs:129 src/imagealt.rs:160
 msgid "OK"
@@ -578,8 +578,8 @@ msgid ""
 "Für den Alternativtext bitte mit der rechten Maustaste auf eine Zeile mit "
 "einem Bild (![Beschreibung](bild.png)) klicken."
 msgstr ""
-"For alt text, please right-click a line containing an image "
-"(![description](image.png))."
+"For alt text, please right-click a line containing an image (![description]"
+"(image.png))."
 
 #: src/imagealt.rs:175 src/mediapanel.rs:143
 msgid "Alternativtext definieren"
@@ -621,7 +621,8 @@ msgstr "Open from WordPress"
 msgid ""
 "Keine WordPress-Verbindung eingerichtet - bitte zuerst in den Einstellungen "
 "konfigurieren."
-msgstr "No WordPress connection set up - please configure one in Settings first."
+msgstr ""
+"No WordPress connection set up - please configure one in Settings first."
 
 #: src/importer.rs:202 src/linkpicker.rs:91
 msgid "Lade Artikel …"
@@ -665,7 +666,7 @@ msgstr "No response received (possibly blocked by a safety filter)."
 msgid "Keine Antwort erhalten."
 msgstr "No response received."
 
-#: src/llm.rs:515 src/wpclient.rs:124
+#: src/llm.rs:515 src/wpclient.rs:129
 msgid "Antwort nicht lesbar: {err}"
 msgstr "Couldn't read the response: {err}"
 
@@ -770,8 +771,8 @@ msgid ""
 "Die vordefinierten KI-Aktionen im Editor-Kontextmenü. Änderungen lassen sich "
 "auf die Vorgabe zurücksetzen."
 msgstr ""
-"The predefined AI actions in the editor's context menu. Changes can be "
-"reset to the default."
+"The predefined AI actions in the editor's context menu. Changes can be reset "
+"to the default."
 
 #: src/promptsettings.rs:176
 msgid "Eigene Prompts"
@@ -806,46 +807,50 @@ msgid "Slug"
 msgstr "Slug"
 
 #: src/properties.rs:29
+msgid "Auszug / Meta-Beschreibung"
+msgstr "Excerpt / Meta Description"
+
+#: src/properties.rs:33
 msgid "Kategorien (Komma-getrennt)"
 msgstr "Categories (comma-separated)"
 
-#: src/properties.rs:33
+#: src/properties.rs:37
 msgid "Tags (Komma-getrennt)"
 msgstr "Tags (comma-separated)"
 
-#: src/properties.rs:37
+#: src/properties.rs:41
 msgid "Featured Image (Pfad)"
 msgstr "Featured Image (path)"
 
-#: src/properties.rs:41
+#: src/properties.rs:45
 msgid "Bild auswählen…"
 msgstr "Choose Image…"
 
-#: src/properties.rs:51
+#: src/properties.rs:55
 msgid "Status"
 msgstr "Status"
 
-#: src/properties.rs:57
+#: src/properties.rs:61
 msgid "Veröffentlichungstermin (JJJJ-MM-TT HH:MM)"
 msgstr "Publish Date (YYYY-MM-DD HH:MM)"
 
-#: src/properties.rs:63
+#: src/properties.rs:67
 msgid "Kategorien & Tags von WordPress aktualisieren"
 msgstr "Refresh categories & tags from WordPress"
 
-#: src/properties.rs:74
+#: src/properties.rs:78
 msgid "Kategorien & Tags verwalten…"
 msgstr "Manage Categories & Tags…"
 
-#: src/properties.rs:89 src/properties.rs:111 src/window.rs:123
+#: src/properties.rs:93 src/properties.rs:116 src/window.rs:123
 msgid "Artikel-Eigenschaften"
 msgstr "Article Properties"
 
-#: src/properties.rs:154 src/window.rs:840
+#: src/properties.rs:166 src/window.rs:840
 msgid "Bilder"
 msgstr "Images"
 
-#: src/properties.rs:158
+#: src/properties.rs:170
 msgid "Featured Image auswählen"
 msgstr "Choose Featured Image"
 
@@ -933,23 +938,51 @@ msgstr "Paste Image from Clipboard"
 msgid "Suchen und Ersetzen"
 msgstr "Find and Replace"
 
-#: src/stats.rs:50
+#: src/stats.rs:79
+msgid "Sehr leicht"
+msgstr "Very Easy"
+
+#: src/stats.rs:80
+msgid "Leicht"
+msgstr "Easy"
+
+#: src/stats.rs:81
+msgid "Mittel"
+msgstr "Medium"
+
+#: src/stats.rs:82
+msgid "Schwer"
+msgstr "Difficult"
+
+#: src/stats.rs:83
+msgid "Sehr schwer"
+msgstr "Very Difficult"
+
+#: src/stats.rs:89
+msgid "{label} ({score})"
+msgstr "{label} ({score})"
+
+#: src/stats.rs:116
 msgid "Zeichen (mit Leerzeichen)"
 msgstr "Characters (with spaces)"
 
-#: src/stats.rs:52
+#: src/stats.rs:118
 msgid "Zeichen (ohne Leerzeichen)"
 msgstr "Characters (without spaces)"
 
-#: src/stats.rs:54
+#: src/stats.rs:120
 msgid "Absätze"
 msgstr "Paragraphs"
 
-#: src/stats.rs:56
+#: src/stats.rs:122
 msgid "Geschätzte Lesezeit"
 msgstr "Estimated Reading Time"
 
-#: src/stats.rs:85
+#: src/stats.rs:124
+msgid "Lesbarkeit"
+msgstr "Readability"
+
+#: src/stats.rs:154
 msgid "{n} min"
 msgstr "{n} min"
 
@@ -1143,8 +1176,8 @@ msgid ""
 "einem Absturz oder weil Blocksmith ohne zu speichern beendet wurde. "
 "Wiederherstellen?"
 msgstr ""
-"An unsaved state was found for “{name}” - probably after a crash, or "
-"because Blocksmith was closed without saving. Restore it?"
+"An unsaved state was found for “{name}” - probably after a crash, or because "
+"Blocksmith was closed without saving. Restore it?"
 
 #: src/window.rs:1032
 msgid "Verwerfen"
@@ -1154,14 +1187,14 @@ msgstr "Discard"
 msgid "Wiederherstellen"
 msgstr "Restore"
 
-#: src/wpclient.rs:187
+#: src/wpclient.rs:192
 msgid "Keine Medien-ID in der Antwort"
 msgstr "No media ID in the response"
 
-#: src/wpclient.rs:440
+#: src/wpclient.rs:446
 msgid "Keine Post-ID in der Antwort"
 msgstr "No post ID in the response"
 
-#: src/wpclient.rs:485
+#: src/wpclient.rs:491
 msgid "Kein Term-ID für \"{name}\" erhalten"
 msgstr "No term ID received for \"{name}\""

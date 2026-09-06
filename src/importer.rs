@@ -309,6 +309,7 @@ fn fetch_and_convert(site: &wpsite::SiteConfig, password: &str, post_id: u64) ->
         scheduled_at: is_future.then_some(detail.date).filter(|d| !d.is_empty()),
         categories,
         tags,
+        excerpt: (!detail.excerpt.is_empty()).then_some(detail.excerpt),
         featured_image: None,
         wp_post_id: Some(detail.id),
         featured_media_id: (detail.featured_media != 0).then_some(detail.featured_media),

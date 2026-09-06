@@ -93,3 +93,72 @@ what's already shipped.
   well.
 - **A plugin/extension system** - over-engineering for a personal-scale
   tool with one active user; revisit only if that changes.
+
+## New candidate features (2026-09-06 analysis)
+
+The list above is essentially cleared out, so this is a fresh pass -
+grounded in actual gaps found by reading `crates/gutenberg/src/lib.rs`,
+`src/wpclient.rs`, `src/document.rs`, and `src/stats.rs`, not
+speculation.
+
+### Quick wins
+
+- ~~**Post excerpt / meta description field.**~~ Done (see CHANGELOG.md) -
+  a new "Auszug / Meta-Beschreibung" field in Artikel-Eigenschaften sends
+  WordPress's own `excerpt` field on export and reads it back when opening
+  an existing post.
+- ~~**Readability hint in the Statistik tab.**~~ Done (see CHANGELOG.md) -
+  a German-adapted Flesch reading-ease score (Amstad's formula) plus a
+  qualitative label, computed from average sentence length and average
+  syllables per word.
+
+### Moderate scope, higher value
+
+- **Broken-link checker.** Nothing in the app ever validates a URL - not
+  Markdown links, not `wp:embed` sources. A "check links" action (in the
+  export dialog, alongside the existing Medienverwaltung tab) that HEADs
+  every unique link in the article and flags anything returning 4xx/5xx
+  or timing out would catch real pre-publish mistakes (typo'd URLs,
+  since-deleted pages) that currently ship silently.
+- **Gutenberg block coverage: Columns, Buttons, Gallery.** The `Block`
+  enum covers paragraph/heading/list/quote/code/image/video/audio/embed/
+  separator/table plus a raw-HTML catch-all - genuinely common Gutenberg
+  blocks like side-by-side columns, a call-to-action button, or a photo
+  gallery have no representation at all and would either fall through to
+  `wp:html` or not round-trip cleanly. Since Markdown has no native
+  syntax for these, this needs a deliberate syntax choice (e.g. a fenced
+  block like ` ```columns ` or a shortcode-style marker) - a real design
+  decision to make before implementing, not just a mechanical addition.
+- **Edit WordPress Pages, not just Posts.** `wpclient.rs` is hardcoded to
+  the `posts` endpoint throughout; there's no `pages` support and no
+  concept of post type in `Frontmatter` at all. A post-type picker in
+  Artikel-Eigenschaften (defaulting to "Artikel", same as today) that
+  swaps the REST endpoint would open the app to static/about-style pages
+  without disrupting the current posts-only flow.
+
+### Larger / architectural
+
+- **Revision-conflict awareness.** Re-exporting an already-published post
+  always overwrites it outright - there's no check for whether the post
+  changed on the server since it was last fetched (e.g. someone edited it
+  live in wp-admin in the meantime). WordPress's REST API exposes
+  revisions; comparing the fetched-at content hash against the current
+  server content before an update, and warning rather than silently
+  clobbering, would close a real (if rare) data-loss risk.
+- **Paste rich text as Markdown.** Clipboard paste today only special-
+  cases an image (see `wire_paste_image_shortcut`); pasting formatted
+  text copied from Google Docs, Word, or a webpage lands as plain,
+  unformatted text or raw HTML, not Markdown. Detecting an HTML clipboard
+  format and converting it to Markdown on paste would make drafting from
+  outside sources far less lossy - a genuinely bigger feature (HTML→MD
+  conversion, GTK clipboard format negotiation) than anything above.
+- **SEO plugin field support (Yoast/RankMath).** No `meta` fields are
+  ever sent in a post payload - a focus keyword, custom SEO title, and
+  meta description for whichever SEO plugin the target site runs would
+  need per-plugin field-name knowledge and is only valuable to a site
+  that actually has one of those plugins active, unlike the plain
+  `excerpt` quick win above.
+
+**Why:** same reason as the original 2026-09-04 analysis - a periodic
+fresh look grounded in the actual code, not a re-statement of ideas
+already shipped or already rejected.

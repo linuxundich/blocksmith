@@ -57,7 +57,8 @@ blocks. Implemented so far:
   is defined, and its file format - in that fixed order whenever more than
   one applies, updated live from Medienverwaltung/the alt-text dialogs, not
   just on the next edit), "Gutenberg-Code" (the exact block HTML that would be published),
-  "Statistik" (word/character/paragraph counts, estimated reading time),
+  "Statistik" (word/character/paragraph counts, estimated reading time, and
+  a German-adapted Flesch reading-ease score with a qualitative label),
   and "Chat" - a writing assistant with message bubbles (replies rendered
   as Markdown), backed by Gemini, ChatGPT, Claude, or Ollama (self-hosted,
   no API key), with a provider/model picker both in the tab itself and in
@@ -84,9 +85,10 @@ blocks. Implemented so far:
   any other URL still embeds generically, the same way WordPress's own
   editor falls back to oEmbed discovery for it).
 - **Document model** — per-article frontmatter (title, slug, status,
-  scheduled publish date/time, categories, tags, featured image, WordPress
-  post id) stored in the `.md` file itself, editable via an
-  "Artikel-Eigenschaften" dialog with autocomplete for existing WordPress
+  scheduled publish date/time, categories, tags, excerpt/meta description,
+  featured image, WordPress post id) stored in the `.md` file itself,
+  editable via an "Artikel-Eigenschaften" dialog with autocomplete for
+  existing WordPress
   categories/tags (backed by an on-disk cache, `src/termcache.rs`,
   refreshed at startup and on demand) and a native file picker for the
   featured image, not just a path field. A "Kategorien & Tags verwalten"

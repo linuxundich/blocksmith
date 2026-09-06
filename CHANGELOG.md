@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.34.0] - 2026-09-06
+
+### Added
+
+- Post excerpt / meta description: a new "Auszug / Meta-Beschreibung"
+  field in Artikel-Eigenschaften is sent as WordPress's own `excerpt`
+  field on export, and read back when opening an existing post via "Von
+  WordPress öffnen" - previously the field didn't exist at all, so
+  WordPress fell back to an auto-truncated (often mid-sentence) chunk of
+  the body for RSS feeds, social share cards, and archive listings.
+- Readability hint in the Statistik tab: a German-adapted Flesch
+  reading-ease score (Amstad's formula) plus a qualitative label ("Sehr
+  leicht" through "Sehr schwer"), computed from average sentence length
+  and average syllables per word - a lightweight signal for "this
+  paragraph is getting hard to read" that nothing in the app surfaced
+  before.
+
 ## [0.33.0] - 2026-09-06
 
 ### Added

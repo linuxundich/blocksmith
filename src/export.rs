@@ -370,6 +370,9 @@ fn run_export(
     if !frontmatter.slug.is_empty() {
         payload["slug"] = serde_json::Value::String(frontmatter.slug.clone());
     }
+    if let Some(excerpt) = &frontmatter.excerpt {
+        payload["excerpt"] = serde_json::Value::String(excerpt.clone());
+    }
     if frontmatter.status == PostStatus::Future {
         if let Some(scheduled_at) = &frontmatter.scheduled_at {
             payload["date"] = serde_json::Value::String(scheduled_at.clone());
@@ -525,6 +528,7 @@ mod tests {
             scheduled_at: None,
             categories: Vec::new(),
             tags: Vec::new(),
+            excerpt: None,
             featured_image: None,
             wp_post_id: None,
             featured_media_id: None,
@@ -568,6 +572,7 @@ mod tests {
             scheduled_at: None,
             categories: vec!["Blocksmith Export Test".to_string()],
             tags: vec!["blocksmith-test".to_string()],
+            excerpt: None,
             featured_image: None,
             wp_post_id: None,
             featured_media_id: None,
@@ -614,6 +619,7 @@ mod tests {
             scheduled_at: None,
             categories: Vec::new(),
             tags: Vec::new(),
+            excerpt: None,
             featured_image: None,
             wp_post_id: None,
             featured_media_id: None,

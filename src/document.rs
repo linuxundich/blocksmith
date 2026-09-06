@@ -77,6 +77,12 @@ pub struct Frontmatter {
     pub scheduled_at: Option<String>,
     pub categories: Vec<String>,
     pub tags: Vec<String>,
+    /// The post excerpt/meta description - sent as WordPress's own
+    /// `excerpt` field, which is what RSS feeds, social share cards, and
+    /// most themes' archive views actually show. Left unset, WordPress
+    /// falls back to an auto-truncated (often mid-sentence) chunk of the
+    /// body instead.
+    pub excerpt: Option<String>,
     pub featured_image: Option<String>,
     /// Set once the document has been published/updated via the WordPress
     /// REST API (see M5), so re-exporting updates the same post.
@@ -155,6 +161,9 @@ pub fn parse(input: &str) -> Document {
             }
             "categories" => frontmatter.categories = parse_list(value),
             "tags" => frontmatter.tags = parse_list(value),
+            "excerpt" => {
+                frontmatter.excerpt = (!value.is_empty()).then(|| unquote(value));
+            }
             "featured_image" => {
                 frontmatter.featured_image = (!value.is_empty()).then(|| unquote(value));
             }
@@ -192,6 +201,9 @@ pub fn serialize(doc: &Document) -> String {
     }
     out.push_str(&format!("categories: {}\n", render_list(&fm.categories)));
     out.push_str(&format!("tags: {}\n", render_list(&fm.tags)));
+    if let Some(excerpt) = &fm.excerpt {
+        out.push_str(&format!("excerpt: \"{}\"\n", escape(excerpt)));
+    }
     if let Some(img) = &fm.featured_image {
         out.push_str(&format!("featured_image: \"{}\"\n", escape(img)));
     }
@@ -468,6 +480,7 @@ mod tests {
                      status: publish\n\
                      categories: [\"Tech\", \"Rust\"]\n\
                      tags: [\"gtk\", \"wordpress\"]\n\
+                     excerpt: \"A short summary.\"\n\
                      featured_image: \"/tmp/cat.png\"\n\
                      wp_post_id: 42\n\
                      wp_featured_media_id: 7\n\
@@ -480,6 +493,7 @@ mod tests {
         assert_eq!(doc.frontmatter.status, PostStatus::Publish);
         assert_eq!(doc.frontmatter.categories, vec!["Tech", "Rust"]);
         assert_eq!(doc.frontmatter.tags, vec!["gtk", "wordpress"]);
+        assert_eq!(doc.frontmatter.excerpt.as_deref(), Some("A short summary."));
         assert_eq!(doc.frontmatter.featured_image.as_deref(), Some("/tmp/cat.png"));
         assert_eq!(doc.frontmatter.wp_post_id, Some(42));
         assert_eq!(doc.frontmatter.featured_media_id, Some(7));
@@ -505,6 +519,7 @@ mod tests {
                 scheduled_at: Some("2026-12-24T18:30:00".to_string()),
                 categories: vec!["Cat A".to_string(), "Cat B".to_string()],
                 tags: vec!["one".to_string()],
+                excerpt: Some("A short excerpt with \"quotes\".".to_string()),
                 featured_image: None,
                 wp_post_id: Some(7),
                 featured_media_id: Some(99),

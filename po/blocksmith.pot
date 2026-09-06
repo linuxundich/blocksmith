@@ -6,9 +6,9 @@
 #, fuzzy
 msgid ""
 msgstr ""
-"Project-Id-Version: Blocksmith 0.32.0\n"
+"Project-Id-Version: Blocksmith 0.33.0\n"
 "Report-Msgid-Bugs-To: https://github.com/linuxundich/blocksmith/issues\n"
-"POT-Creation-Date: 2026-09-06 00:12+0200\n"
+"POT-Creation-Date: 2026-09-06 09:41+0200\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -96,7 +96,7 @@ msgstr ""
 msgid "Zielumfang"
 msgstr ""
 
-#: src/aimenu.rs:154 src/stats.rs:48
+#: src/aimenu.rs:154 src/stats.rs:114
 msgid "Wörter"
 msgstr ""
 
@@ -430,15 +430,15 @@ msgid ""
 "sein."
 msgstr ""
 
-#: src/export.rs:454
+#: src/export.rs:457
 msgid "Bild nicht abrufbar: {err}"
 msgstr ""
 
-#: src/export.rs:458
+#: src/export.rs:461
 msgid "Bild nicht lesbar: {err}"
 msgstr ""
 
-#: src/export.rs:461 src/export.rs:469 src/media.rs:257
+#: src/export.rs:464 src/export.rs:472 src/media.rs:257
 msgid "Bild {path} nicht lesbar: {err}"
 msgstr ""
 
@@ -642,7 +642,7 @@ msgstr ""
 msgid "Keine Antwort erhalten."
 msgstr ""
 
-#: src/llm.rs:515 src/wpclient.rs:124
+#: src/llm.rs:515 src/wpclient.rs:129
 msgid "Antwort nicht lesbar: {err}"
 msgstr ""
 
@@ -781,46 +781,50 @@ msgid "Slug"
 msgstr ""
 
 #: src/properties.rs:29
-msgid "Kategorien (Komma-getrennt)"
+msgid "Auszug / Meta-Beschreibung"
 msgstr ""
 
 #: src/properties.rs:33
-msgid "Tags (Komma-getrennt)"
+msgid "Kategorien (Komma-getrennt)"
 msgstr ""
 
 #: src/properties.rs:37
-msgid "Featured Image (Pfad)"
+msgid "Tags (Komma-getrennt)"
 msgstr ""
 
 #: src/properties.rs:41
+msgid "Featured Image (Pfad)"
+msgstr ""
+
+#: src/properties.rs:45
 msgid "Bild auswählen…"
 msgstr ""
 
-#: src/properties.rs:51
+#: src/properties.rs:55
 msgid "Status"
 msgstr ""
 
-#: src/properties.rs:57
+#: src/properties.rs:61
 msgid "Veröffentlichungstermin (JJJJ-MM-TT HH:MM)"
 msgstr ""
 
-#: src/properties.rs:63
+#: src/properties.rs:67
 msgid "Kategorien & Tags von WordPress aktualisieren"
 msgstr ""
 
-#: src/properties.rs:74
+#: src/properties.rs:78
 msgid "Kategorien & Tags verwalten…"
 msgstr ""
 
-#: src/properties.rs:89 src/properties.rs:111 src/window.rs:123
+#: src/properties.rs:93 src/properties.rs:116 src/window.rs:123
 msgid "Artikel-Eigenschaften"
 msgstr ""
 
-#: src/properties.rs:154 src/window.rs:840
+#: src/properties.rs:166 src/window.rs:840
 msgid "Bilder"
 msgstr ""
 
-#: src/properties.rs:158
+#: src/properties.rs:170
 msgid "Featured Image auswählen"
 msgstr ""
 
@@ -908,23 +912,51 @@ msgstr ""
 msgid "Suchen und Ersetzen"
 msgstr ""
 
-#: src/stats.rs:50
+#: src/stats.rs:79
+msgid "Sehr leicht"
+msgstr ""
+
+#: src/stats.rs:80
+msgid "Leicht"
+msgstr ""
+
+#: src/stats.rs:81
+msgid "Mittel"
+msgstr ""
+
+#: src/stats.rs:82
+msgid "Schwer"
+msgstr ""
+
+#: src/stats.rs:83
+msgid "Sehr schwer"
+msgstr ""
+
+#: src/stats.rs:89
+msgid "{label} ({score})"
+msgstr ""
+
+#: src/stats.rs:116
 msgid "Zeichen (mit Leerzeichen)"
 msgstr ""
 
-#: src/stats.rs:52
+#: src/stats.rs:118
 msgid "Zeichen (ohne Leerzeichen)"
 msgstr ""
 
-#: src/stats.rs:54
+#: src/stats.rs:120
 msgid "Absätze"
 msgstr ""
 
-#: src/stats.rs:56
+#: src/stats.rs:122
 msgid "Geschätzte Lesezeit"
 msgstr ""
 
-#: src/stats.rs:85
+#: src/stats.rs:124
+msgid "Lesbarkeit"
+msgstr ""
+
+#: src/stats.rs:154
 msgid "{n} min"
 msgstr ""
 
@@ -1127,14 +1159,14 @@ msgstr ""
 msgid "Wiederherstellen"
 msgstr ""
 
-#: src/wpclient.rs:187
+#: src/wpclient.rs:192
 msgid "Keine Medien-ID in der Antwort"
 msgstr ""
 
-#: src/wpclient.rs:440
+#: src/wpclient.rs:446
 msgid "Keine Post-ID in der Antwort"
 msgstr ""
 
-#: src/wpclient.rs:485
+#: src/wpclient.rs:491
 msgid "Kein Term-ID für \"{name}\" erhalten"
 msgstr ""

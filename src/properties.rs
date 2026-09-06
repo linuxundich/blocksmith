@@ -25,6 +25,10 @@ pub fn open(
 
     let title_row = adw::EntryRow::builder().title(tr("Titel")).text(current.title.as_str()).build();
     let slug_row = adw::EntryRow::builder().title(tr("Slug")).text(current.slug.as_str()).build();
+    let excerpt_row = adw::EntryRow::builder()
+        .title(tr("Auszug / Meta-Beschreibung"))
+        .text(current.excerpt.clone().unwrap_or_default().as_str())
+        .build();
     let categories_row = adw::EntryRow::builder()
         .title(tr("Kategorien (Komma-getrennt)"))
         .text(current.categories.join(", ").as_str())
@@ -90,6 +94,7 @@ pub fn open(
     group.set_header_suffix(Some(&header_suffix_box));
     group.add(&title_row);
     group.add(&slug_row);
+    group.add(&excerpt_row);
     group.add(&status_row);
     group.add(&scheduled_row);
     group.add(&categories_row);
@@ -124,6 +129,13 @@ pub fn open(
         let frontmatter = frontmatter.clone();
         slug_row.connect_changed(move |row| {
             frontmatter.borrow_mut().slug = row.text().to_string();
+        });
+    }
+    {
+        let frontmatter = frontmatter.clone();
+        excerpt_row.connect_changed(move |row| {
+            let text = row.text().to_string();
+            frontmatter.borrow_mut().excerpt = (!text.is_empty()).then_some(text);
         });
     }
     {
