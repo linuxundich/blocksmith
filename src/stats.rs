@@ -1,7 +1,7 @@
 //! Document statistics shown in the right pane's "Statistik" tab, computed
 //! straight from the Markdown source text.
 
-use gtk4::prelude::*;
+use adw::prelude::*;
 
 use crate::i18n::tr;
 
@@ -17,20 +17,35 @@ pub struct Stats {
     /// the underlying words-per-sentence/syllables-per-word ratios are
     /// undefined rather than meaningfully zero.
     pub readability_score: Option<f64>,
+    /// The two inputs the score above is actually computed from - shown
+    /// alongside it so the number isn't just a black box, and reused by
+    /// `readability_tips` to suggest which one to work on.
+    pub avg_sentence_length: Option<f64>,
+    pub avg_syllables_per_word: Option<f64>,
 }
 
 pub fn compute(markdown: &str) -> Stats {
     let words = markdown.split_whitespace().count();
     let paragraphs = markdown.split("\n\n").map(str::trim).filter(|p| !p.is_empty()).count();
     let reading_minutes = if words == 0 { 0 } else { ((words as f64 / 200.0).ceil() as usize).max(1) };
+    let metrics = readability_metrics(markdown, words);
     Stats {
         words,
         chars_with_spaces: markdown.chars().count(),
         chars_without_spaces: markdown.chars().filter(|c| !c.is_whitespace()).count(),
         paragraphs,
         reading_minutes,
-        readability_score: readability_score(markdown, words),
+        readability_score: metrics.map(|m| m.score),
+        avg_sentence_length: metrics.map(|m| m.avg_sentence_length),
+        avg_syllables_per_word: metrics.map(|m| m.avg_syllables_per_word),
     }
+}
+
+#[derive(Clone, Copy)]
+struct ReadabilityMetrics {
+    avg_sentence_length: f64,
+    avg_syllables_per_word: f64,
+    score: f64,
 }
 
 /// Amstad's German adaptation of the Flesch reading-ease formula: `180 -
@@ -42,7 +57,7 @@ pub fn compute(markdown: &str) -> Stats {
 /// vowel-group runs respectively) rather than true linguistic analysis -
 /// good enough for a rough "is this getting hard to read" signal, not a
 /// precise measurement.
-fn readability_score(markdown: &str, words: usize) -> Option<f64> {
+fn readability_metrics(markdown: &str, words: usize) -> Option<ReadabilityMetrics> {
     if words == 0 {
         return None;
     }
@@ -50,7 +65,43 @@ fn readability_score(markdown: &str, words: usize) -> Option<f64> {
     let syllables: usize = markdown.split_whitespace().map(count_syllables).sum();
     let avg_sentence_length = words as f64 / sentences as f64;
     let avg_syllables_per_word = syllables as f64 / words as f64;
-    Some((180.0 - avg_sentence_length - 58.5 * avg_syllables_per_word).clamp(0.0, 100.0))
+    let score = (180.0 - avg_sentence_length - 58.5 * avg_syllables_per_word).clamp(0.0, 100.0);
+    Some(ReadabilityMetrics { avg_sentence_length, avg_syllables_per_word, score })
+}
+
+/// Sentence-length threshold (words/sentence) above which a sentence is
+/// generally considered hard to follow in German writing-style guidance -
+/// not derived from the formula itself, just a common rule-of-thumb
+/// boundary editors use.
+const LONG_SENTENCE_WORDS: f64 = 20.0;
+const SOMEWHAT_LONG_SENTENCE_WORDS: f64 = 15.0;
+/// Average syllables-per-word thresholds - German prose typically runs
+/// somewhat above 1.5 due to compound words, so these sit a bit higher
+/// than the sentence-length ones would suggest in isolation.
+const MANY_SYLLABLES_PER_WORD: f64 = 2.0;
+const SOMEWHAT_MANY_SYLLABLES_PER_WORD: f64 = 1.8;
+
+/// Concrete, actionable suggestions for improving the readability score -
+/// derived from which of the two underlying metrics is actually dragging
+/// it down, not just a generic "write more simply" message, so the
+/// author knows what to actually change. Never empty: falls back to an
+/// encouraging message when neither metric is worth flagging.
+fn readability_tips(avg_sentence_length: f64, avg_syllables_per_word: f64) -> Vec<String> {
+    let mut tips = Vec::new();
+    if avg_sentence_length > LONG_SENTENCE_WORDS {
+        tips.push(tr("Die Sätze sind im Schnitt sehr lang (über 20 Wörter) - lange Sätze an Konjunktionen wie „und“ oder „weil“ in zwei kürzere aufteilen."));
+    } else if avg_sentence_length > SOMEWHAT_LONG_SENTENCE_WORDS {
+        tips.push(tr("Die Sätze sind im Schnitt eher lang - kürzere Sätze sind für Leser:innen oft leichter zu verarbeiten."));
+    }
+    if avg_syllables_per_word > MANY_SYLLABLES_PER_WORD {
+        tips.push(tr("Viele lange, silbenreiche Wörter - wo möglich, kürzere und geläufigere Wörter statt Fach- oder Fremdwörtern verwenden."));
+    } else if avg_syllables_per_word > SOMEWHAT_MANY_SYLLABLES_PER_WORD {
+        tips.push(tr("Die Wörter sind im Schnitt eher lang - einfachere Formulierungen können den Text zugänglicher machen."));
+    }
+    if tips.is_empty() {
+        tips.push(tr("Der Text ist bereits gut lesbar - kurze Sätze und einfache Wörter beibehalten."));
+    }
+    tips
 }
 
 /// Counts vowel-group runs in `word` as a proxy for syllables (e.g.
@@ -91,6 +142,12 @@ fn readability_display(score: Option<f64>) -> String {
     }
 }
 
+/// One decimal place, German-style comma - matching `statusbar.rs`'s own
+/// German-formatted (`.`-thousands-separated) number display convention.
+fn format_decimal_de(value: f64) -> String {
+    format!("{value:.1}").replace('.', ",")
+}
+
 pub struct StatsView {
     pub widget: gtk4::Widget,
     words: gtk4::Label,
@@ -98,7 +155,10 @@ pub struct StatsView {
     chars_without_spaces: gtk4::Label,
     paragraphs: gtk4::Label,
     reading_minutes: gtk4::Label,
-    readability: gtk4::Label,
+    readability_row: adw::ExpanderRow,
+    sentence_length_value: gtk4::Label,
+    syllables_value: gtk4::Label,
+    tips_label: gtk4::Label,
 }
 
 impl StatsView {
@@ -108,21 +168,39 @@ impl StatsView {
         let chars_without_spaces = value_label();
         let paragraphs = value_label();
         let reading_minutes = value_label();
-        let readability = value_label();
 
-        let list = gtk4::Box::builder().orientation(gtk4::Orientation::Vertical).build();
-        list.append(&row(&tr("Wörter"), &words));
-        list.append(&gtk4::Separator::new(gtk4::Orientation::Horizontal));
-        list.append(&row(&tr("Zeichen (mit Leerzeichen)"), &chars_with_spaces));
-        list.append(&gtk4::Separator::new(gtk4::Orientation::Horizontal));
-        list.append(&row(&tr("Zeichen (ohne Leerzeichen)"), &chars_without_spaces));
-        list.append(&gtk4::Separator::new(gtk4::Orientation::Horizontal));
-        list.append(&row(&tr("Absätze"), &paragraphs));
-        list.append(&gtk4::Separator::new(gtk4::Orientation::Horizontal));
-        list.append(&row(&tr("Geschätzte Lesezeit"), &reading_minutes));
-        list.append(&gtk4::Separator::new(gtk4::Orientation::Horizontal));
-        list.append(&row(&tr("Lesbarkeit"), &readability));
+        // An `Adw.ExpanderRow`, not just another plain value row - the
+        // score alone doesn't say anything about *why* it came out that
+        // way, so this expands into the formula, the two measurements it
+        // was computed from, and concrete tips (see `readability_tips`)
+        // instead of leaving the number as an unexplained black box.
+        let readability_row = adw::ExpanderRow::builder().title(tr("Lesbarkeit")).build();
+
+        let formula_row = adw::ActionRow::builder()
+            .title(tr("Berechnungsgrundlage"))
+            .subtitle(tr("Deutsch angepasste Flesch-Formel (Amstad): 180 − Ø Wörter/Satz − 58,5 × Ø Silben/Wort"))
+            .build();
+        readability_row.add_row(&formula_row);
+
+        let sentence_length_value = value_label();
+        readability_row.add_row(&value_row(&tr("Ø Wörter pro Satz"), &sentence_length_value));
+
+        let syllables_value = value_label();
+        readability_row.add_row(&value_row(&tr("Ø Silben pro Wort"), &syllables_value));
+
+        let tips_label = gtk4::Label::builder().wrap(true).xalign(0.0).margin_top(8).margin_bottom(8).margin_start(12).margin_end(12).build();
+        tips_label.add_css_class("dim-label");
+        readability_row.add_row(&tips_label);
+
+        let list = gtk4::ListBox::new();
+        list.set_selection_mode(gtk4::SelectionMode::None);
         list.add_css_class("boxed-list");
+        list.append(&value_row(&tr("Wörter"), &words));
+        list.append(&value_row(&tr("Zeichen (mit Leerzeichen)"), &chars_with_spaces));
+        list.append(&value_row(&tr("Zeichen (ohne Leerzeichen)"), &chars_without_spaces));
+        list.append(&value_row(&tr("Absätze"), &paragraphs));
+        list.append(&value_row(&tr("Geschätzte Lesezeit"), &reading_minutes));
+        list.append(&readability_row);
 
         let clamp = adw::Clamp::builder().maximum_size(420).child(&list).build();
         let scroller = gtk4::ScrolledWindow::builder()
@@ -141,7 +219,10 @@ impl StatsView {
             chars_without_spaces,
             paragraphs,
             reading_minutes,
-            readability,
+            readability_row,
+            sentence_length_value,
+            syllables_value,
+            tips_label,
         }
     }
 
@@ -152,7 +233,20 @@ impl StatsView {
         self.chars_without_spaces.set_label(&stats.chars_without_spaces.to_string());
         self.paragraphs.set_label(&stats.paragraphs.to_string());
         self.reading_minutes.set_label(&tr("{n} min").replace("{n}", &stats.reading_minutes.to_string()));
-        self.readability.set_label(&readability_display(stats.readability_score));
+        self.readability_row.set_subtitle(&readability_display(stats.readability_score));
+        match (stats.avg_sentence_length, stats.avg_syllables_per_word) {
+            (Some(avg_sentence_length), Some(avg_syllables_per_word)) => {
+                self.sentence_length_value.set_label(&format_decimal_de(avg_sentence_length));
+                self.syllables_value.set_label(&format_decimal_de(avg_syllables_per_word));
+                let tips = readability_tips(avg_sentence_length, avg_syllables_per_word);
+                self.tips_label.set_label(&tips.iter().map(|tip| format!("• {tip}")).collect::<Vec<_>>().join("\n"));
+            }
+            _ => {
+                self.sentence_length_value.set_label("–");
+                self.syllables_value.set_label("–");
+                self.tips_label.set_label("");
+            }
+        }
     }
 }
 
@@ -162,19 +256,10 @@ fn value_label() -> gtk4::Label {
     label
 }
 
-fn row(title: &str, value: &gtk4::Label) -> gtk4::Box {
-    let title_label = gtk4::Label::builder().label(title).xalign(0.0).hexpand(true).build();
-    let row_box = gtk4::Box::builder()
-        .orientation(gtk4::Orientation::Horizontal)
-        .spacing(12)
-        .margin_top(10)
-        .margin_bottom(10)
-        .margin_start(12)
-        .margin_end(12)
-        .build();
-    row_box.append(&title_label);
-    row_box.append(value);
-    row_box
+fn value_row(title: &str, value: &gtk4::Label) -> adw::ActionRow {
+    let row = adw::ActionRow::builder().title(title).build();
+    row.add_suffix(value);
+    row
 }
 
 #[cfg(test)]
@@ -221,5 +306,52 @@ mod tests {
     #[test]
     fn readability_display_combines_label_and_rounded_score() {
         assert_eq!(readability_display(Some(95.4)), "Sehr leicht (95)");
+    }
+
+    #[test]
+    fn avg_sentence_length_and_syllables_are_none_for_an_empty_document() {
+        let stats = compute("");
+        assert_eq!(stats.avg_sentence_length, None);
+        assert_eq!(stats.avg_syllables_per_word, None);
+    }
+
+    #[test]
+    fn avg_sentence_length_and_syllables_are_computed_alongside_the_score() {
+        let stats = compute("Der Hund rennt. Die Katze schläft.");
+        assert_eq!(stats.avg_sentence_length, Some(3.0));
+        assert!(stats.avg_syllables_per_word.unwrap() > 0.0);
+    }
+
+    #[test]
+    fn format_decimal_de_uses_a_comma_and_one_decimal_place() {
+        assert_eq!(format_decimal_de(12.34), "12,3");
+        assert_eq!(format_decimal_de(2.0), "2,0");
+    }
+
+    #[test]
+    fn readability_tips_flags_long_sentences() {
+        let tips = readability_tips(25.0, 1.5);
+        assert_eq!(tips.len(), 1);
+        assert!(tips[0].contains("lang"), "{tips:?}");
+    }
+
+    #[test]
+    fn readability_tips_flags_syllable_heavy_words() {
+        let tips = readability_tips(8.0, 2.5);
+        assert_eq!(tips.len(), 1);
+        assert!(tips[0].contains("silbenreich"), "{tips:?}");
+    }
+
+    #[test]
+    fn readability_tips_can_flag_both_metrics_at_once() {
+        let tips = readability_tips(25.0, 2.5);
+        assert_eq!(tips.len(), 2);
+    }
+
+    #[test]
+    fn readability_tips_is_encouraging_when_both_metrics_are_fine() {
+        let tips = readability_tips(8.0, 1.4);
+        assert_eq!(tips.len(), 1);
+        assert!(tips[0].contains("bereits gut lesbar"), "{tips:?}");
     }
 }

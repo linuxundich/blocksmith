@@ -264,6 +264,51 @@ impl PreviewPane {
         });
     }
 
+    /// Adds a "Bild bearbeiten…" item to the context menu when right-
+    /// clicking directly on a rendered image whose source is a *local*
+    /// file (`imageedit::is_local`) - editing a remote source (e.g. an
+    /// image from a WordPress-imported article) would have nothing to
+    /// write back to, so it's simply not offered rather than shown and
+    /// then failing. Same dual-handler structure as
+    /// `install_ai_alt_text_menu` - see that method's doc comment.
+    pub fn install_image_edit_menu(preview_pane: &Rc<Self>, window: &impl IsA<gtk4::Window>, frontmatter: Rc<RefCell<Frontmatter>>, buffer: sourceview5::Buffer) {
+        let window: gtk4::Window = window.clone().upcast();
+        let doc_dir = preview_pane.doc_dir.clone();
+        let last_markdown = preview_pane.last_markdown.clone();
+        preview_pane.web_view.clone().connect_context_menu(move |_web_view, context_menu, hit_test_result| {
+            if !hit_test_result.context_is_image() {
+                return false;
+            }
+            let Some(image_uri) = hit_test_result.image_uri() else { return false };
+
+            {
+                let mut fm = frontmatter.borrow_mut();
+                fm.media = media::reconcile(&fm.media, &last_markdown.borrow());
+            }
+            let doc_dir_value = doc_dir.borrow().clone();
+            let Some(index) = item_index_for_image_uri(&frontmatter.borrow().media, &image_uri, doc_dir_value.as_deref()) else {
+                return false;
+            };
+            if !crate::imageedit::is_local(&frontmatter.borrow().media[index].source) {
+                return false;
+            }
+
+            let action = gio::SimpleAction::new("edit-image", None);
+            {
+                let frontmatter = frontmatter.clone();
+                let window = window.clone();
+                let doc_dir_value = doc_dir_value.clone();
+                let buffer = buffer.clone();
+                action.connect_activate(move |_, _| {
+                    crate::imageedit::open(&window, frontmatter.clone(), index, doc_dir_value.clone(), buffer.clone());
+                });
+            }
+            let item = webkit6::ContextMenuItem::from_gaction(&action, &tr("Bild bearbeiten…"), None);
+            context_menu.append(&item);
+            false
+        });
+    }
+
     pub fn scroll_to_line(&self, line: i32) {
         self.web_view.evaluate_javascript(&format!("window.scrollToLine && window.scrollToLine({line});"), None, None, gio::Cancellable::NONE, |_| {});
     }

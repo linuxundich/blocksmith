@@ -213,15 +213,17 @@ that a GNOME/Flatpak-native app is expected to have? Checked against
 
 ### Larger / architectural
 
-- **Adaptive/narrow-width layout via libadwaita breakpoints.** The
-  editor+preview split-pane assumes a wide window; on a tiling window
-  manager (common among the kind of Linux user who'd pick a keyboard-
-  driven Markdown editor in the first place) or a narrower Linux tablet
-  screen, the fixed split doesn't reflow. An `Adw.Breakpoint` collapsing
-  to a single pane with a view-switcher below a certain width is the
-  standard GNOME HIG pattern for this - a real layout change, not a
-  one-line addition, since the current `Gtk.Paned` structure would need
-  reworking around it.
+- ~~**Adaptive/narrow-width layout via libadwaita breakpoints.**~~ Done
+  (see CHANGELOG.md) - an `Adw.Breakpoint` at ~700sp switches the
+  editor+preview split from a side-by-side `Gtk.Paned` to a single pane
+  at a time (an `Adw.InlineViewSwitcher`, matching the sidebar's own tab
+  switcher) via `Adw.MultiLayoutView`/`Adw.LayoutSlot`, and reverts
+  automatically above that width. Getting this to actually fire on
+  resize (rather than being permanently blocked by the wide layout's own
+  minimum size) also required making the `Gtk.Paned` and both
+  `Adw.ViewStack`s properly shrinkable/non-homogeneous, and wrapping the
+  formatting toolbar in a horizontally-scrolling container so nothing
+  becomes unreachable at narrow widths.
 
 **Why:** the earlier 2026-09-04/2026-09-06 passes were both scoped to the
 editor/WordPress domain; this pass asked specifically what's missing on

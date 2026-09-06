@@ -9,7 +9,7 @@ use gtk4::{gdk, gio, glib};
 use crate::document::{Document, Frontmatter};
 use crate::i18n::tr;
 use crate::{
-    about, aimenu, autosave, chat, codeview, document, editor, export, formatting, imagealt, importer, linkpicker, media, mediapanel, preview,
+    about, aimenu, autosave, browser, chat, codeview, document, editor, export, formatting, imagealt, importer, linkpicker, media, mediapanel, preview,
     properties, recentfiles, searchbar, settings, shortcuts, stats, statusbar, termcache, windowstate,
 };
 
@@ -27,7 +27,17 @@ pub fn build(app: &adw::Application, initial_path: Option<PathBuf>) -> adw::Appl
     let search_bar = searchbar::SearchBar::new(&view, &buffer);
     let toolbar_separator = gtk4::Separator::new(gtk4::Orientation::Horizontal);
     let editor_pane = gtk4::Box::builder().orientation(gtk4::Orientation::Vertical).build();
-    editor_pane.append(&toolbar);
+    // Below the "narrow" breakpoint the window can (via a tiling WM, or by
+    // dragging an edge) become narrower than the toolbar's ~17 buttons
+    // naturally need - wrapped in a horizontal-only `Gtk.ScrolledWindow`,
+    // the overflow is still reachable by scrolling instead of silently
+    // clipped off the edge.
+    let toolbar_scroller = gtk4::ScrolledWindow::builder()
+        .hscrollbar_policy(gtk4::PolicyType::Automatic)
+        .vscrollbar_policy(gtk4::PolicyType::Never)
+        .child(&toolbar)
+        .build();
+    editor_pane.append(&toolbar_scroller);
     editor_pane.append(&toolbar_separator);
     editor_pane.append(&editor_scroller);
     editor_scroller.set_vexpand(true);
@@ -35,12 +45,20 @@ pub fn build(app: &adw::Application, initial_path: Option<PathBuf>) -> adw::Appl
 
     let chat_view = Rc::new(chat::ChatView::new(&buffer));
     let code_view = Rc::new(codeview::CodeView::new());
+    let browser_view = Rc::new(browser::BrowserView::new());
 
     let view_stack = adw::ViewStack::new();
+    // Homogeneous sizing (the default) makes the stack's minimum width the
+    // max across ALL tabs, including hidden ones - so the Browser tab's
+    // WebView alone would force a floor well above the "narrow" breakpoint
+    // below, making it unreachable by resizing. Size to the visible tab
+    // only instead.
+    view_stack.set_hhomogeneous(false);
     view_stack.add_titled_with_icon(&preview_pane.widget, Some("preview"), &tr("Vorschau"), "view-reveal-symbolic");
     view_stack.add_titled_with_icon(&code_view.widget, Some("code"), &tr("Gutenberg-Code"), "text-x-generic-symbolic");
     view_stack.add_titled_with_icon(&stats_view.widget, Some("stats"), &tr("Statistik"), "view-list-symbolic");
     view_stack.add_titled_with_icon(&chat_view.widget, Some("chat"), &tr("Chat"), "chat-message-new-symbolic");
+    view_stack.add_titled_with_icon(&browser_view.widget, Some("browser"), &tr("Browser"), "web-browser-symbolic");
     {
         // The active provider/model may have changed in Einstellungen since
         // the Chat tab was built (or since it was last shown), so refresh
@@ -77,19 +95,89 @@ pub fn build(app: &adw::Application, initial_path: Option<PathBuf>) -> adw::Appl
     right_pane.append(&view_stack);
     view_stack.set_vexpand(true);
 
-    let paned = gtk4::Paned::builder()
+    // Two interchangeable arrangements of the exact same `editor_pane`/
+    // `right_pane` widgets, switched by `layout_view` below rather than
+    // built as two separate widget trees - `Adw.MultiLayoutView` moves the
+    // real widgets between `Adw.LayoutSlot` placeholders itself, so there's
+    // still only ever one `editor_pane`/`right_pane` instance (each can
+    // only have one parent at a time in GTK either way).
+    //
+    // "wide": today's side-by-side `Gtk.Paned`, unchanged.
+    let wide_paned = gtk4::Paned::builder()
         .orientation(gtk4::Orientation::Horizontal)
-        .start_child(&editor_pane)
-        .end_child(&right_pane)
+        .start_child(&adw::LayoutSlot::new("editor"))
+        .end_child(&adw::LayoutSlot::new("sidebar"))
         .resize_start_child(true)
         .resize_end_child(true)
-        .shrink_start_child(false)
-        .shrink_end_child(false)
+        // Both children must stay shrinkable - not just resizable - or the
+        // Paned's natural minimum width sets the window's own minimum
+        // width, which would sit above the "narrow" breakpoint below and
+        // make it physically unreachable by resizing (a tiling WM or a
+        // dragged edge could never get the window narrow enough for the
+        // breakpoint to fire). Below the breakpoint the narrow layout is
+        // swapped in anyway, so this Paned is never what's on screen at a
+        // width small enough for the shrinking to look cramped.
+        .shrink_start_child(true)
+        .shrink_end_child(true)
         // Half of whatever width the window is about to open at (restored
         // or default, see `saved_window_state` above) - not a fixed pixel
         // value, so the 50/50 split holds regardless of the actual size.
         .position(saved_window_state.width / 2)
         .build();
+    let wide_layout = adw::Layout::new(&wide_paned);
+    wide_layout.set_name(Some("wide"));
+
+    // "narrow": a tiling-WM-width or tablet-width window can't fit two
+    // full panes side by side usefully - one pane at a time instead,
+    // switched via the same `Adw.InlineViewSwitcher` style the sidebar's
+    // own Vorschau/Gutenberg-Code/Statistik/Chat/Browser tabs already use,
+    // so it reads as the same interaction pattern rather than a
+    // one-off. `right_pane`'s "Vorschau ein-/ausblenden" visibility toggle
+    // still works here (it just hides that widget wherever it currently
+    // lives), though a hidden-but-still-selected "Vorschau" tab in this
+    // narrow switcher shows an empty page rather than collapsing away the
+    // way the wide `Gtk.Paned` does - a minor, rare edge case (hiding the
+    // preview *and* being narrow at once) not worth extra machinery for.
+    let narrow_view_stack = adw::ViewStack::new();
+    // Same reasoning as `view_stack` above: without this, the wider of the
+    // two pages (usually "sidebar", since it embeds `view_stack` itself)
+    // would set the floor for both, defeating the point of a narrow layout.
+    narrow_view_stack.set_hhomogeneous(false);
+    narrow_view_stack.add_titled_with_icon(&adw::LayoutSlot::new("editor"), Some("editor"), &tr("Editor"), "text-editor-symbolic");
+    narrow_view_stack.add_titled_with_icon(&adw::LayoutSlot::new("sidebar"), Some("sidebar"), &tr("Vorschau"), "view-reveal-symbolic");
+    narrow_view_stack.set_vexpand(true);
+    let narrow_switcher = adw::InlineViewSwitcher::builder().stack(&narrow_view_stack).build();
+    let narrow_switcher_bar = gtk4::Box::builder()
+        .orientation(gtk4::Orientation::Horizontal)
+        .halign(gtk4::Align::Center)
+        .margin_top(6)
+        .margin_bottom(6)
+        .build();
+    narrow_switcher_bar.append(&narrow_switcher);
+    let narrow_box = gtk4::Box::builder().orientation(gtk4::Orientation::Vertical).build();
+    narrow_box.append(&narrow_switcher_bar);
+    narrow_box.append(&gtk4::Separator::new(gtk4::Orientation::Horizontal));
+    narrow_box.append(&narrow_view_stack);
+    let narrow_layout = adw::Layout::new(&narrow_box);
+    narrow_layout.set_name(Some("narrow"));
+
+    let layout_view = adw::MultiLayoutView::new();
+    layout_view.set_child("editor", &editor_pane);
+    layout_view.set_child("sidebar", &right_pane);
+    layout_view.add_layout(wide_layout);
+    layout_view.add_layout(narrow_layout);
+    layout_view.set_layout_name("wide");
+
+    // `Sp` ("scale-independent pixels", GNOME's recommended unit for
+    // breakpoints - it scales with the user's text-size/accessibility
+    // settings rather than always meaning the same physical pixel count)
+    // rather than `Px`. 700 leaves a wide `Gtk.Paned` split comfortably
+    // usable (two ~350sp panes) right down to the threshold; narrower
+    // than that - a tiled quarter of a typical monitor, or a Linux
+    // tablet in portrait - collapses to the single-pane switcher instead.
+    let narrow_condition = adw::BreakpointCondition::new_length(adw::BreakpointConditionLengthType::MaxWidth, 700.0, adw::LengthUnit::Sp);
+    let narrow_breakpoint = adw::Breakpoint::new(narrow_condition);
+    narrow_breakpoint.add_setter(&layout_view, "layout-name", Some(&"narrow".to_value()));
 
     let title = adw::WindowTitle::new("Blocksmith", &tr("Unbenannt"));
 
@@ -178,7 +266,7 @@ pub fn build(app: &adw::Application, initial_path: Option<PathBuf>) -> adw::Appl
 
     let toolbar_view = adw::ToolbarView::new();
     toolbar_view.add_top_bar(&header_bar);
-    toolbar_view.set_content(Some(&paned));
+    toolbar_view.set_content(Some(&layout_view));
     toolbar_view.add_bottom_bar(&status_bar.widget);
 
     let toast_overlay = adw::ToastOverlay::new();
@@ -192,6 +280,8 @@ pub fn build(app: &adw::Application, initial_path: Option<PathBuf>) -> adw::Appl
         .maximized(saved_window_state.maximized)
         .content(&toast_overlay)
         .build();
+
+    window.add_breakpoint(narrow_breakpoint);
 
     window.connect_close_request(|window| {
         let state = windowstate::WindowState {
@@ -265,6 +355,7 @@ pub fn build(app: &adw::Application, initial_path: Option<PathBuf>) -> adw::Appl
     let image_alt_menu = imagealt::menu_section();
     imagealt::install(&view, &buffer, frontmatter.clone(), current_path.clone(), preview_pane.clone());
     preview::PreviewPane::install_ai_alt_text_menu(&preview_pane, &window, frontmatter.clone());
+    preview::PreviewPane::install_image_edit_menu(&preview_pane, &window, frontmatter.clone(), buffer.clone());
     let ai_menu_handles = aimenu::install(&view, &buffer, &view_stack, chat_view.clone(), &spelling_menu, image_alt_menu.upcast_ref());
 
     let doc_ctx = DocContext {
@@ -292,7 +383,7 @@ pub fn build(app: &adw::Application, initial_path: Option<PathBuf>) -> adw::Appl
     };
     wire_recent_files_button(&recent_files_widgets, &doc_ctx);
     wire_properties_action(&window, &frontmatter, &category_terms, &tag_terms, &current_path);
-    wire_settings_action(&window, &buffer, ai_menu_handles, &preview_pane);
+    wire_settings_action(&window, &buffer, ai_menu_handles, &preview_pane, &browser_view);
     wire_about_action(&window);
     wire_publish_action(&window, &buffer, &current_path, &frontmatter, &preview_pane);
     wire_media_action(&window, &buffer, &current_path, &frontmatter, &preview_pane);
@@ -812,14 +903,16 @@ fn wire_settings_action(
     buffer: &sourceview5::Buffer,
     ai_menu_handles: aimenu::AiMenuHandles,
     preview_pane: &Rc<preview::PreviewPane>,
+    browser_view: &Rc<browser::BrowserView>,
 ) {
     let action = gio::SimpleAction::new("settings", None);
     let buffer = buffer.clone();
     let preview_pane = preview_pane.clone();
+    let browser_view = browser_view.clone();
     let window_weak = window.downgrade();
     action.connect_activate(move |_, _| {
         if let Some(window) = window_weak.upgrade() {
-            settings::open(&window, &buffer, &ai_menu_handles, &preview_pane);
+            settings::open(&window, &buffer, &ai_menu_handles, &preview_pane, &browser_view);
         }
     });
     window.add_action(&action);

@@ -21,7 +21,13 @@ blocks. Implemented so far:
   maximized) across restarts, always opening with the editor/preview split
   exactly 50/50 regardless of that size; a header-bar toggle button
   collapses the whole right-hand pane for a full-width editor and restores
-  it again. A second toggle button next to it (Ctrl+Shift+F) is a
+  it again. Below roughly 700sp of window width (a tiled quarter of a
+  typical monitor, or a Linux tablet in portrait) - via `libadwaita`
+  breakpoints - the side-by-side split gives way to a single pane at a
+  time, switched by an `Adw.InlineViewSwitcher` styled like the sidebar's
+  own tab switcher, and reverts automatically once the window is wide
+  enough again; the formatting toolbar scrolls horizontally rather than
+  clipping if it doesn't fit at that width. A second toggle button next to it (Ctrl+Shift+F) is a
   Fokus-Schreibmodus, additionally hiding the header bar and the editor's
   own formatting toolbar down to just the editor text - `Adw.ToolbarView`'s
   own animated reveal handles the header/status bar, so entering and
@@ -58,7 +64,11 @@ blocks. Implemented so far:
   one applies, updated live from Medienverwaltung/the alt-text dialogs, not
   just on the next edit), "Gutenberg-Code" (the exact block HTML that would be published),
   "Statistik" (word/character/paragraph counts, estimated reading time, and
-  a German-adapted Flesch reading-ease score with a qualitative label),
+  a German-adapted Flesch reading-ease score with a qualitative label -
+  expandable into the formula itself, the article's actual average
+  words-per-sentence and syllables-per-word, and concrete tips for
+  improving the score, derived from whichever of those two numbers is
+  actually holding it down),
   and "Chat" - a writing assistant with message bubbles (replies rendered
   as Markdown), backed by Gemini, ChatGPT, Claude, or Ollama (self-hosted,
   no API key), with a provider/model picker both in the tab itself and in
@@ -66,6 +76,16 @@ blocks. Implemented so far:
   or, if nothing's selected, the whole article - appended before it's sent,
   the same rule the context menu's AI actions below already follow, so the
   model always has the article as context without pasting it in by hand.
+  A "Browser" tab next to it is a plain `WebKit` view with an address bar
+  and back/forward/reload controls, for consulting documentation or the
+  live target site without alt-tabbing away - typing a bare domain adds
+  `https://` automatically, anything else is sent to Google as a search
+  query. Its start page (Startpage by default) is configurable in a
+  "Browser" page in Einstellungen, which also holds a "Werbung
+  blockieren" toggle (on by default) - basic ad/tracker blocking built on
+  the same WebKit content-blocker mechanism GNOME Web itself uses, driven
+  by a real EasyList-syntax rule file rather than a hand-coded domain
+  list, so it can be extended without a code change.
 - **AI actions in the editor's context menu** — right-click the editor for
   "Inhalt prüfen", "Stil & Formatierung prüfen", "Rechtschreibung prüfen",
   "Zeichensetzung prüfen", and "Länge anpassen…"; each sends the selection
@@ -145,6 +165,12 @@ blocks. Implemented so far:
   text at a choice of three detail levels (Standard/Ausführlich/Hohe
   Genauigkeit), shown for review and correction before it's applied
   directly into the same alt-text field, ready for the next upload.
+  Right-clicking a rendered image in the Vorschau pane also offers "Bild
+  bearbeiten…": convert it to PNG/JPEG/WebP and/or resize it by width or
+  height (with an optional "Seitenverhältnis beibehalten" toggle for a
+  free, non-proportional resize) - writes a new sibling file and updates
+  the article's own image reference to it, leaving the original
+  untouched.
 - **Einstellungen dialog** (`Adw.PreferencesDialog`, Ctrl+,) — an
   "Erscheinungsbild" page adopted directly from GNOME Builder's own
   implementation (light/dark/follow-system cards using Builder's bundled

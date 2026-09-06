@@ -7,6 +7,83 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.44.0] - 2026-09-06
+
+### Added
+
+- Adaptive layout via libadwaita breakpoints: below ~700sp of window width
+  (a tiled quarter of a typical monitor, or a Linux tablet in portrait),
+  the editor and sidebar (Vorschau/Gutenberg-Code/Statistik/Chat/Browser)
+  stop competing for a side-by-side `Gtk.Paned` split and switch to a
+  single pane at a time, toggled by an `Adw.InlineViewSwitcher` styled
+  like the sidebar's own tab switcher. Widening the window back past the
+  breakpoint restores the side-by-side layout automatically.
+- The formatting toolbar above the editor now scrolls horizontally
+  instead of clipping when the window is narrower than its full row of
+  buttons, so nothing (including the "…" overflow menu) becomes
+  unreachable at narrow widths.
+
+## [0.43.0] - 2026-09-06
+
+### Added
+
+- The "Lesbarkeit" row in the Statistik tab is now an expandable section
+  explaining *why* the score comes out the way it does - the exact
+  formula, the article's actual average words-per-sentence and
+  syllables-per-word, and concrete, actionable tips (e.g. "Sätze sind im
+  Schnitt sehr lang - in zwei kürzere aufteilen") derived from whichever
+  of those two measurements is actually dragging the score down, instead
+  of leaving the number as an unexplained black box.
+
+## [0.42.0] - 2026-09-06
+
+### Added
+
+- Basic ad/tracker blocking in the Browser tab, built on the same
+  WebKit "content blocker" mechanism GNOME Web itself uses
+  (`WebKitUserContentFilterStore`/`WebKitUserContentManager`) - not a
+  hand-rolled list of domains in Rust code, but a real EasyList-syntax
+  data file (`data/adblock/easylist-basic.txt`) parsed by a genuine
+  (if deliberately basic) EasyList-to-WebKit-rules converter, so the
+  block list can grow just by adding more standard `||domain^` lines,
+  no code change needed. On by default; a new "Werbung blockieren"
+  toggle in the new "Browser" Einstellungen page turns it off (or back
+  on) live, no restart required.
+
+## [0.41.0] - 2026-09-06
+
+### Added
+
+- A "Browser" page in Einstellungen: the Browser tab's start page is now
+  configurable (defaults to Startpage) instead of always opening the
+  same hardcoded page.
+
+## [0.40.0] - 2026-09-06
+
+### Added
+
+- A "Browser" tab next to Chat in the right-hand pane: a plain `WebKit`
+  view with an address bar and back/forward/reload controls for opening
+  any website (documentation, the live target site, reference material)
+  without leaving Blocksmith. Typing a bare domain adds `https://`
+  automatically; anything else is sent to Google as a search query, the
+  same way a normal browser's address bar behaves.
+
+## [0.39.0] - 2026-09-06
+
+### Added
+
+- Edit an image directly from the preview: right-click a rendered image
+  in the Vorschau pane → "Bild bearbeiten…" opens a dialog to convert it
+  to PNG, JPEG, or WebP and/or resize it by width or height, with an
+  optional "Seitenverhältnis beibehalten" toggle for a free (non-
+  proportional) resize. Writes a new sibling file (`photo.png` →
+  `photo-bearbeitet.webp`) and updates the article's own `![alt](src)`
+  reference to it - the original file is left untouched on disk. WebP
+  encoding uses the new `webp` crate (PNG/JPEG stay on `gdk-pixbuf`, same
+  as `imagecompress.rs`) since `gdk-pixbuf`'s own WebP support, where
+  installed at all, is read-only.
+
 ## [0.38.0] - 2026-09-06
 
 ### Added

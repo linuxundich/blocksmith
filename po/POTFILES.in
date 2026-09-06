@@ -3,6 +3,8 @@ src/aialt.rs
 src/aimenu.rs
 src/aiprompts.rs
 src/appearance.rs
+src/browser.rs
+src/browsersettings.rs
 src/chat.rs
 src/chatsettings.rs
 src/connection.rs
@@ -10,6 +12,7 @@ src/document.rs
 src/export.rs
 src/formatting.rs
 src/imagealt.rs
+src/imageedit.rs
 src/importer.rs
 src/linkcheck.rs
 src/linkpicker.rs

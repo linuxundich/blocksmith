@@ -1,0 +1,51 @@
+! Blocksmith basic ad/tracker block list.
+!
+! Written in the real EasyList/Adblock Plus filter syntax
+! (https://easylist.to/pages/about.html) - the same rule format GNOME
+! Web's own ad blocker is built on - so this file can be extended just
+! by pasting in more "||domain^" lines from an actual EasyList release,
+! with no code change needed (see adblock.rs::parse_easylist). A small,
+! fixed, hand-picked subset covering well-known ad/tracker network
+! infrastructure, deliberately not the full EasyList (which would need
+! its own network fetch/update mechanism - out of scope for "basic").
+||doubleclick.net^
+||googlesyndication.com^
+||googleadservices.com^
+||google-analytics.com^
+||googletagmanager.com^
+||googletagservices.com^
+||adservice.google.com^
+||amazon-adsystem.com^
+||adnxs.com^
+||criteo.com^
+||criteo.net^
+||taboola.com^
+||outbrain.com^
+||scorecardresearch.com^
+||quantserve.com^
+||moatads.com^
+||adsrvr.org^
+||pubmatic.com^
+||rubiconproject.com^
+||casalemedia.com^
+||openx.net^
+||bluekai.com^
+||media.net^
+||yieldmo.com^
+||adform.net^
+||smartadserver.com^
+||zedo.com^
+||connect.facebook.net^
+||hotjar.com^
+||mixpanel.com^
+||segment.io^
+||mathtag.com^
+||contextweb.com^
+||indexww.com^
+||sharethrough.com^
+||spotxchange.com^
+||teads.tv^
+||revcontent.com^
+||mgid.com^
+||adcolony.com^
+||chartboost.com^

@@ -6,9 +6,9 @@
 #, fuzzy
 msgid ""
 msgstr ""
-"Project-Id-Version: Blocksmith 0.36.0\n"
+"Project-Id-Version: Blocksmith 0.43.0\n"
 "Report-Msgid-Bugs-To: https://github.com/linuxundich/blocksmith/issues\n"
-"POT-Creation-Date: 2026-09-06 10:56+0200\n"
+"POT-Creation-Date: 2026-09-06 19:53+0200\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -61,8 +61,8 @@ msgstr ""
 msgid "Kein {provider}-API-Key in den Einstellungen hinterlegt."
 msgstr ""
 
-#: src/aialt.rs:225 src/chat.rs:181 src/export.rs:316 src/importer.rs:99
-#: src/mediapanel.rs:293
+#: src/aialt.rs:225 src/chat.rs:181 src/export.rs:316 src/imageedit.rs:302
+#: src/importer.rs:99 src/mediapanel.rs:293
 msgid "Fehler: {err}"
 msgstr ""
 
@@ -88,7 +88,7 @@ msgstr ""
 msgid "Abbrechen"
 msgstr ""
 
-#: src/aimenu.rs:147
+#: src/aimenu.rs:147 src/imageedit.rs:231
 msgid "Anwenden"
 msgstr ""
 
@@ -96,7 +96,7 @@ msgstr ""
 msgid "Zielumfang"
 msgstr ""
 
-#: src/aimenu.rs:154 src/stats.rs:114
+#: src/aimenu.rs:154 src/stats.rs:198
 msgid "Wörter"
 msgstr ""
 
@@ -182,7 +182,7 @@ msgstr ""
 msgid "Auf Systemschrift zurücksetzen"
 msgstr ""
 
-#: src/appearance.rs:469 src/export.rs:81 src/window.rs:40
+#: src/appearance.rs:469 src/export.rs:81 src/window.rs:41 src/window.rs:119
 msgid "Vorschau"
 msgstr ""
 
@@ -206,6 +206,42 @@ msgstr ""
 
 #: src/appearance.rs:518
 msgid "Auf Stil-Standardschrift zurücksetzen"
+msgstr ""
+
+#: src/browser.rs:62
+msgid "Adresse eingeben oder suchen…"
+msgstr ""
+
+#: src/browser.rs:65
+msgid "Zurück"
+msgstr ""
+
+#: src/browser.rs:68
+msgid "Vor"
+msgstr ""
+
+#: src/browser.rs:71
+msgid "Neu laden"
+msgstr ""
+
+#: src/browsersettings.rs:16
+msgid "Startseite"
+msgstr ""
+
+#: src/browsersettings.rs:18
+msgid "Werbung blockieren"
+msgstr ""
+
+#: src/browsersettings.rs:18
+msgid "Blockiert bekannte Werbe- und Tracking-Domains, wie GNOME Web es tut."
+msgstr ""
+
+#: src/browsersettings.rs:20 src/browsersettings.rs:25 src/window.rs:45
+msgid "Browser"
+msgstr ""
+
+#: src/browsersettings.rs:21
+msgid "Die Adresse, die der „Browser“-Tab beim Start der App öffnet."
 msgstr ""
 
 #: src/chat.rs:62
@@ -442,15 +478,15 @@ msgid ""
 "sein."
 msgstr ""
 
-#: src/export.rs:484
+#: src/export.rs:496
 msgid "Bild nicht abrufbar: {err}"
 msgstr ""
 
-#: src/export.rs:488
+#: src/export.rs:500
 msgid "Bild nicht lesbar: {err}"
 msgstr ""
 
-#: src/export.rs:491 src/export.rs:499 src/media.rs:257
+#: src/export.rs:503 src/export.rs:511 src/media.rs:276
 msgid "Bild {path} nicht lesbar: {err}"
 msgstr ""
 
@@ -584,6 +620,43 @@ msgstr ""
 
 #: src/imagealt.rs:220 src/mediapanel.rs:196
 msgid "Bildunterschrift"
+msgstr ""
+
+#: src/imageedit.rs:178 src/imageedit.rs:181
+msgid ""
+"Bild konnte nicht gelesen werden - unbekanntes oder beschädigtes Format."
+msgstr ""
+
+#: src/imageedit.rs:189
+msgid "Bild konnte nicht skaliert werden."
+msgstr ""
+
+#: src/imageedit.rs:212
+msgid "Format"
+msgstr ""
+
+#: src/imageedit.rs:214
+msgid "Breite (px)"
+msgstr ""
+
+#: src/imageedit.rs:215
+msgid "Höhe (px)"
+msgstr ""
+
+#: src/imageedit.rs:216
+msgid "Seitenverhältnis beibehalten"
+msgstr ""
+
+#: src/imageedit.rs:241
+msgid "Bild bearbeiten"
+msgstr ""
+
+#: src/imageedit.rs:274
+msgid "Wird verarbeitet …"
+msgstr ""
+
+#: src/imageedit.rs:308
+msgid "Interner Fehler: Bildbearbeitungs-Thread hat kein Ergebnis geliefert."
 msgstr ""
 
 #: src/importer.rs:72
@@ -798,19 +871,23 @@ msgstr ""
 msgid "Sepia"
 msgstr ""
 
-#: src/preview.rs:578
+#: src/preview.rs:306
+msgid "Bild bearbeiten…"
+msgstr ""
+
+#: src/preview.rs:623
 msgid "Bereits zu WordPress hochgeladen"
 msgstr ""
 
-#: src/preview.rs:581
+#: src/preview.rs:626
 msgid "Alt"
 msgstr ""
 
-#: src/preview.rs:581
+#: src/preview.rs:626
 msgid "Alternativtext ist definiert"
 msgstr ""
 
-#: src/preview.rs:584
+#: src/preview.rs:629
 msgid "Bildformat"
 msgstr ""
 
@@ -908,7 +985,7 @@ msgstr ""
 msgid "Kategorien & Tags verwalten…"
 msgstr ""
 
-#: src/properties.rs:105 src/properties.rs:142 src/window.rs:123
+#: src/properties.rs:105 src/properties.rs:142 src/window.rs:183
 msgid "Artikel-Eigenschaften"
 msgstr ""
 
@@ -916,7 +993,7 @@ msgstr ""
 msgid "RankMath SEO"
 msgstr ""
 
-#: src/properties.rs:213 src/window.rs:875
+#: src/properties.rs:213 src/window.rs:940
 msgid "Bilder"
 msgstr ""
 
@@ -964,7 +1041,7 @@ msgstr ""
 msgid "{n} Treffer"
 msgstr ""
 
-#: src/settings.rs:21 src/shortcuts.rs:28 src/window.rs:137
+#: src/settings.rs:28 src/shortcuts.rs:28 src/window.rs:197
 msgid "Einstellungen"
 msgstr ""
 
@@ -984,7 +1061,7 @@ msgstr ""
 msgid "Fokus-Schreibmodus"
 msgstr ""
 
-#: src/shortcuts.rs:32
+#: src/shortcuts.rs:32 src/window.rs:118
 msgid "Editor"
 msgstr ""
 
@@ -1008,51 +1085,99 @@ msgstr ""
 msgid "Suchen und Ersetzen"
 msgstr ""
 
-#: src/stats.rs:79
+#: src/stats.rs:92
+msgid ""
+"Die Sätze sind im Schnitt sehr lang (über 20 Wörter) - lange Sätze an "
+"Konjunktionen wie „und“ oder „weil“ in zwei kürzere aufteilen."
+msgstr ""
+
+#: src/stats.rs:94
+msgid ""
+"Die Sätze sind im Schnitt eher lang - kürzere Sätze sind für Leser:innen oft "
+"leichter zu verarbeiten."
+msgstr ""
+
+#: src/stats.rs:97
+msgid ""
+"Viele lange, silbenreiche Wörter - wo möglich, kürzere und geläufigere "
+"Wörter statt Fach- oder Fremdwörtern verwenden."
+msgstr ""
+
+#: src/stats.rs:99
+msgid ""
+"Die Wörter sind im Schnitt eher lang - einfachere Formulierungen können den "
+"Text zugänglicher machen."
+msgstr ""
+
+#: src/stats.rs:102
+msgid ""
+"Der Text ist bereits gut lesbar - kurze Sätze und einfache Wörter "
+"beibehalten."
+msgstr ""
+
+#: src/stats.rs:130
 msgid "Sehr leicht"
 msgstr ""
 
-#: src/stats.rs:80
+#: src/stats.rs:131
 msgid "Leicht"
 msgstr ""
 
-#: src/stats.rs:81
+#: src/stats.rs:132
 msgid "Mittel"
 msgstr ""
 
-#: src/stats.rs:82
+#: src/stats.rs:133
 msgid "Schwer"
 msgstr ""
 
-#: src/stats.rs:83
+#: src/stats.rs:134
 msgid "Sehr schwer"
 msgstr ""
 
-#: src/stats.rs:89
+#: src/stats.rs:140
 msgid "{label} ({score})"
 msgstr ""
 
-#: src/stats.rs:116
-msgid "Zeichen (mit Leerzeichen)"
-msgstr ""
-
-#: src/stats.rs:118
-msgid "Zeichen (ohne Leerzeichen)"
-msgstr ""
-
-#: src/stats.rs:120
-msgid "Absätze"
-msgstr ""
-
-#: src/stats.rs:122
-msgid "Geschätzte Lesezeit"
-msgstr ""
-
-#: src/stats.rs:124
+#: src/stats.rs:177
 msgid "Lesbarkeit"
 msgstr ""
 
-#: src/stats.rs:154
+#: src/stats.rs:180
+msgid "Berechnungsgrundlage"
+msgstr ""
+
+#: src/stats.rs:181
+msgid ""
+"Deutsch angepasste Flesch-Formel (Amstad): 180 − Ø Wörter/Satz − 58,5 × Ø "
+"Silben/Wort"
+msgstr ""
+
+#: src/stats.rs:186
+msgid "Ø Wörter pro Satz"
+msgstr ""
+
+#: src/stats.rs:189
+msgid "Ø Silben pro Wort"
+msgstr ""
+
+#: src/stats.rs:199
+msgid "Zeichen (mit Leerzeichen)"
+msgstr ""
+
+#: src/stats.rs:200
+msgid "Zeichen (ohne Leerzeichen)"
+msgstr ""
+
+#: src/stats.rs:201
+msgid "Absätze"
+msgstr ""
+
+#: src/stats.rs:202
+msgid "Geschätzte Lesezeit"
+msgstr ""
+
+#: src/stats.rs:235
 msgid "{n} min"
 msgstr ""
 
@@ -1128,130 +1253,130 @@ msgstr ""
 msgid "Interner Fehler: kein Ergebnis vom Lösch-Thread."
 msgstr ""
 
-#: src/window.rs:41
+#: src/window.rs:42
 msgid "Gutenberg-Code"
 msgstr ""
 
-#: src/window.rs:42
+#: src/window.rs:43
 msgid "Statistik"
 msgstr ""
 
-#: src/window.rs:43
+#: src/window.rs:44
 msgid "Chat"
 msgstr ""
 
-#: src/window.rs:94 src/window.rs:325 src/window.rs:539
+#: src/window.rs:154 src/window.rs:388 src/window.rs:602
 msgid "Unbenannt"
 msgstr ""
 
-#: src/window.rs:97
+#: src/window.rs:157
 msgid "Neu (Strg+N)"
 msgstr ""
 
-#: src/window.rs:101
+#: src/window.rs:161
 msgid "Öffnen (Strg+O)"
 msgstr ""
 
-#: src/window.rs:106
+#: src/window.rs:166
 msgid "Zuletzt geöffnet"
 msgstr ""
 
-#: src/window.rs:115
+#: src/window.rs:175
 msgid "Von WordPress öffnen (Strg+Umschalt+O)"
 msgstr ""
 
-#: src/window.rs:119
+#: src/window.rs:179
 msgid "Speichern (Strg+S)"
 msgstr ""
 
-#: src/window.rs:127
+#: src/window.rs:187
 msgid "Medienverwaltung (Strg+Umschalt+M)"
 msgstr ""
 
-#: src/window.rs:138
+#: src/window.rs:198
 msgid "Tastenkürzel"
 msgstr ""
 
-#: src/window.rs:139
+#: src/window.rs:199
 msgid "Über Blocksmith"
 msgstr ""
 
-#: src/window.rs:143
+#: src/window.rs:203
 msgid "Hauptmenü (Strg+,)"
 msgstr ""
 
-#: src/window.rs:147
+#: src/window.rs:207
 msgid "Vorschau ein-/ausblenden"
 msgstr ""
 
-#: src/window.rs:155
+#: src/window.rs:215
 msgid "Fokus-Schreibmodus (Strg+Umschalt+F)"
 msgstr ""
 
-#: src/window.rs:159
+#: src/window.rs:219
 msgid "Artikel exportieren (Strg+Umschalt+P)"
 msgstr ""
 
-#: src/window.rs:579
+#: src/window.rs:642
 msgid "Markdown-Datei öffnen"
 msgstr ""
 
-#: src/window.rs:630
+#: src/window.rs:693
 msgid "Öffnen fehlgeschlagen: {err}"
 msgstr ""
 
-#: src/window.rs:672
+#: src/window.rs:735
 msgid "Keine zuletzt geöffneten Artikel"
 msgstr ""
 
-#: src/window.rs:754 src/window.rs:772
+#: src/window.rs:817 src/window.rs:835
 msgid "Speichern fehlgeschlagen: {err}"
 msgstr ""
 
-#: src/window.rs:763
+#: src/window.rs:826
 msgid "Markdown-Datei speichern"
 msgstr ""
 
-#: src/window.rs:879
+#: src/window.rs:944
 msgid "Bild einfügen"
 msgstr ""
 
-#: src/window.rs:914
+#: src/window.rs:979
 msgid "Video/Audio einfügen"
 msgstr ""
 
-#: src/window.rs:966
+#: src/window.rs:1031
 msgid "Bitte den Artikel zuerst speichern, um Bilder einzufügen."
 msgstr ""
 
-#: src/window.rs:975
+#: src/window.rs:1040
 msgid "Bild konnte nicht aus der Zwischenablage gelesen werden."
 msgstr ""
 
-#: src/window.rs:981
+#: src/window.rs:1046
 msgid "Bild konnte nicht gespeichert werden: {err}"
 msgstr ""
 
-#: src/window.rs:1059
+#: src/window.rs:1124
 msgid "einem unbenannten Artikel"
 msgstr ""
 
-#: src/window.rs:1061
+#: src/window.rs:1126
 msgid "Nicht gespeicherter Stand gefunden"
 msgstr ""
 
-#: src/window.rs:1063
+#: src/window.rs:1128
 msgid ""
 "Von „{name}“ wurde ein nicht gespeicherter Stand gefunden - vermutlich nach "
 "einem Absturz oder weil Blocksmith ohne zu speichern beendet wurde. "
 "Wiederherstellen?"
 msgstr ""
 
-#: src/window.rs:1067
+#: src/window.rs:1132
 msgid "Verwerfen"
 msgstr ""
 
-#: src/window.rs:1068
+#: src/window.rs:1133
 msgid "Wiederherstellen"
 msgstr ""
 
