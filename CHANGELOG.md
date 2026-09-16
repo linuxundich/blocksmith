@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.49.0] - 2026-09-16
+
+### Added
+
+- Ten more editor color schemes in Einstellungen → Erscheinungsbild → Farbe
+  - five dark (Dracula, Nord, Gruvbox Dark, Monokai, Catppuccin Mocha) and
+    five light (Gruvbox Light, One Light, GitHub Light, Catppuccin Latte,
+    Rosé Pine Dawn) - each a real, hand-authored GtkSourceView scheme
+    covering the full standard style set (headings, emphasis, links,
+    lists, code, ...), not just a token color swap.
+- "Alle hochladen" in the export dialog's "Medien" tab now also uploads
+  the article's featured image if one's pending, alongside every body
+  image - previously it silently only covered body images, and the
+  featured image needed its own separate button.
+
+### Fixed
+
+- The "Gutenberg-Code" tab and the export dialog's own "Vorschau" tab both
+  showed the Gutenberg HTML converted straight from the raw Markdown
+  source, with no way to reflect alt-text/caption edits made in
+  Medienverwaltung - so a caption set there (with nothing written as a
+  Markdown image title) silently never appeared in either preview, even
+  though the real publish already sent it correctly. Both now show
+  exactly what would actually be published.
+
 ## [0.48.0] - 2026-09-16
 
 ### Added

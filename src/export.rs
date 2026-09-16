@@ -35,8 +35,13 @@ pub fn open(
 
     let preview_label = gtk4::Label::builder().label(tr("Zu sendendes Gutenberg-HTML:")).xalign(0.0).build();
 
+    // Reconciled fresh against `body` (not just trusting `current_fm.media`,
+    // which reflects however recently `wire_live_preview`'s own debounce
+    // last ran) - the same reasoning `mediapanel::build_content` below
+    // already follows for the same "Medien" tab.
+    let reconciled_media = media::reconcile(&current_fm.media, &body);
     let preview_buffer = gtk4::TextBuffer::new(None::<&gtk4::TextTagTable>);
-    preview_buffer.set_text(&gutenberg::markdown_to_gutenberg(&body));
+    preview_buffer.set_text(&gutenberg_preview_html(&body, &reconciled_media));
     let preview_view = gtk4::TextView::builder()
         .buffer(&preview_buffer)
         .monospace(true)
@@ -716,6 +721,25 @@ fn run_export(
     Ok(result)
 }
 
+/// Renders `markdown` as Gutenberg block-comment HTML with Medienverwaltung's
+/// alt-text/caption edits (`media`) already overlaid on top - the same
+/// `apply_media_metadata` step `run_export` applies right before actually
+/// publishing, exposed here so every *preview* of "the HTML that would be
+/// sent" (the export dialog's own "Vorschau" tab, and the standalone
+/// "Gutenberg-Code" tab in `codeview.rs`) shows the same thing that would
+/// really be published, instead of silently reverting to whatever alt/
+/// title text happens to be written literally in the Markdown source (a
+/// plain `gutenberg::markdown_to_gutenberg` call has no way to know about
+/// `Frontmatter.media` at all). Doesn't also apply `rewrite_image_urls` -
+/// that substitutes a local path for its *uploaded* WordPress URL, which
+/// only exists once an upload has actually happened, so showing the local
+/// path here is the correct preview before that point.
+pub(crate) fn gutenberg_preview_html(markdown: &str, media: &[media::MediaItem]) -> String {
+    let mut blocks = gutenberg::parse_markdown(markdown);
+    apply_media_metadata(&mut blocks, media);
+    gutenberg::render_blocks(&blocks)
+}
+
 /// Overlays each image block's alt text/caption with the corresponding
 /// `MediaItem`'s (matched by `source`, i.e. the block's still-original,
 /// pre-`rewrite_image_urls` url - so this must run before that) - so an
@@ -928,6 +952,27 @@ mod tests {
         let gutenberg::Block::Details { blocks: inner, .. } = &blocks[0] else { panic!("expected Details") };
         let gutenberg::Block::Image { url, .. } = &inner[0] else { panic!("expected Image") };
         assert_eq!(url, "https://example.com/c.png");
+    }
+
+    #[test]
+    fn gutenberg_preview_html_reflects_medienverwaltung_edits_not_just_the_markdown_source() {
+        // Regression test: the "Gutenberg-Code" tab and the export dialog's
+        // own "Vorschau" tab both used to call `gutenberg::markdown_to_gutenberg`
+        // directly, which has no way to know about `Frontmatter.media` at
+        // all - so a caption set in Medienverwaltung (with nothing written
+        // as a Markdown image title) silently never showed up in either
+        // preview, even though the real `run_export` publish path already
+        // applied it correctly.
+        let media = vec![media::MediaItem {
+            id: "media-001".to_string(),
+            filename: "cat.png".to_string(),
+            source: "cat.png".to_string(),
+            alt: media::AltText::Text("a red cat".to_string()),
+            caption: Some("Our cat, sleeping".to_string()),
+            wordpress: None,
+        }];
+        let html = gutenberg_preview_html("![a red cat](cat.png)", &media);
+        assert!(html.contains("<figcaption class=\"wp-element-caption\">Our cat, sleeping</figcaption>"), "{html}");
     }
 
     #[test]

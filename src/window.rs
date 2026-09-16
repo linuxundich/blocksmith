@@ -472,7 +472,7 @@ fn wire_live_preview(
             };
             preview_pane.update(&text, &media_items);
             stats_view.update(&text);
-            code_view.update(&text);
+            code_view.update(&text, &media_items);
             // Piggybacks on this same debounce instead of running its own
             // timer - see `autosave.rs`. Skipped when the text still
             // matches what's already safely on disk (e.g. right after
@@ -490,7 +490,7 @@ fn wire_live_preview(
 
     preview_pane.update("", &frontmatter.borrow().media.clone());
     stats_view.update("");
-    code_view.update("");
+    code_view.update("", &frontmatter.borrow().media.clone());
 }
 
 /// The bottom status bar: word count/reading time for the whole document

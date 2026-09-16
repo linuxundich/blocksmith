@@ -5,6 +5,8 @@
 
 use gtk4::prelude::*;
 
+use crate::media;
+
 pub struct CodeView {
     pub widget: gtk4::Widget,
     buffer: gtk4::TextBuffer,
@@ -30,7 +32,14 @@ impl CodeView {
         }
     }
 
-    pub fn update(&self, markdown: &str) {
-        self.buffer.set_text(&gutenberg::markdown_to_gutenberg(markdown));
+    /// `media` should be freshly reconciled against `markdown` (the caller
+    /// already has to do this for the preview pane/Medienverwaltung, so
+    /// this doesn't reconcile again itself) - its alt-text/caption edits
+    /// are overlaid on top of the parsed blocks (`export::gutenberg_preview_html`),
+    /// the same way `run_export` does right before actually publishing, so
+    /// this tab shows what would really be sent rather than silently
+    /// reverting to whatever's written literally in the Markdown source.
+    pub fn update(&self, markdown: &str, media: &[media::MediaItem]) {
+        self.buffer.set_text(&crate::export::gutenberg_preview_html(markdown, media));
     }
 }

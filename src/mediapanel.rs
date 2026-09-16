@@ -84,7 +84,8 @@ pub fn build_content(frontmatter: Rc<RefCell<Frontmatter>>, body: &str, doc_dir:
     // properties dialog, never scanned from the body like the images
     // below) but shown as the list's first row anyway so there's one place
     // to check and trigger every WordPress image upload for the article.
-    list_box.append(&build_featured_image_row(frontmatter.clone(), doc_dir.clone()));
+    let featured_handles = build_featured_image_row(frontmatter.clone(), doc_dir.clone());
+    list_box.append(&featured_handles.row);
     let mut row_handles = Vec::with_capacity(item_count);
     for index in 0..item_count {
         let handles = build_row(index, frontmatter.clone(), doc_dir.clone(), status_label.clone(), preview_pane.clone());
@@ -92,7 +93,7 @@ pub fn build_content(frontmatter: Rc<RefCell<Frontmatter>>, body: &str, doc_dir:
         row_handles.push(handles);
     }
 
-    let bulk_upload_section = build_bulk_upload_section(frontmatter.clone(), doc_dir.clone(), status_label.clone(), preview_pane.clone(), row_handles);
+    let bulk_upload_section = build_bulk_upload_section(frontmatter.clone(), doc_dir.clone(), status_label.clone(), preview_pane.clone(), row_handles, featured_handles);
 
     let scroller = gtk4::ScrolledWindow::builder().child(&list_box).vexpand(true).min_content_height(360).build();
 
@@ -102,23 +103,38 @@ pub fn build_content(frontmatter: Rc<RefCell<Frontmatter>>, body: &str, doc_dir:
     content_box.upcast()
 }
 
+/// Which row a bulk-uploaded item's result belongs to - `Media(index)` for
+/// a body image (`frontmatter.media[index]`, updated via `row_handles`),
+/// or `Featured` for the article's featured image (`frontmatter
+/// .featured_image`, updated via the featured row's own handles) - see
+/// `build_bulk_upload_section`'s doc comment for why the featured image is
+/// included in "Alle hochladen" at all despite not being a `MediaItem`.
+enum BulkTarget {
+    Media(usize),
+    Featured,
+}
+
 /// "Alle hochladen": uploads every image in the article that isn't on
 /// WordPress yet (`UploadStatus::NotUploaded`/`Failed`, i.e.
-/// `item.wordpress.is_none()`) in one go, sequentially rather than in
-/// parallel - one background thread working through the list one image at
-/// a time, same rationale as every other upload here for being on a
-/// thread at all (`wpclient` is blocking) plus keeping requests against
-/// the site orderly and the progress bar meaningful. Already-uploaded
-/// images are left untouched (use the per-row "Erneut hochladen" for
-/// those); a failure partway through doesn't stop the rest - it's
-/// recorded and the loop continues, so one broken image never blocks
-/// every other one from getting uploaded.
+/// `item.wordpress.is_none()`), plus the featured image if one is set but
+/// not yet uploaded (`frontmatter.featured_image.is_some()`) - otherwise
+/// "Alle hochladen" would silently skip it, and it'd only get uploaded by
+/// separately finding its own row's button or by publishing outright. All
+/// in one go, sequentially rather than in parallel - one background thread
+/// working through the list one image at a time, same rationale as every
+/// other upload here for being on a thread at all (`wpclient` is blocking)
+/// plus keeping requests against the site orderly and the progress bar
+/// meaningful. Already-uploaded images are left untouched (use the
+/// per-row "Erneut hochladen" for those); a failure partway through
+/// doesn't stop the rest - it's recorded and the loop continues, so one
+/// broken image never blocks every other one from getting uploaded.
 fn build_bulk_upload_section(
     frontmatter: Rc<RefCell<Frontmatter>>,
     doc_dir: Option<PathBuf>,
     status_label: gtk4::Label,
     preview_pane: Rc<preview::PreviewPane>,
     row_handles: Vec<MediaRowHandles>,
+    featured: FeaturedRowHandles,
 ) -> gtk4::Widget {
     let section = gtk4::Box::builder().orientation(gtk4::Orientation::Vertical).spacing(6).build();
 
@@ -137,8 +153,12 @@ fn build_bulk_upload_section(
     section.append(&button_row);
     section.append(&progress_bar);
 
-    let pending_count = frontmatter.borrow().media.iter().filter(|item| item.wordpress.is_none()).count();
-    let total_count = frontmatter.borrow().media.len();
+    let (pending_count, total_count) = {
+        let fm = frontmatter.borrow();
+        let pending = fm.media.iter().filter(|item| item.wordpress.is_none()).count() + usize::from(fm.featured_image.is_some());
+        let total = fm.media.len() + usize::from(fm.featured_image.is_some() || fm.featured_media_id.is_some());
+        (pending, total)
+    };
     bulk_button.set_visible(total_count > 0);
     bulk_button.set_sensitive(pending_count > 0);
     if total_count > 0 && pending_count == 0 {
@@ -146,15 +166,22 @@ fn build_bulk_upload_section(
     }
 
     let row_handles = Rc::new(row_handles);
+    let featured = Rc::new(featured);
     bulk_button.connect_clicked(move |bulk_button| {
-        let pending: Vec<(usize, String, Option<String>, Option<String>)> = frontmatter
+        let mut pending: Vec<(BulkTarget, String, Option<String>, Option<String>)> = frontmatter
             .borrow()
             .media
             .iter()
             .enumerate()
             .filter(|(_, item)| item.wordpress.is_none())
-            .map(|(index, item)| (index, item.source.clone(), item.alt.as_wordpress_value().map(str::to_string), item.caption.clone()))
+            .map(|(index, item)| (BulkTarget::Media(index), item.source.clone(), item.alt.as_wordpress_value().map(str::to_string), item.caption.clone()))
             .collect();
+        {
+            let fm = frontmatter.borrow();
+            if let Some(source) = fm.featured_image.clone() {
+                pending.push((BulkTarget::Featured, source, fm.featured_image_alt.clone(), None));
+            }
+        }
         if pending.is_empty() {
             return;
         }
@@ -183,21 +210,28 @@ fn build_bulk_upload_section(
             };
             let client = wpclient::Client::new(&site.url, &site.username, &password);
             let mut failed = 0;
-            for (index, source, alt_for_upload, caption_for_upload) in pending {
+            for (target, source, alt_for_upload, caption_for_upload) in pending {
                 let filename = std::path::Path::new(&source).file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_else(|| source.clone());
+                // The featured image isn't a `MediaItem` and has no
+                // tracked content hash to compare against (same reasoning
+                // as its own per-row upload button in
+                // `build_featured_image_row`), so this only computes one
+                // for a `Media` target.
                 let outcome = export::upload_image_file(&client, &source, doc_dir_for_thread.as_deref())
                     .map_err(|err| err.to_string())
                     .and_then(|uploaded| {
-                        client
-                            .update_media_metadata(uploaded.id, alt_for_upload.as_deref(), caption_for_upload.as_deref())
-                            .map_err(|err| err.to_string())?;
-                        let content_hash = media::hash_local_file(&source, doc_dir_for_thread.as_deref()).unwrap_or_default();
+                        if alt_for_upload.is_some() || caption_for_upload.is_some() {
+                            client
+                                .update_media_metadata(uploaded.id, alt_for_upload.as_deref(), caption_for_upload.as_deref())
+                                .map_err(|err| err.to_string())?;
+                        }
+                        let content_hash = matches!(target, BulkTarget::Media(_)).then(|| media::hash_local_file(&source, doc_dir_for_thread.as_deref()).unwrap_or_default());
                         Ok((uploaded, content_hash))
                     });
                 if outcome.is_err() {
                     failed += 1;
                 }
-                let _ = tx.send(BulkUploadEvent::Progress { index, filename, result: outcome });
+                let _ = tx.send(BulkUploadEvent::Progress { target, filename, result: outcome });
             }
             let _ = tx.send(BulkUploadEvent::Done { failed });
         });
@@ -209,31 +243,51 @@ fn build_bulk_upload_section(
         let bulk_status_label = bulk_status_label.clone();
         let progress_bar = progress_bar.clone();
         let row_handles = row_handles.clone();
+        let featured = featured.clone();
         let mut completed = 0;
         glib::timeout_add_local(Duration::from_millis(150), move || match rx.try_recv() {
-            Ok(BulkUploadEvent::Progress { index, filename, result }) => {
+            Ok(BulkUploadEvent::Progress { target, filename, result }) => {
                 completed += 1;
                 progress_bar.set_fraction(completed as f64 / total as f64);
                 progress_bar.set_text(Some(&tr("{completed} von {total} hochgeladen").replace("{completed}", &completed.to_string()).replace("{total}", &total.to_string())));
 
                 match result {
-                    Ok((media_result, content_hash)) => {
-                        let reference = media::WordPressMediaRef { media_id: media_result.id, url: media_result.source_url.clone(), content_hash };
-                        if let Some(item) = frontmatter.borrow_mut().media.get_mut(index) {
-                            item.wordpress = Some(reference.clone());
+                    Ok((media_result, content_hash)) => match target {
+                        BulkTarget::Media(index) => {
+                            let reference = media::WordPressMediaRef { media_id: media_result.id, url: media_result.source_url.clone(), content_hash: content_hash.unwrap_or_default() };
+                            if let Some(item) = frontmatter.borrow_mut().media.get_mut(index) {
+                                item.wordpress = Some(reference.clone());
+                            }
+                            if let Some(handles) = row_handles.get(index) {
+                                handles.expander.set_subtitle(&upload_status_text(&UploadStatus::Uploaded(reference)));
+                                handles.upload_status_label.set_label(&tr("Erfolgreich hochgeladen."));
+                                handles.upload_button.set_label(&tr("Erneut hochladen"));
+                                handles.upload_button.set_sensitive(true);
+                            }
                         }
-                        if let Some(handles) = row_handles.get(index) {
-                            handles.expander.set_subtitle(&upload_status_text(&UploadStatus::Uploaded(reference)));
-                            handles.upload_status_label.set_label(&tr("Erfolgreich hochgeladen."));
-                            handles.upload_button.set_label(&tr("Erneut hochladen"));
-                            handles.upload_button.set_sensitive(true);
+                        BulkTarget::Featured => {
+                            {
+                                let mut fm = frontmatter.borrow_mut();
+                                fm.featured_image = None;
+                                fm.featured_media_id = Some(media_result.id);
+                            }
+                            featured.row.set_subtitle(&featured_image_status_text(&frontmatter.borrow()));
+                            featured.upload_button.set_visible(false);
                         }
-                    }
+                    },
                     Err(err) => {
-                        if let Some(handles) = row_handles.get(index) {
-                            handles.expander.set_subtitle(&upload_status_text(&UploadStatus::Failed(err.clone())));
-                            handles.upload_status_label.set_label(&tr("Fehler: {err}").replace("{err}", &err));
-                            handles.upload_button.set_sensitive(true);
+                        match target {
+                            BulkTarget::Media(index) => {
+                                if let Some(handles) = row_handles.get(index) {
+                                    handles.expander.set_subtitle(&upload_status_text(&UploadStatus::Failed(err.clone())));
+                                    handles.upload_status_label.set_label(&tr("Fehler: {err}").replace("{err}", &err));
+                                    handles.upload_button.set_sensitive(true);
+                                }
+                            }
+                            BulkTarget::Featured => {
+                                featured.row.set_subtitle(&tr("Fehler beim Hochladen: {err}").replace("{err}", &err));
+                                featured.upload_button.set_sensitive(true);
+                            }
                         }
                         notify::send("media-upload", &tr("Upload fehlgeschlagen"), &tr("„{filename}“: {err}").replace("{filename}", &filename).replace("{err}", &err));
                     }
@@ -252,7 +306,10 @@ fn build_bulk_upload_section(
                         .replace("{total}", &total.to_string())
                         .replace("{failed}", &failed.to_string())
                 });
-                let remaining_pending = frontmatter.borrow().media.iter().filter(|item| item.wordpress.is_none()).count();
+                let remaining_pending = {
+                    let fm = frontmatter.borrow();
+                    fm.media.iter().filter(|item| item.wordpress.is_none()).count() + usize::from(fm.featured_image.is_some())
+                };
                 bulk_button.set_sensitive(remaining_pending > 0);
                 if failed == 0 {
                     notify::send("media-upload", &tr("Bilder hochgeladen"), &tr("Alle {total} Bilder wurden erfolgreich hochgeladen.").replace("{total}", &total.to_string()));
@@ -296,7 +353,7 @@ fn build_bulk_upload_section(
 /// *why* nothing uploaded instead of just reporting every image failed
 /// individually.
 enum BulkUploadEvent {
-    Progress { index: usize, filename: String, result: Result<(wpclient::MediaResult, String), String> },
+    Progress { target: BulkTarget, filename: String, result: Result<(wpclient::MediaResult, Option<String>), String> },
     Done { failed: usize },
     Aborted { reason: String },
 }
@@ -346,13 +403,22 @@ fn featured_image_status_text(frontmatter: &Frontmatter) -> String {
     tr("Kein Aufmacherbild festgelegt - in den Artikel-Eigenschaften auswählen.")
 }
 
+/// The featured image row's own widgets, exposed the same way
+/// `MediaRowHandles` exposes a body row's - so `build_bulk_upload_section`
+/// can update this row too when "Alle hochladen" includes the featured
+/// image (see its own doc comment).
+struct FeaturedRowHandles {
+    row: adw::ActionRow,
+    upload_button: gtk4::Button,
+}
+
 /// The featured image is a single `Frontmatter` field, not a `MediaItem`
 /// scanned from the body, so it can't reuse `build_row`'s per-item alt-
 /// text/caption editing - it only ever needs an upload button. Once
 /// uploaded, `featured_image` (the pending local path) is cleared in favor
 /// of `featured_media_id` (the resulting WordPress id), so `export.rs`'s
 /// own automatic upload-on-publish never re-uploads it a second time.
-fn build_featured_image_row(frontmatter: Rc<RefCell<Frontmatter>>, doc_dir: Option<PathBuf>) -> adw::ActionRow {
+fn build_featured_image_row(frontmatter: Rc<RefCell<Frontmatter>>, doc_dir: Option<PathBuf>) -> FeaturedRowHandles {
     let row = adw::ActionRow::builder().title(tr("Aufmacherbild")).use_markup(false).build();
     row.set_subtitle(&featured_image_status_text(&frontmatter.borrow()));
 
@@ -425,7 +491,7 @@ fn build_featured_image_row(frontmatter: Rc<RefCell<Frontmatter>>, doc_dir: Opti
         });
     }
 
-    row
+    FeaturedRowHandles { row, upload_button }
 }
 
 /// The per-row widgets the bulk "Alle hochladen" button (see

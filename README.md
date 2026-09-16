@@ -202,9 +202,10 @@ blocks. Implemented so far:
   uploaded rather than re-uploading it; the list's own "Aufmacherbild" row
   does the same for the featured image, showing whether one is set,
   pending upload, or already live. An "Alle hochladen" button above the
-  list uploads every not-yet-uploaded image in one go instead of one at a
-  time, tracked with a progress bar and a final summary of how many
-  succeeded, and a failure partway through doesn't stop the rest. A "Bild einfügen…" button in the
+  list uploads every not-yet-uploaded image in one go - the featured image
+  included, if one's pending - instead of one at a time, tracked with a
+  progress bar and a final summary of how many succeeded, and a failure
+  partway through doesn't stop the rest. A "Bild einfügen…" button in the
   editor toolbar opens a native image file picker and inserts a real
   Markdown image reference at the cursor (relative to the document's own
   folder when possible) - previously the only way to add an image
@@ -233,7 +234,13 @@ blocks. Implemented so far:
   preview illustrations, and an editor color-scheme grid using
   GtkSourceView's `StyleSchemePreview` widget filtered to schemes matching
   the current light/dark mode, the same widget and filtering Builder uses,
-  plus the article preview's own typographic style picker), independent
+  plus the article preview's own typographic style picker). Beyond
+  whatever the installed GtkSourceView bundles itself, ten more schemes
+  ship with the app and show up in that same grid - five dark (Dracula,
+  Nord, Gruvbox Dark, Monokai, Catppuccin Mocha) and five light (Gruvbox
+  Light, One Light, GitHub Light, Catppuccin Latte, Rosé Pine Dawn), each
+  a real, hand-authored GtkSourceView scheme covering the full standard
+  style set, not just a token color swap. Independent
   font pickers for the editor and the preview (family/size/weight/style,
   each with a live sample and a reset-to-default button), a WordPress-connection page (site
   URL/username in a small config file, the Application Password in the

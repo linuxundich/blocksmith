@@ -14,6 +14,7 @@
 //!   ported to Rust below) rather than showing every scheme at once.
 
 use std::cell::Cell;
+use std::fs;
 use std::path::PathBuf;
 use std::rc::Rc;
 
@@ -39,6 +40,35 @@ const PREVIEW_LIGHT_SVG: &[u8] = include_bytes!("../data/icons/appearance-previe
 const PREVIEW_DARK_SVG: &[u8] = include_bytes!("../data/icons/appearance-preview/preview-dark.svg");
 const PREVIEW_SYSTEM_SVG: &[u8] = include_bytes!("../data/icons/appearance-preview/preview-system.svg");
 
+/// Extra `GtkSourceStyleScheme` XML files (`data/gtksourceview-schemes/`)
+/// this app ships on top of whatever the installed GtkSourceView bundles
+/// itself - five common dark ones and five common light ones, so the
+/// "Erscheinungsbild" scheme grid (`populate_scheme_flow_box`) has a real
+/// choice in both modes rather than whatever the system happens to
+/// include (on at least one dev system, most of GtkSourceView 5's own
+/// schemes are compiled into its GResource with nothing installed as
+/// loose files - Solarized Light/Dark being the one confirmed exception,
+/// which is why this list doesn't also include a Solarized entry: it
+/// would just be a same-named duplicate of that one). Each is hand-
+/// authored against the well-known palette its name references (Dracula,
+/// Nord, Gruvbox, Monokai, Catppuccin, One Light, GitHub, Rosé Pine) - not
+/// copied from another GtkSourceView scheme file - and validates against
+/// GtkSourceView's own `styles.rng`. See `install_bundled_style_schemes`
+/// for how these reach `StyleSchemeManager` (which only ever scans real
+/// files, never in-memory strings).
+const BUNDLED_SCHEMES: &[(&str, &str)] = &[
+    ("blocksmith-dracula", include_str!("../data/gtksourceview-schemes/dracula.xml")),
+    ("blocksmith-nord", include_str!("../data/gtksourceview-schemes/nord.xml")),
+    ("blocksmith-gruvbox-dark", include_str!("../data/gtksourceview-schemes/gruvbox-dark.xml")),
+    ("blocksmith-monokai", include_str!("../data/gtksourceview-schemes/monokai.xml")),
+    ("blocksmith-catppuccin-mocha", include_str!("../data/gtksourceview-schemes/catppuccin-mocha.xml")),
+    ("blocksmith-rose-pine-dawn", include_str!("../data/gtksourceview-schemes/rose-pine-dawn.xml")),
+    ("blocksmith-gruvbox-light", include_str!("../data/gtksourceview-schemes/gruvbox-light.xml")),
+    ("blocksmith-one-light", include_str!("../data/gtksourceview-schemes/one-light.xml")),
+    ("blocksmith-github-light", include_str!("../data/gtksourceview-schemes/github-light.xml")),
+    ("blocksmith-catppuccin-latte", include_str!("../data/gtksourceview-schemes/catppuccin-latte.xml")),
+];
+
 fn config_dir() -> PathBuf {
     let mut dir = glib::user_config_dir();
     dir.push("blocksmith");
@@ -55,6 +85,48 @@ fn source_scheme_path() -> PathBuf {
     let mut path = config_dir();
     path.push("source_scheme.txt");
     path
+}
+
+/// Writes every `BUNDLED_SCHEMES` entry to a real file and registers that
+/// directory as an extra `StyleSchemeManager` search path, so they're
+/// found by `populate_scheme_flow_box`'s scan and resolvable by id for a
+/// buffer's style scheme (`editor.rs`, this module's `apply_saved_*`
+/// below). Must run once, early - before anything else touches
+/// `StyleSchemeManager::default()`, since `append_search_path` on that
+/// shared singleton is what makes the new schemes visible at all - see
+/// `main()`. Rewriting the files on every launch (rather than only if
+/// missing) means an app update always ships whatever the current
+/// `BUNDLED_SCHEMES` content is, the same reasoning `build.rs` already
+/// uses for compiling `po/*.po` on every build - and also means a scheme
+/// renamed or dropped from `BUNDLED_SCHEMES` between versions doesn't
+/// linger as a stray file forever (an already-installed id that's no
+/// longer current is deleted before the current set is written out).
+/// Best-effort throughout: a write/delete failure here just means the
+/// scheme grid is missing or has an extra stale entry, not a reason to
+/// fail startup.
+pub fn install_bundled_style_schemes() {
+    let mut dir = config_dir();
+    dir.push("style-schemes");
+    if fs::create_dir_all(&dir).is_err() {
+        return;
+    }
+    let current_ids: std::collections::HashSet<&str> = BUNDLED_SCHEMES.iter().map(|(id, _)| *id).collect();
+    if let Ok(entries) = fs::read_dir(&dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let is_stale = path.extension().and_then(|e| e.to_str()) == Some("xml")
+                && path.file_stem().and_then(|s| s.to_str()).is_some_and(|stem| !current_ids.contains(stem));
+            if is_stale {
+                let _ = fs::remove_file(&path);
+            }
+        }
+    }
+    for (id, xml) in BUNDLED_SCHEMES {
+        let _ = fs::write(dir.join(format!("{id}.xml")), xml);
+    }
+    if let Some(dir) = dir.to_str() {
+        sourceview5::StyleSchemeManager::default().append_search_path(dir);
+    }
 }
 
 pub fn load_color_scheme() -> adw::ColorScheme {

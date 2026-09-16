@@ -78,6 +78,16 @@ fn main() -> glib::ExitCode {
     app.set_accels_for_action("win.toggle-focus-mode", &["<Ctrl><Shift>f"]);
     app.set_accels_for_action("win.show-help-overlay", &["<Ctrl>question"]);
 
+    // `connect_startup`, not `main()`'s top level: `StyleSchemeManager`
+    // (which this touches) requires GTK to already be initialized, which
+    // only happens once `Application::run()` actually gets going - fires
+    // exactly once regardless of whether `activate` or `open` ends up
+    // handling this particular launch, unlike putting the same call in
+    // both of those.
+    app.connect_startup(|_| {
+        appearance::install_bundled_style_schemes();
+    });
+
     app.connect_activate(|app| {
         appearance::apply_saved_color_scheme();
         load_chat_bubble_css();

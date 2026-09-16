@@ -1,0 +1,101 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Hand-authored for Blocksmith, based on the official Nord palette
+     (https://www.nordtheme.com) - not derived from another GtkSourceView
+     scheme file. -->
+<style-scheme id="blocksmith-nord" _name="Nord" version="1.0">
+  <author>Blocksmith</author>
+  <_description>Dark scheme using the Nord color palette</_description>
+
+  <color name="nord0"  value="#2e3440"/>
+  <color name="nord1"  value="#3b4252"/>
+  <color name="nord2"  value="#434c5e"/>
+  <color name="nord3"  value="#4c566a"/>
+  <color name="nord4"  value="#d8dee9"/>
+  <color name="nord5"  value="#e5e9f0"/>
+  <color name="nord6"  value="#eceff4"/>
+  <color name="nord7"  value="#8fbcbb"/>
+  <color name="nord8"  value="#88c0d0"/>
+  <color name="nord9"  value="#81a1c1"/>
+  <color name="nord10" value="#5e81ac"/>
+  <color name="nord11" value="#bf616a"/>
+  <color name="nord12" value="#d08770"/>
+  <color name="nord13" value="#ebcb8b"/>
+  <color name="nord14" value="#a3be8c"/>
+  <color name="nord15" value="#b48ead"/>
+
+  <!-- Global Settings -->
+  <style name="text"                        foreground="nord4" background="nord0"/>
+  <style name="selection"                   foreground="nord6" background="nord2"/>
+  <style name="cursor"                      foreground="nord6"/>
+  <style name="secondary-cursor"            foreground="nord3"/>
+  <style name="current-line"                background="nord1"/>
+  <style name="current-line-number"         foreground="nord6" background="nord1" bold="true"/>
+  <style name="line-numbers"                foreground="nord3" background="nord0"/>
+  <style name="background-pattern"          background="nord1"/>
+
+  <!-- Bracket Matching -->
+  <style name="bracket-match"               foreground="nord6" background="nord2" bold="true"/>
+  <style name="bracket-mismatch"            foreground="nord11" background="nord2" bold="true"/>
+
+  <!-- Right Margin -->
+  <style name="right-margin"                foreground="nord3" background="nord1"/>
+
+  <!-- Search Matching -->
+  <style name="search-match"                foreground="nord0" background="nord13"/>
+
+  <!-- Comments -->
+  <style name="def:comment"                 foreground="nord3" italic="true"/>
+  <style name="def:shebang"                 foreground="nord3" bold="true"/>
+  <style name="def:doc-comment-element"     italic="true"/>
+
+  <!-- Constants -->
+  <style name="def:constant"                foreground="nord15"/>
+  <style name="def:special-char"            foreground="nord12"/>
+  <style name="def:string"                  foreground="nord14"/>
+  <style name="def:number"                  foreground="nord15"/>
+  <style name="def:floating-point"          foreground="nord15"/>
+  <style name="def:character"               foreground="nord14"/>
+  <style name="def:boolean"                 foreground="nord15"/>
+  <style name="def:builtin-constant"        foreground="nord15"/>
+
+  <!-- Identifiers -->
+  <style name="def:identifier"              foreground="nord4"/>
+
+  <!-- Functions -->
+  <style name="def:function"                foreground="nord8"/>
+  <style name="def:builtin"                 foreground="nord9" italic="true"/>
+
+  <!-- Keywords -->
+  <style name="def:keyword"                 foreground="nord9"/>
+  <style name="def:reserved"                foreground="nord9" bold="true"/>
+
+  <!-- Statements -->
+  <style name="def:statement"               foreground="nord9"/>
+
+  <!-- Types -->
+  <style name="def:type"                    foreground="nord7" italic="true"/>
+
+  <!-- Markup -->
+  <style name="def:emphasis"                italic="true"/>
+  <style name="def:strong-emphasis"         bold="true"/>
+  <style name="def:inline-code"             foreground="nord14"/>
+  <style name="def:insertion"               underline="single"/>
+  <style name="def:deletion"                strikethrough="true"/>
+  <style name="def:link-text"               foreground="nord8"/>
+  <style name="def:link-symbol"             foreground="nord3" bold="true"/>
+  <style name="def:link-destination"        foreground="nord9" underline="single"/>
+  <style name="def:heading"                 foreground="nord8" bold="true"/>
+  <style name="def:thematic-break"          foreground="nord3" bold="true"/>
+  <style name="def:preformatted-section"    foreground="nord12"/>
+  <style name="def:list-marker"             foreground="nord9" bold="true"/>
+
+  <!-- Operators -->
+  <style name="def:operator"                foreground="nord9"/>
+
+  <!-- Others -->
+  <style name="def:preprocessor"            foreground="nord15"/>
+  <style name="def:error"                   foreground="nord11" bold="true" underline="error"/>
+  <style name="def:warning"                 foreground="nord13" bold="true"/>
+  <style name="def:note"                    foreground="nord0" background="nord13" bold="true"/>
+  <style name="def:net-address"             foreground="nord8" underline="single"/>
+</style-scheme>
