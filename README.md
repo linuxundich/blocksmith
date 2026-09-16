@@ -154,10 +154,13 @@ blocks. Implemented so far:
   festlegen…" in the editor's right-click context menu - which, like its
   "KI-Alternativtext generieren…" neighbor, only appears when the click
   actually landed on a line with a media reference, rebuilt live from the
-  cursor position on every right-click rather than always shown) — every image referenced in the
-  article gets its own alt text, caption, and WordPress upload state,
-  independent of the Markdown source (persisted alongside the rest of the
-  document in the frontmatter). Alt text is a three-state value rather
+  cursor position on every right-click rather than always shown) — every
+  unique image referenced in the article gets its own alt text, caption,
+  and WordPress upload state, independent of the Markdown source
+  (persisted alongside the rest of the document in the frontmatter) - the
+  same image referenced more than once (a logo, a divider) shares that one
+  entry across every occurrence rather than getting a separate one each
+  time. Alt text is a three-state value rather
   than a plain on/off: not yet defined (flagged by a non-blocking "N von M
   Bildern haben noch keinen Alternativtext" hint), deliberately left empty
   for decorative images (not treated as an error), or defined text; the

@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.46.1] - 2026-09-16
+
+### Fixed
+
+- The same image referenced more than once in an article (a logo, a
+  divider, reused several times) could end up showing one occurrence's
+  "Alt" badge on every other occurrence too, and silently lose whichever
+  occurrence's alt text/caption wasn't edited last. Root cause:
+  `media::reconcile` created a separate `MediaItem` per occurrence on the
+  first scan, but every place that reads the list afterward (the
+  preview's badges, Medienverwaltung's rows, `sync_uploads`) already
+  matches by `source` alone and expects at most one entry per source - so
+  the *next* reconcile silently collapsed every occurrence into a clone
+  of whichever one it found first, discarding the others. `reconcile` now
+  deduplicates by `source` up front, so a repeated image gets exactly one
+  `MediaItem`, consistently shared by every occurrence.
+
 ## [0.46.0] - 2026-09-16
 
 ### Added

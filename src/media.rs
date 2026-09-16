@@ -188,6 +188,17 @@ fn scan_images(markdown: &str) -> Vec<(String, String, String)> {
 /// pasted from elsewhere), which is taken as an initial `Text` value, and
 /// likewise seeds its caption from the Markdown title (`![alt](src "title")`)
 /// if one is present.
+///
+/// The same `source` referenced more than once in the body (a logo, a
+/// divider image, reused several times) collapses to a single `MediaItem`,
+/// since every place that reads this list afterward (the preview's
+/// badges, Medienverwaltung's per-row editing, `sync_uploads`) already
+/// matches by `source` alone and only ever expects one entry per source.
+/// Without this, a second occurrence got its own separate, short-lived
+/// `MediaItem` that the *next* reconcile would silently clobber with a
+/// clone of whichever one `existing.iter().find()` happened to hit first -
+/// losing that occurrence's own alt text/caption, and making the preview
+/// show one occurrence's alt-defined badge on the other, unedited one too.
 pub fn reconcile(existing: &[MediaItem], markdown: &str) -> Vec<MediaItem> {
     let mut next_serial = existing
         .iter()
@@ -196,8 +207,10 @@ pub fn reconcile(existing: &[MediaItem], markdown: &str) -> Vec<MediaItem> {
         .unwrap_or(0)
         + 1;
 
+    let mut seen_sources = std::collections::HashSet::new();
     scan_images(markdown)
         .into_iter()
+        .filter(|(source, _, _)| seen_sources.insert(source.clone()))
         .map(|(source, markdown_alt, markdown_title)| {
             if let Some(found) = existing.iter().find(|item| item.source == source) {
                 found.clone()
@@ -514,6 +527,24 @@ mod tests {
         let updated = reconcile(&existing, "![](a.png)\n\n![](b.png)\n");
         assert_eq!(updated[0].id, "media-005");
         assert_eq!(updated[1].id, "media-006");
+    }
+
+    #[test]
+    fn reconcile_collapses_the_same_source_referenced_twice_into_one_item() {
+        let markdown = "![](logo.png)\n\nSome text.\n\n![](logo.png)\n";
+        let items = reconcile(&[], markdown);
+        assert_eq!(items.len(), 1, "expected one item, not one per occurrence: {items:?}");
+    }
+
+    #[test]
+    fn reconcile_does_not_let_a_repeated_image_lose_its_edited_alt_text_on_the_next_pass() {
+        let markdown = "![](logo.png)\n\nSome text.\n\n![](logo.png)\n";
+        let mut items = reconcile(&[], markdown);
+        items[0].alt = AltText::Text("a logo".to_string());
+
+        let reconciled_again = reconcile(&items, markdown);
+        assert_eq!(reconciled_again.len(), 1);
+        assert_eq!(reconciled_again[0].alt, AltText::Text("a logo".to_string()));
     }
 
     #[test]
