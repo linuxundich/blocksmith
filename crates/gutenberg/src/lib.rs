@@ -692,15 +692,21 @@ fn render_block(block: &Block) -> String {
             ),
         ),
         Block::Image { url, alt, title } => {
-            let title_attr = title
+            // A markdown image "title" is the caption - rendered as a real
+            // `<figcaption>` inside the figure, matching WordPress's own
+            // image block markup, so it actually shows up on the published
+            // page. An `<img title="">` attribute (this used to emit one)
+            // is just an invisible hover tooltip, never a visible caption.
+            let figcaption = title
                 .as_ref()
-                .map(|t| format!(" title=\"{}\"", escape_html(t)))
+                .filter(|t| !t.is_empty())
+                .map(|t| format!("<figcaption class=\"wp-element-caption\">{}</figcaption>", escape_html(t)))
                 .unwrap_or_default();
             wrap(
                 "image",
                 None,
                 &format!(
-                    "<figure class=\"wp-block-image\"><img src=\"{}\" alt=\"{}\"{title_attr}/></figure>",
+                    "<figure class=\"wp-block-image\"><img src=\"{}\" alt=\"{}\"/>{figcaption}</figure>",
                     escape_html(url),
                     escape_html(alt)
                 ),
@@ -813,6 +819,17 @@ mod tests {
             out,
             "<!-- wp:image -->\n<figure class=\"wp-block-image\">\
              <img src=\"https://example.com/cat.png\" alt=\"a cat\"/></figure>\n<!-- /wp:image -->"
+        );
+    }
+
+    #[test]
+    fn lone_image_line_with_a_title_gets_a_visible_figcaption() {
+        let out = markdown_to_gutenberg("![a cat](https://example.com/cat.png \"A very good cat\")");
+        assert_eq!(
+            out,
+            "<!-- wp:image -->\n<figure class=\"wp-block-image\">\
+             <img src=\"https://example.com/cat.png\" alt=\"a cat\"/>\
+             <figcaption class=\"wp-element-caption\">A very good cat</figcaption></figure>\n<!-- /wp:image -->"
         );
     }
 

@@ -6,6 +6,7 @@
 //! properties dialog calls `spawn_refresh` again).
 
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::mpsc;
@@ -20,6 +21,25 @@ use crate::{secrets, wpclient, wpsite};
 pub struct TermCache {
     pub categories: Vec<String>,
     pub tags: Vec<String>,
+    /// Category name -> its real WordPress slug, which can diverge from
+    /// what `document::slugify` would derive from the name (a category's
+    /// slug can be edited independently of its display name) - used by the
+    /// properties dialog's URL-length check (`properties.rs`), which needs
+    /// the real permalink, not a guess.
+    pub category_slugs: HashMap<String, String>,
+}
+
+/// The three shared, in-memory handles `load()`'s result is unpacked into
+/// at startup (`window.rs`) - bundled purely to keep functions that pass
+/// all three around (they're always read/refreshed together) under
+/// clippy::too_many_arguments, the same fix already used for `DocContext`/
+/// `RecentFilesWidgets` in `window.rs`. Cloning the whole bundle is as
+/// cheap as cloning any one field, since every field already is one.
+#[derive(Clone)]
+pub struct TermCacheHandles {
+    pub categories: Rc<RefCell<Vec<String>>>,
+    pub tags: Rc<RefCell<Vec<String>>>,
+    pub category_slugs: Rc<RefCell<HashMap<String, String>>>,
 }
 
 fn cache_path() -> PathBuf {
@@ -55,25 +75,32 @@ fn parse(s: &str) -> TermCache {
             .map(|items| items.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
             .unwrap_or_default()
     };
+    let category_slugs = value
+        .get("category_slugs")
+        .and_then(Value::as_object)
+        .map(|map| map.iter().filter_map(|(name, slug)| slug.as_str().map(|slug| (name.clone(), slug.to_string()))).collect())
+        .unwrap_or_default();
     TermCache {
         categories: string_list("categories"),
         tags: string_list("tags"),
+        category_slugs,
     }
 }
 
 fn serialize(cache: &TermCache) -> String {
-    serde_json::json!({ "categories": cache.categories, "tags": cache.tags }).to_string()
+    serde_json::json!({ "categories": cache.categories, "tags": cache.tags, "category_slugs": cache.category_slugs }).to_string()
 }
 
 /// Refreshes the cache from the configured WordPress site on a background
 /// thread (see `wpclient`'s module docs for why it's blocking), updating
 /// the shared in-memory lists and the on-disk cache once done. A no-op if
 /// no site is configured; leaves the existing cache untouched on failure.
-pub fn spawn_refresh(categories: Rc<RefCell<Vec<String>>>, tags: Rc<RefCell<Vec<String>>>) {
+pub fn spawn_refresh(handles: &TermCacheHandles) {
     let site = wpsite::load();
     if site.url.is_empty() {
         return;
     }
+    let TermCacheHandles { categories, tags, category_slugs } = handles.clone();
 
     let (tx, rx) = mpsc::channel::<Option<TermCache>>();
     std::thread::spawn(move || {
@@ -82,9 +109,15 @@ pub fn spawn_refresh(categories: Rc<RefCell<Vec<String>>>, tags: Rc<RefCell<Vec<
             .flatten()
             .map(|password| wpclient::Client::new(&site.url, &site.username, &password))
             .and_then(|client| {
-                let categories = client.list_term_names("categories").ok()?;
+                // `list_terms`, not `list_term_names`, for categories - it
+                // also carries each one's real slug (see `TermCache::category_slugs`'s doc comment).
+                let category_terms = client.list_terms("categories").ok()?;
                 let tags = client.list_term_names("tags").ok()?;
-                Some(TermCache { categories, tags })
+                Some(TermCache {
+                    categories: category_terms.iter().map(|t| t.name.clone()).collect(),
+                    category_slugs: category_terms.into_iter().map(|t| (t.name, t.slug)).collect(),
+                    tags,
+                })
             });
         let _ = tx.send(result);
     });
@@ -93,6 +126,7 @@ pub fn spawn_refresh(categories: Rc<RefCell<Vec<String>>>, tags: Rc<RefCell<Vec<
         Ok(Some(cache)) => {
             *categories.borrow_mut() = cache.categories.clone();
             *tags.borrow_mut() = cache.tags.clone();
+            *category_slugs.borrow_mut() = cache.category_slugs.clone();
             let _ = save(&cache);
             glib::ControlFlow::Break
         }
@@ -111,6 +145,7 @@ mod tests {
         let cache = TermCache {
             categories: vec!["GNU/Linux".to_string(), "Android".to_string()],
             tags: vec!["arch".to_string()],
+            category_slugs: HashMap::from([("GNU/Linux".to_string(), "gnu-linux".to_string())]),
         };
         assert_eq!(parse(&serialize(&cache)), cache);
     }

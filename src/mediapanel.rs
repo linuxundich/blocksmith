@@ -80,6 +80,11 @@ pub fn build_content(frontmatter: Rc<RefCell<Frontmatter>>, body: &str, doc_dir:
 
     let list_box = gtk4::ListBox::new();
     list_box.add_css_class("boxed-list");
+    // Not a `MediaItem` (it's a single `Frontmatter` field set from the
+    // properties dialog, never scanned from the body like the images
+    // below) but shown as the list's first row anyway so there's one place
+    // to check and trigger every WordPress image upload for the article.
+    list_box.append(&build_featured_image_row(frontmatter.clone(), doc_dir.clone()));
     for index in 0..item_count {
         let row = build_row(index, frontmatter.clone(), doc_dir.clone(), status_label.clone(), preview_pane.clone());
         list_box.append(&row);
@@ -125,6 +130,90 @@ fn upload_status_text(status: &UploadStatus) -> String {
         UploadStatus::Uploaded(reference) => tr("Bereits hochgeladen (Medien-ID {id})").replace("{id}", &reference.media_id.to_string()),
         UploadStatus::Failed(err) => tr("Fehler beim letzten Upload: {err}").replace("{err}", err),
     }
+}
+
+fn featured_image_status_text(frontmatter: &Frontmatter) -> String {
+    if let Some(path) = &frontmatter.featured_image {
+        return tr("Bereit zum Hochladen: {path}").replace("{path}", path);
+    }
+    if let Some(id) = frontmatter.featured_media_id {
+        return tr("Bereits hochgeladen (Medien-ID {id})").replace("{id}", &id.to_string());
+    }
+    tr("Kein Aufmacherbild festgelegt - in den Artikel-Eigenschaften auswählen.")
+}
+
+/// The featured image is a single `Frontmatter` field, not a `MediaItem`
+/// scanned from the body, so it can't reuse `build_row`'s per-item alt-
+/// text/caption editing - it only ever needs an upload button. Once
+/// uploaded, `featured_image` (the pending local path) is cleared in favor
+/// of `featured_media_id` (the resulting WordPress id), so `export.rs`'s
+/// own automatic upload-on-publish never re-uploads it a second time.
+fn build_featured_image_row(frontmatter: Rc<RefCell<Frontmatter>>, doc_dir: Option<PathBuf>) -> adw::ActionRow {
+    let row = adw::ActionRow::builder().title(tr("Aufmacherbild")).use_markup(false).build();
+    row.set_subtitle(&featured_image_status_text(&frontmatter.borrow()));
+
+    let upload_button = gtk4::Button::with_label(&tr("Zu WordPress hochladen"));
+    upload_button.set_valign(gtk4::Align::Center);
+    upload_button.set_visible(frontmatter.borrow().featured_image.is_some());
+    row.add_suffix(&upload_button);
+
+    {
+        let frontmatter = frontmatter.clone();
+        let row = row.clone();
+        let upload_button_for_click = upload_button.clone();
+        upload_button.connect_clicked(move |_| {
+            let Some(source) = frontmatter.borrow().featured_image.clone() else { return };
+
+            upload_button_for_click.set_sensitive(false);
+            row.set_subtitle(&tr("Wird hochgeladen …"));
+
+            let site = wpsite::load();
+            let doc_dir = doc_dir.clone();
+            let (tx, rx) = mpsc::channel::<Result<wpclient::MediaResult, String>>();
+            std::thread::spawn(move || {
+                let outcome = futures_lite::future::block_on(secrets::load_app_password(&site.url, &site.username))
+                    .map_err(|err| err.to_string())
+                    .and_then(|maybe_password| {
+                        maybe_password.ok_or_else(|| tr("Kein Application Password im Schlüsselbund gefunden."))
+                    })
+                    .and_then(|password| {
+                        let client = wpclient::Client::new(&site.url, &site.username, &password);
+                        export::upload_image_file(&client, &source, doc_dir.as_deref()).map_err(|err| err.to_string())
+                    });
+                let _ = tx.send(outcome);
+            });
+
+            let frontmatter = frontmatter.clone();
+            let row = row.clone();
+            let upload_button = upload_button_for_click.clone();
+            glib::timeout_add_local(Duration::from_millis(150), move || match rx.try_recv() {
+                Ok(Ok(media_result)) => {
+                    {
+                        let mut fm = frontmatter.borrow_mut();
+                        fm.featured_image = None;
+                        fm.featured_media_id = Some(media_result.id);
+                    }
+                    row.set_subtitle(&featured_image_status_text(&frontmatter.borrow()));
+                    upload_button.set_visible(false);
+                    notify::send("media-upload", &tr("Aufmacherbild hochgeladen"), &tr("Das Aufmacherbild wurde erfolgreich hochgeladen."));
+                    glib::ControlFlow::Break
+                }
+                Ok(Err(err)) => {
+                    row.set_subtitle(&tr("Fehler beim Hochladen: {err}").replace("{err}", &err));
+                    upload_button.set_sensitive(true);
+                    glib::ControlFlow::Break
+                }
+                Err(mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    row.set_subtitle(&tr("Interner Fehler: Upload-Thread hat kein Ergebnis geliefert."));
+                    upload_button.set_sensitive(true);
+                    glib::ControlFlow::Break
+                }
+            });
+        });
+    }
+
+    row
 }
 
 fn build_row(

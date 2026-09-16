@@ -103,6 +103,13 @@ pub fn open(
     status_label.set_wrap(true);
     status_label.set_xalign(0.0);
 
+    // Shows the published post's real permalink as a clickable link once a
+    // publish/draft/schedule succeeds - kept as its own widget rather than
+    // embedding an `<a href>` in `status_label` via Pango markup, since
+    // that label's other messages are plain, unescaped, server-provided
+    // error text that could otherwise break markup parsing.
+    let link_button = gtk4::LinkButton::builder().visible(false).halign(gtk4::Align::Start).build();
+
     let publish_button = gtk4::Button::with_label(&if current_fm.wp_post_id.is_some() {
         tr("Aktualisieren")
     } else {
@@ -149,6 +156,7 @@ pub fn open(
 
     content_box.append(&view_stack);
     content_box.append(&status_label);
+    content_box.append(&link_button);
     content_box.append(&button_row);
     toolbar_view.set_content(Some(&content_box));
 
@@ -162,6 +170,7 @@ pub fn open(
     {
         let frontmatter = frontmatter.clone();
         let status_label = status_label.clone();
+        let link_button = link_button.clone();
         let publish_button = publish_button.clone();
         let delete_button_for_click = delete_button.clone();
         let dialog_for_confirm = dialog.clone();
@@ -179,6 +188,7 @@ pub fn open(
 
             let frontmatter = frontmatter.clone();
             let status_label = status_label.clone();
+            let link_button = link_button.clone();
             let publish_button = publish_button.clone();
             let delete_button = delete_button_for_click.clone();
             confirm.connect_response(None, move |_, response| {
@@ -186,6 +196,7 @@ pub fn open(
                     return;
                 }
                 status_label.set_label(&tr("Wird gelöscht …"));
+                link_button.set_visible(false);
                 delete_button.set_sensitive(false);
 
                 let site = wpsite::load();
@@ -233,11 +244,24 @@ pub fn open(
         });
     }
 
-    wire_publish_button(&publish_button, &[&draft_button, &schedule_button], PostStatus::Publish, &frontmatter, &body, &doc_dir, &status_label);
-    wire_publish_button(&draft_button, &[&publish_button, &schedule_button], PostStatus::Draft, &frontmatter, &body, &doc_dir, &status_label);
-    wire_publish_button(&schedule_button, &[&publish_button, &draft_button], PostStatus::Future, &frontmatter, &body, &doc_dir, &status_label);
+    let status = StatusWidgets { label: status_label.clone(), link: link_button.clone() };
+    wire_publish_button(&publish_button, &[&draft_button, &schedule_button], PostStatus::Publish, &frontmatter, &body, &doc_dir, &status);
+    wire_publish_button(&draft_button, &[&publish_button, &schedule_button], PostStatus::Draft, &frontmatter, &body, &doc_dir, &status);
+    wire_publish_button(&schedule_button, &[&publish_button, &draft_button], PostStatus::Future, &frontmatter, &body, &doc_dir, &status);
 
     dialog.present(Some(parent));
+}
+
+/// The status line + its accompanying permalink `LinkButton` - bundled
+/// purely to keep `wire_publish_button`'s parameter count down
+/// (clippy::too_many_arguments), the same fix already used for
+/// `DocContext`/`RecentFilesWidgets` in `window.rs`. Always shown/updated
+/// together: a status message about what just happened, and (only once a
+/// publish actually succeeds) a link to see it.
+#[derive(Clone)]
+struct StatusWidgets {
+    label: gtk4::Label,
+    link: gtk4::LinkButton,
 }
 
 /// Wires one of the three publish-flow buttons ("Veröffentlichen" /
@@ -257,13 +281,14 @@ fn wire_publish_button(
     frontmatter: &Rc<RefCell<Frontmatter>>,
     body: &str,
     doc_dir: &Option<PathBuf>,
-    status_label: &gtk4::Label,
+    status: &StatusWidgets,
 ) {
     let other_buttons: Vec<gtk4::Button> = other_buttons.iter().map(|b| (*b).clone()).collect();
     let frontmatter = frontmatter.clone();
     let body = body.to_string();
     let doc_dir = doc_dir.clone();
-    let status_label = status_label.clone();
+    let status_label = status.label.clone();
+    let link_button = status.link.clone();
 
     let button_for_click = button.clone();
     button.connect_clicked(move |_| {
@@ -272,6 +297,7 @@ fn wire_publish_button(
             b.set_sensitive(false);
         }
         status_label.set_label(&tr("Wird gesendet …"));
+        link_button.set_visible(false);
 
         let site = wpsite::load();
         let mut current_fm = frontmatter.borrow().clone();
@@ -293,6 +319,7 @@ fn wire_publish_button(
 
         let frontmatter = frontmatter.clone();
         let status_label = status_label.clone();
+        let link_button = link_button.clone();
         let button = button_for_click.clone();
         let other_buttons = other_buttons.clone();
         glib::timeout_add_local(Duration::from_millis(150), move || match rx.try_recv() {
@@ -304,7 +331,10 @@ fn wire_publish_button(
                     fm.status = target_status;
                     fm.title.clone()
                 };
-                status_label.set_label(&tr("Erfolgreich gesendet: {link}").replace("{link}", &post.link));
+                status_label.set_label(&tr("Erfolgreich gesendet:"));
+                link_button.set_uri(&post.link);
+                link_button.set_label(&post.link);
+                link_button.set_visible(true);
                 notify::send("export", &tr("Veröffentlicht"), &tr("„{title}“ wurde erfolgreich gesendet.").replace("{title}", &title));
                 button.set_sensitive(true);
                 for b in &other_buttons {
@@ -356,6 +386,7 @@ fn run_export(
     let uploaded_urls = media::sync_uploads(&client, &mut frontmatter.media, doc_dir)?;
 
     let mut blocks = gutenberg::parse_markdown(body);
+    apply_media_metadata(&mut blocks, &frontmatter.media);
     rewrite_image_urls(&mut blocks, &uploaded_urls);
     let content = gutenberg::render_blocks(&blocks);
 
@@ -406,16 +437,16 @@ fn run_export(
         }
     }
     if let Some(path) = &frontmatter.featured_image {
-        // A newly set local image always takes priority: upload it and use
-        // the resulting media id. Unlike body images, this always re-
-        // uploads on every export rather than going through
-        // `media::sync_uploads`'s hash check - the featured image isn't a
-        // `MediaItem` at all (it's a single Frontmatter field, never
-        // scanned from the Markdown body), so it has no tracked content
-        // hash to compare against. Out of scope for now since the request
-        // this was built for was specifically about body images with
-        // alt-text/caption; worth unifying later if duplicate featured-
-        // image uploads become a real nuisance.
+        // Normally already uploaded via Medienverwaltung's own "Aufmacherbild"
+        // row (`mediapanel::build_featured_image_row`) before publishing gets
+        // this far, which clears `featured_image` in favor of
+        // `featured_media_id` below. This is the fallback for a
+        // `featured_image` set but never manually uploaded: upload it now and
+        // use the resulting media id. Unlike body images, this always
+        // re-uploads rather than going through `media::sync_uploads`'s hash
+        // check - the featured image isn't a `MediaItem` at all (it's a
+        // single Frontmatter field, never scanned from the Markdown body),
+        // so it has no tracked content hash to compare against.
         let media = upload_image_file(&client, path, doc_dir).map_err(|err| err.to_string())?;
         payload["featured_media"] = serde_json::json!(media.id);
     } else if let Some(id) = frontmatter.featured_media_id {
@@ -430,6 +461,48 @@ fn run_export(
         None => client.create_post(&payload),
     };
     result.map_err(|err| err.to_string())
+}
+
+/// Overlays each image block's alt text/caption with the corresponding
+/// `MediaItem`'s (matched by `source`, i.e. the block's still-original,
+/// pre-`rewrite_image_urls` url - so this must run before that) - so an
+/// edit made in Medienverwaltung actually reaches the published post's
+/// HTML. Without this, `blocks` only ever carries whatever alt/title text
+/// happens to be written literally in the Markdown source, since
+/// Medienverwaltung's alt-text/caption editors (`mediapanel.rs`) only ever
+/// update `Frontmatter.media`, never the body itself; the only place that
+/// data otherwise reaches WordPress is `media::sync_uploads`'s
+/// `update_media_metadata` call, which sets the *attachment's* alt
+/// text/caption in the media library, not the `<img>`/`<figcaption>` baked
+/// into this post's own content - and WordPress never re-reads an
+/// attachment's current metadata into an already-published block.
+/// `AltText::Undefined` (nothing decided yet) deliberately leaves the
+/// parsed alt alone rather than blanking it.
+fn apply_media_metadata(blocks: &mut [gutenberg::Block], media: &[media::MediaItem]) {
+    for block in blocks.iter_mut() {
+        match block {
+            gutenberg::Block::Image { url, alt, title } => {
+                if let Some(item) = media.iter().find(|item| &item.source == url) {
+                    if let Some(text) = item.alt.as_wordpress_value() {
+                        *alt = text.to_string();
+                    }
+                    *title = item.caption.clone();
+                }
+            }
+            gutenberg::Block::BlockQuote { blocks } => apply_media_metadata(blocks, media),
+            gutenberg::Block::List { items, .. } => {
+                for item in items.iter_mut() {
+                    apply_media_metadata(item, media);
+                }
+            }
+            gutenberg::Block::Columns { columns } => {
+                for column in columns.iter_mut() {
+                    apply_media_metadata(column, media);
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 /// Recursively substitutes `wp:image`/`wp:video`/`wp:audio` blocks' source
@@ -562,6 +635,47 @@ mod tests {
         assert_eq!(url, "https://example.com/a.png");
         let gutenberg::Block::Gallery { images } = &blocks[1] else { panic!("expected Gallery") };
         assert_eq!(images[0].url, "https://example.com/b.png");
+    }
+
+    #[test]
+    fn apply_media_metadata_overlays_alt_text_and_caption_from_the_matching_media_item() {
+        let media = vec![media::MediaItem {
+            id: "media-001".to_string(),
+            filename: "cat.png".to_string(),
+            source: "cat.png".to_string(),
+            alt: media::AltText::Text("a red cat".to_string()),
+            caption: Some("Our cat, sleeping".to_string()),
+            wordpress: None,
+        }];
+        let mut blocks = vec![gutenberg::Block::Image {
+            url: "cat.png".to_string(),
+            alt: String::new(),
+            title: None,
+        }];
+        apply_media_metadata(&mut blocks, &media);
+        let gutenberg::Block::Image { alt, title, .. } = &blocks[0] else { panic!("expected Image") };
+        assert_eq!(alt, "a red cat");
+        assert_eq!(title.as_deref(), Some("Our cat, sleeping"));
+    }
+
+    #[test]
+    fn apply_media_metadata_leaves_alt_untouched_while_undefined() {
+        let media = vec![media::MediaItem {
+            id: "media-001".to_string(),
+            filename: "cat.png".to_string(),
+            source: "cat.png".to_string(),
+            alt: media::AltText::Undefined,
+            caption: None,
+            wordpress: None,
+        }];
+        let mut blocks = vec![gutenberg::Block::Image {
+            url: "cat.png".to_string(),
+            alt: "from the markdown source".to_string(),
+            title: None,
+        }];
+        apply_media_metadata(&mut blocks, &media);
+        let gutenberg::Block::Image { alt, .. } = &blocks[0] else { panic!("expected Image") };
+        assert_eq!(alt, "from the markdown source");
     }
 
     /// Exercises the "Als Entwurf hochladen" vs "Veröffentlichen" choice

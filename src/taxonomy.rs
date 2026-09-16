@@ -16,7 +16,7 @@ use gtk4::glib;
 use crate::i18n::tr;
 use crate::{secrets, termcache, wpclient, wpsite};
 
-pub fn open(parent: &adw::ApplicationWindow, category_terms: Rc<RefCell<Vec<String>>>, tag_terms: Rc<RefCell<Vec<String>>>) {
+pub fn open(parent: &adw::ApplicationWindow, term_caches: termcache::TermCacheHandles) {
     let status_label = gtk4::Label::new(Some(&tr("Lade Kategorien & Tags …")));
     status_label.set_wrap(true);
     status_label.set_xalign(0.0);
@@ -82,11 +82,11 @@ pub fn open(parent: &adw::ApplicationWindow, category_terms: Rc<RefCell<Vec<Stri
             }
             categories_group.set_visible(!categories.is_empty());
             for term in categories {
-                categories_group.add(&build_row(term, "categories", &category_terms, &tag_terms, &dialog, &status_label, &categories_group));
+                categories_group.add(&build_row(term, "categories", &term_caches, &dialog, &status_label, &categories_group));
             }
             tags_group.set_visible(!tags.is_empty());
             for term in tags {
-                tags_group.add(&build_row(term, "tags", &category_terms, &tag_terms, &dialog, &status_label, &tags_group));
+                tags_group.add(&build_row(term, "tags", &term_caches, &dialog, &status_label, &tags_group));
             }
             glib::ControlFlow::Break
         }
@@ -111,8 +111,7 @@ pub fn open(parent: &adw::ApplicationWindow, category_terms: Rc<RefCell<Vec<Stri
 fn build_row(
     term: wpclient::Term,
     taxonomy: &'static str,
-    category_terms: &Rc<RefCell<Vec<String>>>,
-    tag_terms: &Rc<RefCell<Vec<String>>>,
+    term_caches: &termcache::TermCacheHandles,
     dialog: &adw::Dialog,
     status_label: &gtk4::Label,
     group: &adw::PreferencesGroup,
@@ -146,8 +145,7 @@ fn build_row(
     {
         let row = row.clone();
         let original_name = original_name.clone();
-        let category_terms = category_terms.clone();
-        let tag_terms = tag_terms.clone();
+        let term_caches = term_caches.clone();
         let status_label = status_label.clone();
         let save_button_for_click = save_button.clone();
         let delete_button_for_click = delete_button.clone();
@@ -175,8 +173,7 @@ fn build_row(
 
             let row = row.clone();
             let original_name = original_name.clone();
-            let category_terms = category_terms.clone();
-            let tag_terms = tag_terms.clone();
+            let term_caches = term_caches.clone();
             let status_label = status_label.clone();
             let save_button = save_button_for_click.clone();
             let delete_button = delete_button_for_click.clone();
@@ -186,7 +183,7 @@ fn build_row(
                     row.set_sensitive(true);
                     delete_button.set_sensitive(true);
                     save_button.set_sensitive(false);
-                    termcache::spawn_refresh(category_terms.clone(), tag_terms.clone());
+                    termcache::spawn_refresh(&term_caches);
                     glib::ControlFlow::Break
                 }
                 Ok(Err(err)) => {
@@ -213,8 +210,7 @@ fn build_row(
     {
         let dialog = dialog.clone();
         let row = row.clone();
-        let category_terms = category_terms.clone();
-        let tag_terms = tag_terms.clone();
+        let term_caches = term_caches.clone();
         let status_label = status_label.clone();
         let group = group.clone();
         delete_button.connect_clicked(move |delete_button| {
@@ -229,8 +225,7 @@ fn build_row(
             confirm.set_close_response("cancel");
 
             let row = row.clone();
-            let category_terms = category_terms.clone();
-            let tag_terms = tag_terms.clone();
+            let term_caches = term_caches.clone();
             let status_label = status_label.clone();
             let delete_button = delete_button.clone();
             let group = group.clone();
@@ -257,15 +252,14 @@ fn build_row(
                 });
 
                 let row = row.clone();
-                let category_terms = category_terms.clone();
-                let tag_terms = tag_terms.clone();
+                let term_caches = term_caches.clone();
                 let status_label = status_label.clone();
                 let delete_button = delete_button.clone();
                 let group = group.clone();
                 glib::timeout_add_local(Duration::from_millis(150), move || match rx.try_recv() {
                     Ok(Ok(())) => {
                         group.remove(&row);
-                        termcache::spawn_refresh(category_terms.clone(), tag_terms.clone());
+                        termcache::spawn_refresh(&term_caches);
                         glib::ControlFlow::Break
                     }
                     Ok(Err(err)) => {

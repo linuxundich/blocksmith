@@ -7,6 +7,74 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.45.0] - 2026-09-16
+
+### Added
+
+- "Slug aus Titel generieren" button next to the Slug field in Artikel-
+  Eigenschaften - a new `document::slugify()` mirrors WordPress's own
+  `sanitize_title()`/`remove_accents()` closely enough that the result
+  matches what WordPress itself would produce from the same title (ä/ö/ü
+  flattened to a/o/u and ß to ss, not the ae/oe/ue spelling some other
+  tools use), so publishing never ends up with a different slug than the
+  one shown here.
+- "URL-Länge (SEO)" row in Artikel-Eigenschaften, right below the Slug
+  field: shows the full URL the post would actually publish at (domain +
+  category + slug, not just the slug in isolation) with its character
+  count, and a green checkmark once it's within Google's ~73-character
+  search-result truncation, or a warning past it. Needs the category's
+  real WordPress slug, not a guess from its name - the two can diverge
+  (e.g. a category renamed without updating its slug) - so `termcache.rs`
+  now also caches each category's real slug alongside its name, and
+  `wpclient::Term` gained a `slug` field to carry it.
+- The featured image can now be uploaded from Medienverwaltung itself: a
+  new "Aufmacherbild" row at the top of the list, with its own "Zu
+  WordPress hochladen" button, shows whether one is set, pending upload,
+  or already on WordPress. Previously the only way to get a featured
+  image onto WordPress at all was the implicit, always-re-uploading step
+  buried inside every single publish.
+- The export dialog's status line now shows the published post's real
+  permalink as a clickable `Gtk.LinkButton` once a publish/draft/schedule
+  succeeds, instead of a plain, unclickable line of text.
+
+### Fixed
+
+- Only the first 100 categories/tags on the WordPress site ever reached
+  the properties dialog's autocomplete - `wpclient::Client::list_term_names`/
+  `list_terms` fetched a single `per_page=100` page and never paginated
+  further, so any tag sorting alphabetically past roughly the hundredth
+  (a real problem on a blog with 1600+ tags) could never be found or
+  suggested. Both now page through `X-WP-TotalPages` until exhausted.
+- A caption set on an image (via Markdown's `![alt](src "title")` syntax,
+  or Medienverwaltung's "Bildunterschrift" field) never actually showed up
+  on the published post - two separate bugs. First, the Gutenberg renderer
+  wrote a caption as an invisible `<img title="">` hover tooltip instead
+  of a real `<figcaption>`; fixed to match WordPress's own image-block
+  markup. Second, and more seriously, an alt-text/caption edit made in
+  Medienverwaltung was never written back into the article's Markdown
+  body at all, so export re-parsed the same old (or absent) text every
+  time - the edit only ever reached the WordPress *media library's*
+  attachment metadata (via `sync_uploads`'s `update_media_metadata`),
+  which the already-published post's baked-in HTML never re-reads. Export
+  now overlays `Frontmatter.media`'s alt text/caption onto the freshly
+  parsed image blocks before rendering, so a Medienverwaltung edit reaches
+  the actual published `<img>`/`<figcaption>`, not just the invisible
+  attachment record.
+
+## [0.44.1] - 2026-09-06
+
+### Fixed
+
+- At real narrow widths (tiling WMs squeezing the window down around
+  ~360-400px), the Ctrl+F search-and-replace bar was still logging
+  `AdwToastOverlay ... exceeds AdwApplicationWindow width` and preventing
+  the window from being resized that small in the first place. Its
+  `Gtk.Revealer` only collapses *height* while hidden, not width, so its
+  full row (two entries, "Alle ersetzen", etc.) was silently setting the
+  editor pane's minimum width regardless of whether the bar was visible.
+  Wrapped in the same horizontal-only `Gtk.ScrolledWindow` treatment the
+  formatting toolbar already got in 0.44.0.
+
 ## [0.44.0] - 2026-09-06
 
 ### Added

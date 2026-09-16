@@ -280,6 +280,34 @@ pub fn parse_list(s: &str) -> Vec<String> {
         .collect()
 }
 
+/// Turns a title into a URL slug for the properties dialog's "Slug aus
+/// Titel generieren" button - mirrors WordPress's own
+/// `sanitize_title()`/`remove_accents()` closely enough that a slug
+/// generated here matches what WordPress would produce from the same
+/// title (ä/ö/ü flattened to a/o/u and ß to ss, not the ae/oe/ue spelling
+/// some other tools use), so publishing never silently ends up with a
+/// different slug than the one shown here. Everything else that isn't
+/// ASCII alphanumeric collapses to a single hyphen; only German special
+/// characters are special-cased since the app's UI is German-only.
+pub fn slugify(title: &str) -> String {
+    let mut slug = String::with_capacity(title.len());
+    for ch in title.chars() {
+        match ch {
+            'ä' | 'Ä' => slug.push('a'),
+            'ö' | 'Ö' => slug.push('o'),
+            'ü' | 'Ü' => slug.push('u'),
+            'ß' => slug.push_str("ss"),
+            c if c.is_ascii_alphanumeric() => slug.push(c.to_ascii_lowercase()),
+            _ => {
+                if !slug.ends_with('-') {
+                    slug.push('-');
+                }
+            }
+        }
+    }
+    slug.trim_matches('-').to_string()
+}
+
 fn render_list(items: &[String]) -> String {
     let rendered: Vec<String> = items.iter().map(|i| format!("\"{}\"", escape(i))).collect();
     format!("[{}]", rendered.join(", "))
@@ -431,6 +459,21 @@ mod tests {
     #[test]
     fn format_scheduled_at_for_display_strips_seconds_and_the_t_separator() {
         assert_eq!(format_scheduled_at_for_display("2026-12-24T18:30:00"), "2026-12-24 18:30");
+    }
+
+    #[test]
+    fn slugify_lowercases_and_hyphenates() {
+        assert_eq!(slugify("Hallo Welt"), "hallo-welt");
+    }
+
+    #[test]
+    fn slugify_flattens_german_umlauts_and_eszett_like_wordpress() {
+        assert_eq!(slugify("Über Größe und Maß"), "uber-grosse-und-mass");
+    }
+
+    #[test]
+    fn slugify_collapses_runs_of_punctuation_and_trims_the_ends() {
+        assert_eq!(slugify("  Was?! Wirklich -- ja!  "), "was-wirklich-ja");
     }
 
     #[test]

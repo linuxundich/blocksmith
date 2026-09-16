@@ -41,7 +41,18 @@ pub fn build(app: &adw::Application, initial_path: Option<PathBuf>) -> adw::Appl
     editor_pane.append(&toolbar_separator);
     editor_pane.append(&editor_scroller);
     editor_scroller.set_vexpand(true);
-    editor_pane.append(&search_bar.widget);
+    // `search_bar.widget` is a `Gtk.Revealer` sliding up from the bottom -
+    // its `SlideUp` transition only collapses *height* while hidden, so its
+    // full natural *width* (two entries plus "Alle ersetzen" etc.) was
+    // still setting editor_pane's minimum width even with the bar
+    // invisible. Same fix as the toolbar above: a horizontal-only
+    // `Gtk.ScrolledWindow` lets it scroll instead of enforcing that width.
+    let search_bar_scroller = gtk4::ScrolledWindow::builder()
+        .hscrollbar_policy(gtk4::PolicyType::Automatic)
+        .vscrollbar_policy(gtk4::PolicyType::Never)
+        .child(&search_bar.widget)
+        .build();
+    editor_pane.append(&search_bar_scroller);
 
     let chat_view = Rc::new(chat::ChatView::new(&buffer));
     let code_view = Rc::new(codeview::CodeView::new());
@@ -348,9 +359,12 @@ pub fn build(app: &adw::Application, initial_path: Option<PathBuf>) -> adw::Appl
     let saved_text: Rc<RefCell<String>> = Rc::new(RefCell::new(String::new()));
 
     let cached_terms = termcache::load();
-    let category_terms: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(cached_terms.categories));
-    let tag_terms: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(cached_terms.tags));
-    termcache::spawn_refresh(category_terms.clone(), tag_terms.clone());
+    let term_caches = termcache::TermCacheHandles {
+        categories: Rc::new(RefCell::new(cached_terms.categories)),
+        tags: Rc::new(RefCell::new(cached_terms.tags)),
+        category_slugs: Rc::new(RefCell::new(cached_terms.category_slugs)),
+    };
+    termcache::spawn_refresh(&term_caches);
 
     let image_alt_menu = imagealt::menu_section();
     imagealt::install(&view, &buffer, frontmatter.clone(), current_path.clone(), preview_pane.clone());
@@ -382,7 +396,7 @@ pub fn build(app: &adw::Application, initial_path: Option<PathBuf>) -> adw::Appl
         list: recent_list,
     };
     wire_recent_files_button(&recent_files_widgets, &doc_ctx);
-    wire_properties_action(&window, &frontmatter, &category_terms, &tag_terms, &current_path);
+    wire_properties_action(&window, &frontmatter, &term_caches, &current_path);
     wire_settings_action(&window, &buffer, ai_menu_handles, &preview_pane, &browser_view);
     wire_about_action(&window);
     wire_publish_action(&window, &buffer, &current_path, &frontmatter, &preview_pane);
@@ -879,20 +893,18 @@ fn wire_save_action(window: &adw::ApplicationWindow, ctx: &DocContext) {
 fn wire_properties_action(
     window: &adw::ApplicationWindow,
     frontmatter: &Rc<RefCell<Frontmatter>>,
-    category_terms: &Rc<RefCell<Vec<String>>>,
-    tag_terms: &Rc<RefCell<Vec<String>>>,
+    term_caches: &termcache::TermCacheHandles,
     current_path: &Rc<RefCell<Option<PathBuf>>>,
 ) {
     let action = gio::SimpleAction::new("properties", None);
     let frontmatter = frontmatter.clone();
-    let category_terms = category_terms.clone();
-    let tag_terms = tag_terms.clone();
+    let term_caches = term_caches.clone();
     let current_path = current_path.clone();
     let window_weak = window.downgrade();
     action.connect_activate(move |_, _| {
         if let Some(window) = window_weak.upgrade() {
             let doc_dir = current_path.borrow().as_ref().and_then(|p| p.parent().map(Path::to_path_buf));
-            properties::open(&window, frontmatter.clone(), category_terms.clone(), tag_terms.clone(), doc_dir);
+            properties::open(&window, frontmatter.clone(), term_caches.clone(), doc_dir);
         }
     });
     window.add_action(&action);

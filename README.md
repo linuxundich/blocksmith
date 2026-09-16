@@ -115,14 +115,21 @@ blocks. Implemented so far:
   RankMath SEO title/description/focus keyword, featured image, WordPress
   post id) stored in the `.md` file itself,
   editable via an "Artikel-Eigenschaften" dialog with autocomplete for
-  existing WordPress
-  categories/tags (backed by an on-disk cache, `src/termcache.rs`,
-  refreshed at startup and on demand) and a native file picker for the
-  featured image, not just a path field. A "Kategorien & Tags verwalten"
-  dialog next to that autocomplete's refresh button lists every existing
-  category/tag and lets you rename or permanently delete one straight
-  from the app, instead of only ever being able to read or auto-create a
-  term.
+  every existing WordPress
+  category/tag (backed by an on-disk cache, `src/termcache.rs`, fully
+  paginated so it never silently caps out on a site with hundreds of
+  tags, refreshed at startup and on demand) and a native file picker for
+  the featured image, not just a path field. A "Slug aus Titel
+  generieren" button fills the slug from the title using the same
+  transliteration WordPress's own `sanitize_title()` uses, and a
+  "URL-Länge (SEO)" row shows the full URL the post would actually
+  publish at - domain, real category slug, and post slug together, not
+  just the slug in isolation - with a green checkmark once it's within
+  Google's search-result truncation length, or a warning past it. A
+  "Kategorien & Tags verwalten" dialog next to the autocomplete's refresh
+  button lists every existing category/tag and lets you rename or
+  permanently delete one straight from the app, instead of only ever
+  being able to read or auto-create a term.
 - **Local autosave / crash-recovery** — while the article has unsaved
   changes, a debounced background snapshot is kept in a local recovery
   slot; if Blocksmith is closed without saving (or crashes), the next
@@ -149,10 +156,15 @@ blocks. Implemented so far:
   optional `"title"` (`![alt](src "title")`) if present, else from its
   bracket text (`![Bildunterschrift](src)`) - most images never get the
   quoted-title form, so the bracket text is usually the only description
-  there is. A "Zu WordPress hochladen" button
+  there is - and both alt text and caption actually reach the published
+  post's HTML on export (a real `<figcaption>`, not just an invisible
+  `<img title="">`), not only the WordPress media library's own
+  attachment metadata. A "Zu WordPress hochladen" button
   per image uploads it via the real REST API and stores the resulting
   media id/URL so re-opening the article recognizes it as already
-  uploaded rather than re-uploading it. A "Bild einfügen…" button in the
+  uploaded rather than re-uploading it; the list's own "Aufmacherbild" row
+  does the same for the featured image, showing whether one is set,
+  pending upload, or already live. A "Bild einfügen…" button in the
   editor toolbar opens a native image file picker and inserts a real
   Markdown image reference at the cursor (relative to the document's own
   folder when possible) - previously the only way to add an image
@@ -204,6 +216,8 @@ blocks. Implemented so far:
   date/time set there - exporting without one is refused with a clear
   error rather than silently publishing immediately, which is what
   WordPress itself does with a scheduled status and no real future date.
+  On success, the post's real permalink appears as a clickable link
+  right in the dialog.
 - **Broken-link checker** — a "Links" tab in the same "Artikel
   exportieren" dialog, next to "Vorschau" and "Medien". It scans the
   article for every unique `http(s)://` URL (Markdown link/image

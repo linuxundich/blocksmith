@@ -70,6 +70,7 @@ pub struct MediaDetail {
 pub struct Term {
     pub id: u64,
     pub name: String,
+    pub slug: String,
 }
 
 #[derive(Debug, Clone)]
@@ -159,6 +160,15 @@ impl Client {
     }
 
     fn get_json(&self, url: &str) -> Result<Value> {
+        self.get_json_with_total_pages(url).map(|(value, _)| value)
+    }
+
+    /// Like `get_json`, but also returns the `X-WP-TotalPages` header a
+    /// collection endpoint sends alongside a paginated response - `1` if
+    /// the header is missing or unparseable (a single-item endpoint, or a
+    /// site that doesn't send it), which is also the right answer for "how
+    /// many pages" when there's only one.
+    fn get_json_with_total_pages(&self, url: &str) -> Result<(Value, u32)> {
         let mut response = self
             .agent
             .get(url)
@@ -166,11 +176,42 @@ impl Client {
             .call()
             .map_err(network_error)?;
         let status = response.status().as_u16();
+        let total_pages = response
+            .headers()
+            .get("x-wp-totalpages")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| s.parse::<u32>().ok())
+            .unwrap_or(1);
         let body_text = response.body_mut().read_to_string().unwrap_or_default();
         if !(200..300).contains(&status) {
             return Err(error_from_body(status, &body_text));
         }
-        serde_json::from_str(&body_text).map_err(|err| unreadable_response(status, err))
+        let value = serde_json::from_str(&body_text).map_err(|err| unreadable_response(status, err))?;
+        Ok((value, total_pages))
+    }
+
+    /// Fetches every page of a `per_page=100` collection endpoint (a
+    /// taxonomy's terms here), stopping once `X-WP-TotalPages` says there's
+    /// nothing left instead of silently truncating at the first 100 -
+    /// without this, a blog with more than 100 tags could never surface a
+    /// tag sorting past that cutoff (WordPress's default term order is
+    /// alphabetical, so this bites any tag alphabetically after roughly the
+    /// hundredth).
+    fn get_all_pages(&self, path: &str, query: &str) -> Result<Vec<Value>> {
+        let mut all = Vec::new();
+        let mut page = 1u32;
+        loop {
+            let url = format!("{}?per_page=100&page={page}&{query}", self.endpoint(path));
+            let (value, total_pages) = self.get_json_with_total_pages(&url)?;
+            if let Some(items) = value.as_array() {
+                all.extend(items.iter().cloned());
+            }
+            if page >= total_pages.max(1) {
+                break;
+            }
+            page += 1;
+        }
+        Ok(all)
     }
 
     /// Uploads a local file to the media library, returning its id and the
@@ -294,21 +335,11 @@ impl Client {
         Ok(())
     }
 
-    /// Lists up to 100 existing term names for a taxonomy (`"categories"` or
-    /// `"tags"`), for autocomplete suggestions. Doesn't paginate beyond that
-    /// - fine for a personal blog's category/tag list.
+    /// Lists every existing term name for a taxonomy (`"categories"` or
+    /// `"tags"`), for autocomplete suggestions.
     pub fn list_term_names(&self, taxonomy: &str) -> Result<Vec<String>> {
-        let url = format!("{}?per_page=100&_fields=name", self.endpoint(taxonomy));
-        let value = self.get_json(&url)?;
-        Ok(value
-            .as_array()
-            .map(|items| {
-                items
-                    .iter()
-                    .filter_map(|item| item.get("name").and_then(Value::as_str).map(str::to_string))
-                    .collect()
-            })
-            .unwrap_or_default())
+        let items = self.get_all_pages(taxonomy, "_fields=name")?;
+        Ok(items.iter().filter_map(|item| item.get("name").and_then(Value::as_str).map(str::to_string)).collect())
     }
 
     /// Resolves a taxonomy term id back to its name (the REST API gives
@@ -320,26 +351,23 @@ impl Client {
         Ok(value.get("name").and_then(Value::as_str).unwrap_or_default().to_string())
     }
 
-    /// Lists up to 100 existing terms - id and name both, unlike
-    /// `list_term_names` - for the "Kategorien & Tags verwalten" dialog,
-    /// which needs real ids to rename or delete a term.
+    /// Lists every existing term - id, name and slug, unlike
+    /// `list_term_names` (name only) - for the "Kategorien & Tags
+    /// verwalten" dialog (needs real ids to rename or delete a term) and
+    /// for caching a category's real slug (`termcache.rs`), which can
+    /// differ from what `document::slugify` would derive from its name.
     pub fn list_terms(&self, taxonomy: &str) -> Result<Vec<Term>> {
-        let url = format!("{}?per_page=100&orderby=name&_fields=id,name", self.endpoint(taxonomy));
-        let value = self.get_json(&url)?;
-        Ok(value
-            .as_array()
-            .map(|items| {
-                items
-                    .iter()
-                    .filter_map(|item| {
-                        Some(Term {
-                            id: item.get("id")?.as_u64()?,
-                            name: item.get("name").and_then(Value::as_str)?.to_string(),
-                        })
-                    })
-                    .collect()
+        let items = self.get_all_pages(taxonomy, "orderby=name&_fields=id,name,slug")?;
+        Ok(items
+            .iter()
+            .filter_map(|item| {
+                Some(Term {
+                    id: item.get("id")?.as_u64()?,
+                    name: item.get("name").and_then(Value::as_str)?.to_string(),
+                    slug: item.get("slug").and_then(Value::as_str).unwrap_or_default().to_string(),
+                })
             })
-            .unwrap_or_default())
+            .collect())
     }
 
     /// Renames an existing taxonomy term in place.

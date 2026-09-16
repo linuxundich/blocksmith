@@ -4,6 +4,7 @@
 //! how GNOME preferences dialogs apply immediately without an OK button.
 
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::rc::Rc;
 
@@ -12,19 +13,95 @@ use gtk4::gio;
 
 use crate::document::{self, parse_list, Frontmatter, PostStatus};
 use crate::i18n::tr;
-use crate::{autocomplete, taxonomy, termcache};
+use crate::{autocomplete, taxonomy, termcache, wpsite};
 
-pub fn open(
-    parent: &adw::ApplicationWindow,
-    frontmatter: Rc<RefCell<Frontmatter>>,
-    category_terms: Rc<RefCell<Vec<String>>>,
-    tag_terms: Rc<RefCell<Vec<String>>>,
-    doc_dir: Option<PathBuf>,
+/// Google's search results truncate a URL display around this many
+/// characters - past it, the SEO recommendation is a shorter slug (or,
+/// where possible, a shorter category).
+const RECOMMENDED_MAX_URL_LENGTH: usize = 73;
+
+/// Builds the full URL a post's `slug` would actually publish at (domain,
+/// the post's assumed-primary i.e. first category slug, and the post slug
+/// itself) and its character count, for the SEO length check.
+/// `category_slug` is `None` when no category is set yet (the check still
+/// runs, just without that segment - WordPress would assign a default
+/// category, whose real slug isn't knowable without an authenticated
+/// site-settings lookup this app doesn't have).
+fn seo_url_preview(domain: &str, category_slug: Option<&str>, slug: &str) -> (String, usize) {
+    let mut url = domain.trim_end_matches('/').to_string();
+    if let Some(category_slug) = category_slug.filter(|s| !s.is_empty()) {
+        url.push('/');
+        url.push_str(category_slug);
+    }
+    url.push('/');
+    url.push_str(slug);
+    url.push('/');
+    let length = url.chars().count();
+    (url, length)
+}
+
+/// Updates the "URL-Länge (SEO)" row from the current title/category/slug
+/// state - called once at dialog build time and again on every slug/
+/// category edit (`seo_url_preview` needs both).
+fn refresh_url_length_row(
+    row: &adw::ActionRow,
+    icon: &gtk4::Image,
+    domain: &str,
+    frontmatter: &Rc<RefCell<Frontmatter>>,
+    category_slugs: &Rc<RefCell<HashMap<String, String>>>,
 ) {
+    let fm = frontmatter.borrow();
+    if domain.is_empty() || fm.slug.is_empty() {
+        row.set_subtitle(&tr("Wird berechnet, sobald WordPress-Seite und Slug gesetzt sind."));
+        icon.set_visible(false);
+        return;
+    }
+    let category_slug = fm.categories.first().map(|name| category_slugs.borrow().get(name).cloned().unwrap_or_else(|| document::slugify(name)));
+    let (url, length) = seo_url_preview(domain, category_slug.as_deref(), &fm.slug);
+
+    icon.set_visible(true);
+    if length <= RECOMMENDED_MAX_URL_LENGTH {
+        row.set_subtitle(&tr("{url} ({length} Zeichen)").replace("{url}", &url).replace("{length}", &length.to_string()));
+        icon.set_icon_name(Some("object-select-symbolic"));
+        icon.remove_css_class("error");
+        icon.add_css_class("success");
+    } else {
+        row.set_subtitle(
+            &tr("{url} ({length} Zeichen, empfohlen: max. {max})")
+                .replace("{url}", &url)
+                .replace("{length}", &length.to_string())
+                .replace("{max}", &RECOMMENDED_MAX_URL_LENGTH.to_string()),
+        );
+        icon.set_icon_name(Some("dialog-warning-symbolic"));
+        icon.remove_css_class("success");
+        icon.add_css_class("error");
+    }
+}
+
+pub fn open(parent: &adw::ApplicationWindow, frontmatter: Rc<RefCell<Frontmatter>>, term_caches: termcache::TermCacheHandles, doc_dir: Option<PathBuf>) {
+    let termcache::TermCacheHandles { categories: category_terms, tags: tag_terms, category_slugs } = term_caches;
+    let site = wpsite::load();
     let current = frontmatter.borrow().clone();
 
     let title_row = adw::EntryRow::builder().title(tr("Titel")).text(current.title.as_str()).build();
     let slug_row = adw::EntryRow::builder().title(tr("Slug")).text(current.slug.as_str()).build();
+    let slug_generate_button = gtk4::Button::from_icon_name("update-symbolic");
+    slug_generate_button.set_tooltip_text(Some(&tr("Slug aus Titel generieren")));
+    slug_generate_button.set_valign(gtk4::Align::Center);
+    slug_generate_button.add_css_class("flat");
+    slug_row.add_suffix(&slug_generate_button);
+
+    // SEO recommendation (see `RECOMMENDED_MAX_URL_LENGTH`): the *whole*
+    // published URL, not just the slug - domain + category + slug, since
+    // that's what actually shows up truncated in search results. Needs the
+    // category's real WordPress slug (not a guess from its name - the two
+    // can differ, e.g. a category renamed without updating its slug), so
+    // this reads `category_slugs` rather than deriving it locally.
+    let url_length_row = adw::ActionRow::builder().title(tr("URL-Länge (SEO)")).build();
+    let url_length_icon = gtk4::Image::new();
+    url_length_icon.set_valign(gtk4::Align::Center);
+    url_length_row.add_suffix(&url_length_icon);
+
     let excerpt_row = adw::EntryRow::builder()
         .title(tr("Auszug / Meta-Beschreibung"))
         .text(current.excerpt.clone().unwrap_or_default().as_str())
@@ -78,11 +155,15 @@ pub fn open(
     let refresh_button = gtk4::Button::from_icon_name("view-refresh-symbolic");
     refresh_button.set_tooltip_text(Some(&tr("Kategorien & Tags von WordPress aktualisieren")));
     refresh_button.add_css_class("flat");
+    let term_caches = termcache::TermCacheHandles {
+        categories: category_terms.clone(),
+        tags: tag_terms.clone(),
+        category_slugs: category_slugs.clone(),
+    };
     {
-        let category_terms = category_terms.clone();
-        let tag_terms = tag_terms.clone();
+        let term_caches = term_caches.clone();
         refresh_button.connect_clicked(move |_| {
-            termcache::spawn_refresh(category_terms.clone(), tag_terms.clone());
+            termcache::spawn_refresh(&term_caches);
         });
     }
 
@@ -91,10 +172,9 @@ pub fn open(
     manage_terms_button.add_css_class("flat");
     {
         let parent = parent.clone();
-        let category_terms = category_terms.clone();
-        let tag_terms = tag_terms.clone();
+        let term_caches = term_caches.clone();
         manage_terms_button.connect_clicked(move |_| {
-            taxonomy::open(&parent, category_terms.clone(), tag_terms.clone());
+            taxonomy::open(&parent, term_caches.clone());
         });
     }
 
@@ -106,6 +186,7 @@ pub fn open(
     group.set_header_suffix(Some(&header_suffix_box));
     group.add(&title_row);
     group.add(&slug_row);
+    group.add(&url_length_row);
     group.add(&excerpt_row);
     group.add(&status_row);
     group.add(&scheduled_row);
@@ -153,8 +234,21 @@ pub fn open(
     }
     {
         let frontmatter = frontmatter.clone();
+        let url_length_row = url_length_row.clone();
+        let url_length_icon = url_length_icon.clone();
+        let domain = site.url.clone();
+        let category_slugs = category_slugs.clone();
         slug_row.connect_changed(move |row| {
             frontmatter.borrow_mut().slug = row.text().to_string();
+            refresh_url_length_row(&url_length_row, &url_length_icon, &domain, &frontmatter, &category_slugs);
+        });
+    }
+    {
+        let title_row = title_row.clone();
+        let slug_row = slug_row.clone();
+        slug_generate_button.connect_clicked(move |_| {
+            // Triggers the `connect_changed` handler above, which persists it.
+            slug_row.set_text(&document::slugify(&title_row.text()));
         });
     }
     {
@@ -187,8 +281,13 @@ pub fn open(
     }
     {
         let frontmatter = frontmatter.clone();
+        let url_length_row = url_length_row.clone();
+        let url_length_icon = url_length_icon.clone();
+        let domain = site.url.clone();
+        let category_slugs = category_slugs.clone();
         categories_row.connect_changed(move |row| {
             frontmatter.borrow_mut().categories = parse_list(&row.text());
+            refresh_url_length_row(&url_length_row, &url_length_icon, &domain, &frontmatter, &category_slugs);
         });
     }
     {
@@ -250,5 +349,31 @@ pub fn open(
         });
     }
 
+    refresh_url_length_row(&url_length_row, &url_length_icon, &site.url, &frontmatter, &category_slugs);
+
     dialog.present(Some(parent));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn seo_url_preview_joins_domain_category_and_slug() {
+        let (url, length) = seo_url_preview("https://linuxundich.de", Some("gnu-linux"), "mein-testartikel");
+        assert_eq!(url, "https://linuxundich.de/gnu-linux/mein-testartikel/");
+        assert_eq!(length, url.chars().count());
+    }
+
+    #[test]
+    fn seo_url_preview_omits_the_category_segment_when_none_is_set() {
+        let (url, _) = seo_url_preview("https://linuxundich.de", None, "mein-testartikel");
+        assert_eq!(url, "https://linuxundich.de/mein-testartikel/");
+    }
+
+    #[test]
+    fn seo_url_preview_strips_a_trailing_slash_from_the_domain() {
+        let (url, _) = seo_url_preview("https://linuxundich.de/", Some("news"), "post");
+        assert_eq!(url, "https://linuxundich.de/news/post/");
+    }
 }
