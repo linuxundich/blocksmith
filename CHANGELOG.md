@@ -7,6 +7,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.46.0] - 2026-09-16
+
+### Added
+
+- Medienverwaltung: an "Alle hochladen" button uploads every not-yet-
+  uploaded image in the article in one go instead of one at a time - a
+  progress bar tracks it ("N von M hochgeladen"), each row updates live as
+  its own upload finishes, and a final summary reports full success or how
+  many failed and why. A failure partway through doesn't stop the rest -
+  it's recorded and the batch continues.
+- The preview pane's right-click menu on an image now also offers
+  "Alternativtext bearbeiten…" - the same manual alt-text/caption dialog
+  the editor's own context menu already opens - alongside "KI-
+  Alternativtext generieren…" and "Bild bearbeiten…", so a plain (non-AI)
+  edit no longer requires switching to the editor or Medienverwaltung
+  first.
+- Hovering an image's "Alt" badge in the preview now shows the actual alt
+  text as its tooltip, instead of a generic "Alternativtext ist
+  definiert" sentence that looked identical for every image.
+- The AI alt-text generator's detail level (Standard/Ausführlich/Hohe
+  Genauigkeit) is now remembered across uses instead of always resetting
+  to Standard.
+
+### Fixed
+
+- The editor's context menu always showed "Alternativtext festlegen…"/
+  "KI-Alternativtext generieren…", even when right-clicking a line with no
+  image on it at all (clicking either then just popped an explanation
+  dialog). Both items now only appear when the clicked line actually
+  holds a media reference, rebuilding the menu section live from the
+  cursor position on every secondary click.
+- Image captions weren't shown in the preview at all - only in the
+  exported Gutenberg HTML (see 0.45.0). A caption now renders as a small
+  line under the image in the preview too, read from the same
+  `MediaItem.caption` Medienverwaltung and the alt-text dialogs already
+  edit, not from the Markdown source's own (rarely re-parsed) `"title"`
+  text.
+- The preview's right-click menu on an image still showed WebKit's own
+  default image actions ("Bild in neuem Fenster öffnen"/"Bild speichern
+  unter"/"Bild kopieren"/"Bildadresse kopieren") - saving/copying the
+  rendered file itself makes no sense for an embedded article image, and
+  they're now trimmed the same way the default navigation items already
+  were.
+- The AI alt-text generator started generating a Standard-detail
+  suggestion immediately when the dialog opened, before the reviewer got
+  a chance to pick a different detail level first. Generation now only
+  starts once "Text generieren" is actually clicked.
+- Clicking "Übernehmen" in the AI alt-text dialog reset the preview's
+  scroll position back to the top - jarring since the dialog is opened
+  from a specific point in the article the reviewer was actually looking
+  at. The current scroll position is now read via JavaScript before the
+  reload and restored once the refreshed page has loaded.
+
 ## [0.45.0] - 2026-09-16
 
 ### Added

@@ -37,6 +37,22 @@ enum DetailLevel {
 impl DetailLevel {
     const ALL: [DetailLevel; 3] = [DetailLevel::Standard, DetailLevel::Detailed, DetailLevel::Precise];
 
+    fn id(&self) -> &'static str {
+        match self {
+            DetailLevel::Standard => "standard",
+            DetailLevel::Detailed => "detailed",
+            DetailLevel::Precise => "precise",
+        }
+    }
+
+    fn from_id(s: &str) -> Self {
+        match s.trim() {
+            "detailed" => DetailLevel::Detailed,
+            "precise" => DetailLevel::Precise,
+            _ => DetailLevel::Standard,
+        }
+    }
+
     fn label(&self) -> String {
         match self {
             DetailLevel::Standard => tr("Standard (kurz & bündig)"),
@@ -75,6 +91,31 @@ impl DetailLevel {
     }
 }
 
+fn config_dir() -> PathBuf {
+    let mut dir = glib::user_config_dir();
+    dir.push("blocksmith");
+    dir
+}
+
+fn detail_level_path() -> PathBuf {
+    let mut path = config_dir();
+    path.push("ai_alt_text_detail_level.txt");
+    path
+}
+
+/// The detail level picked last time this dialog was used, for any image -
+/// deliberately global rather than per-image, matching how a user tends to
+/// settle on one preferred level for the whole article/site rather than
+/// re-deciding per picture.
+fn load_detail_level() -> DetailLevel {
+    std::fs::read_to_string(detail_level_path()).map(|s| DetailLevel::from_id(&s)).unwrap_or(DetailLevel::Standard)
+}
+
+fn save_detail_level(level: DetailLevel) {
+    let _ = std::fs::create_dir_all(config_dir());
+    let _ = std::fs::write(detail_level_path(), level.id());
+}
+
 /// Opens the review dialog for `frontmatter.media[index]` - the caller is
 /// responsible for having already reconciled the media list against the
 /// current document body (see `imagealt.rs`/`preview.rs`), so `index` is
@@ -84,7 +125,15 @@ pub fn open(window: &gtk4::Window, frontmatter: Rc<RefCell<Frontmatter>>, index:
 
     let level_labels: Vec<String> = DetailLevel::ALL.iter().map(DetailLevel::label).collect();
     let level_label_refs: Vec<&str> = level_labels.iter().map(String::as_str).collect();
-    let level_row = adw::ComboRow::builder().title(tr("Detailgrad")).model(&gtk4::StringList::new(&level_label_refs)).build();
+    let selected_level = DetailLevel::ALL.iter().position(|l| *l == load_detail_level()).unwrap_or(0) as u32;
+    let level_row = adw::ComboRow::builder()
+        .title(tr("Detailgrad"))
+        .model(&gtk4::StringList::new(&level_label_refs))
+        .selected(selected_level)
+        .build();
+    level_row.connect_selected_notify(|row| {
+        save_detail_level(DetailLevel::ALL[row.selected() as usize]);
+    });
 
     let generate_button = gtk4::Button::with_label(&tr("Text generieren"));
     generate_button.add_css_class("suggested-action");
@@ -167,11 +216,6 @@ pub fn open(window: &gtk4::Window, frontmatter: Rc<RefCell<Frontmatter>>, index:
     }
 
     dialog.present(Some(window));
-
-    // Generate an initial Standard-level suggestion right away, so the
-    // reviewer's first action after opening is reading/correcting, not
-    // clicking a button that just produces the obvious next step.
-    run_generation(DetailLevel::Standard, &item.source, &item.filename, doc_dir, &generate_button, &status_label, &text_buffer);
 }
 
 fn run_generation(
@@ -252,5 +296,18 @@ mod tests {
         for level in DetailLevel::ALL {
             assert!(!level.label().is_empty());
         }
+    }
+
+    #[test]
+    fn every_detail_level_round_trips_through_its_id() {
+        for level in DetailLevel::ALL {
+            assert_eq!(DetailLevel::from_id(level.id()), level);
+        }
+    }
+
+    #[test]
+    fn from_id_falls_back_to_standard_for_garbage() {
+        assert_eq!(DetailLevel::from_id("not-a-level"), DetailLevel::Standard);
+        assert_eq!(DetailLevel::from_id(""), DetailLevel::Standard);
     }
 }

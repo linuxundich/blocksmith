@@ -481,7 +481,7 @@ fn build_preview_group(preview_pane: Rc<preview::PreviewPane>) -> adw::Preferenc
         Rc::new(move || {
             let dark = adw::StyleManager::default().is_dark();
             let sample_markdown = tr("# Beispielartikel\n\nDies ist ein **Beispieltext**, der zeigt, wie der gewählte *Stil* und die Schrift wirken.\n\n> Ein Zitat zur Veranschaulichung.\n");
-            sample_view.load_html(&preview::render_html(&sample_markdown, preview_pane.style(), dark, &[]), None);
+            sample_view.load_html(&preview::render_html(&sample_markdown, preview_pane.style(), dark, &[], 0.0), None);
         })
     };
     refresh_sample();

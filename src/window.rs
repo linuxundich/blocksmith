@@ -366,9 +366,8 @@ pub fn build(app: &adw::Application, initial_path: Option<PathBuf>) -> adw::Appl
     };
     termcache::spawn_refresh(&term_caches);
 
-    let image_alt_menu = imagealt::menu_section();
-    imagealt::install(&view, &buffer, frontmatter.clone(), current_path.clone(), preview_pane.clone());
-    preview::PreviewPane::install_ai_alt_text_menu(&preview_pane, &window, frontmatter.clone());
+    let image_alt_menu = imagealt::install(&view, &buffer, frontmatter.clone(), current_path.clone(), preview_pane.clone());
+    preview::PreviewPane::install_alt_text_menu(&preview_pane, &window, frontmatter.clone());
     preview::PreviewPane::install_image_edit_menu(&preview_pane, &window, frontmatter.clone(), buffer.clone());
     let ai_menu_handles = aimenu::install(&view, &buffer, &view_stack, chat_view.clone(), &spelling_menu, image_alt_menu.upcast_ref());
 

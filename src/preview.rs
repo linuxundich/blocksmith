@@ -143,11 +143,25 @@ impl PreviewPane {
 
         // This is a rendered article preview, not a browsing session - the
         // navigation-history items WebKit puts in its default context menu
-        // (Zurück/Vor/Anhalten) never apply to anything here and would
-        // just be confusing dead controls.
+        // (Zurück/Vor/Anhalten) never apply to anything here and would just
+        // be confusing dead controls. Same for its default image actions
+        // ("Bild in neuem Fenster öffnen"/"speichern unter"/"kopieren"/
+        // "Bildadresse kopieren") - saving/copying the rendered file itself
+        // makes no sense for an embedded article image; the app's own
+        // image-specific items (alt text, "Bild bearbeiten…") are added
+        // separately by `install_alt_text_menu`/`install_image_edit_menu`.
         web_view.connect_context_menu(|_web_view, context_menu, _hit_test_result| {
             for item in context_menu.items() {
-                if matches!(item.stock_action(), webkit6::ContextMenuAction::GoBack | webkit6::ContextMenuAction::GoForward | webkit6::ContextMenuAction::Stop) {
+                if matches!(
+                    item.stock_action(),
+                    webkit6::ContextMenuAction::GoBack
+                        | webkit6::ContextMenuAction::GoForward
+                        | webkit6::ContextMenuAction::Stop
+                        | webkit6::ContextMenuAction::OpenImageInNewWindow
+                        | webkit6::ContextMenuAction::DownloadImageToDisk
+                        | webkit6::ContextMenuAction::CopyImageToClipboard
+                        | webkit6::ContextMenuAction::CopyImageUrlToClipboard
+                ) {
                     context_menu.remove(&item);
                 }
             }
@@ -166,7 +180,7 @@ impl PreviewPane {
             let last_media = last_media.clone();
             let doc_dir = doc_dir.clone();
             adw::StyleManager::default().connect_dark_notify(move |style_manager| {
-                let html = render_html(&last_markdown.borrow(), style.get(), style_manager.is_dark(), &last_media.borrow());
+                let html = render_html(&last_markdown.borrow(), style.get(), style_manager.is_dark(), &last_media.borrow(), 0.0);
                 web_view.load_html(&html, base_uri(doc_dir.borrow().as_deref()).as_deref());
             });
         }
@@ -195,10 +209,14 @@ impl PreviewPane {
     /// directly (Medienverwaltung's upload button, the manual/AI alt-text
     /// dialogs) rather than by editing the article text, so the badges
     /// this pane draws don't go stale until the next keystroke happens to
-    /// re-trigger `update`.
+    /// re-trigger `update`. Keeps the current scroll position rather than
+    /// jumping to the top - unlike a body edit, this is always triggered by
+    /// something the user did while looking at one specific spot (applying
+    /// an AI-generated alt text, editing a caption), so landing back at the
+    /// top of the article would be disorienting rather than expected.
     pub fn refresh_media(&self, media: &[MediaItem]) {
         *self.last_media.borrow_mut() = media.to_vec();
-        self.rerender();
+        self.rerender_preserving_scroll();
     }
 
     /// Called whenever the article's own file location changes (opened,
@@ -211,20 +229,22 @@ impl PreviewPane {
         self.rerender();
     }
 
-    /// Adds a "KI-Alternativtext generieren…" item to the context menu when
-    /// right-clicking directly on a rendered image - the preview-side entry
-    /// point into `aialt::open` (the editor-side one is `imagealt.rs`,
-    /// triggered from the image's `![alt](src)` line instead). A second
-    /// `context-menu` handler alongside the one `new()` already installs
-    /// (which only trims the default navigation items), since `frontmatter`
-    /// isn't available yet at construction time - both handlers run against
-    /// the same `ContextMenu` on every right-click.
+    /// Adds "Alternativtext bearbeiten…" and "KI-Alternativtext
+    /// generieren…" items to the context menu when right-clicking directly
+    /// on a rendered image - the preview-side entry points into
+    /// `imagealt::open_dialog_for_index` (the plain manual editor) and
+    /// `aialt::open` (the AI-assisted one); the editor-side equivalents are
+    /// `imagealt.rs`'s own context-menu items, triggered from the image's
+    /// `![alt](src)` line instead. A second `context-menu` handler
+    /// alongside the one `new()` already installs (which only trims the
+    /// default navigation items), since `frontmatter` isn't available yet
+    /// at construction time - both handlers run against the same
+    /// `ContextMenu` on every right-click.
     ///
-    /// Takes `&Rc<Self>` rather than `&self` - `aialt::open` needs to hold
-    /// onto this same pane (as an owned `Rc`) to refresh its badges once the
-    /// dialog applies a new alt text, and a plain `&self` has no `Rc` of
-    /// itself to hand out.
-    pub fn install_ai_alt_text_menu(preview_pane: &Rc<Self>, window: &impl IsA<gtk4::Window>, frontmatter: Rc<RefCell<Frontmatter>>) {
+    /// Takes `&Rc<Self>` rather than `&self` - both dialogs need to hold
+    /// onto this same pane (as an owned `Rc`) to refresh its badges/caption
+    /// once applied, and a plain `&self` has no `Rc` of itself to hand out.
+    pub fn install_alt_text_menu(preview_pane: &Rc<Self>, window: &impl IsA<gtk4::Window>, frontmatter: Rc<RefCell<Frontmatter>>) {
         let window: gtk4::Window = window.clone().upcast();
         let doc_dir = preview_pane.doc_dir.clone();
         let last_markdown = preview_pane.last_markdown.clone();
@@ -248,6 +268,18 @@ impl PreviewPane {
                 return false;
             };
 
+            let edit_action = gio::SimpleAction::new("edit-alt-text", None);
+            {
+                let frontmatter = frontmatter.clone();
+                let window = window.clone();
+                let preview_pane = preview_pane.clone();
+                edit_action.connect_activate(move |_, _| {
+                    crate::imagealt::open_dialog_for_index(&window, &frontmatter, index, &preview_pane);
+                });
+            }
+            let edit_item = webkit6::ContextMenuItem::from_gaction(&edit_action, &tr("Alternativtext bearbeiten…"), None);
+            context_menu.append(&edit_item);
+
             let action = gio::SimpleAction::new("generate-ai-alt-text", None);
             {
                 let frontmatter = frontmatter.clone();
@@ -270,7 +302,7 @@ impl PreviewPane {
     /// image from a WordPress-imported article) would have nothing to
     /// write back to, so it's simply not offered rather than shown and
     /// then failing. Same dual-handler structure as
-    /// `install_ai_alt_text_menu` - see that method's doc comment.
+    /// `install_alt_text_menu` - see that method's doc comment.
     pub fn install_image_edit_menu(preview_pane: &Rc<Self>, window: &impl IsA<gtk4::Window>, frontmatter: Rc<RefCell<Frontmatter>>, buffer: sourceview5::Buffer) {
         let window: gtk4::Window = window.clone().upcast();
         let doc_dir = preview_pane.doc_dir.clone();
@@ -349,8 +381,30 @@ impl PreviewPane {
 
     fn rerender(&self) {
         let dark = adw::StyleManager::default().is_dark();
-        let html = render_html(&self.last_markdown.borrow(), self.style.get(), dark, &self.last_media.borrow());
+        let html = render_html(&self.last_markdown.borrow(), self.style.get(), dark, &self.last_media.borrow(), 0.0);
         self.web_view.load_html(&html, base_uri(self.doc_dir.borrow().as_deref()).as_deref());
+    }
+
+    /// Same full-page reload as `rerender`, but reads the `WebView`'s
+    /// current scroll position first and bakes it into the freshly
+    /// rendered HTML (via `render_html`'s `scroll_y`) so the reload lands
+    /// back where it started - `load_html` always resets scroll to the top
+    /// on its own, and there's no "restore scroll after this specific load
+    /// finishes" hook to use instead, so the position is baked directly
+    /// into the page's own startup script rather than applied from the
+    /// Rust side after the fact.
+    fn rerender_preserving_scroll(&self) {
+        let style = self.style.get();
+        let last_markdown = self.last_markdown.clone();
+        let last_media = self.last_media.clone();
+        let doc_dir = self.doc_dir.borrow().clone();
+        let web_view = self.web_view.clone();
+        self.web_view.evaluate_javascript("window.scrollY", None, None, gio::Cancellable::NONE, move |result| {
+            let scroll_y = result.map(|value| value.to_double()).unwrap_or(0.0);
+            let dark = adw::StyleManager::default().is_dark();
+            let html = render_html(&last_markdown.borrow(), style, dark, &last_media.borrow(), scroll_y);
+            web_view.load_html(&html, base_uri(doc_dir.as_deref()).as_deref());
+        });
     }
 }
 
@@ -446,7 +500,7 @@ fn style_css(style: PreviewStyle, dark: bool) -> &'static str {
     }
 }
 
-pub fn render_html(markdown: &str, style: PreviewStyle, dark: bool, media: &[MediaItem]) -> String {
+pub fn render_html(markdown: &str, style: PreviewStyle, dark: bool, media: &[MediaItem], scroll_y: f64) -> String {
     let body = render_body_with_line_anchors(markdown, media);
     let css = style_css(style, dark);
     // A user-picked font (if any) overrides just the two font properties,
@@ -475,6 +529,7 @@ window.scrollToLine = function(line) {{
   }}
   if (target) {{ target.scrollIntoView({{block: 'start', behavior: 'auto'}}); }}
 }};
+if ({scroll_y} > 0) {{ window.scrollTo(0, {scroll_y}); }}
 </script></body></html>"#
     )
 }
@@ -562,14 +617,26 @@ fn media_tag_for(src: &str) -> Option<&'static str> {
 const BADGE_CSS: &str = ".img-wrap { position: relative; display: inline-block; max-width: 100%; }
 .img-wrap img { display: block; }
 .img-badges { position: absolute; right: 6px; bottom: 6px; display: flex; gap: 4px; }
-.img-badge { background: rgba(0, 0, 0, 0.65); color: #fff; font: 11px/1.4 -apple-system, Cantarell, sans-serif; font-weight: 600; letter-spacing: .02em; padding: 2px 6px; border-radius: 4px; }";
+.img-badge { background: rgba(0, 0, 0, 0.65); color: #fff; font: 11px/1.4 -apple-system, Cantarell, sans-serif; font-weight: 600; letter-spacing: .02em; padding: 2px 6px; border-radius: 4px; }
+.img-caption { display: block; text-align: center; font-size: .85em; opacity: .7; margin-top: .35em; }";
 
 /// Wraps every `<img ...>` tag in `html` with a `.img-wrap` container and,
 /// when the image matches a tracked `MediaItem`, a bottom-right badge
-/// cluster (see `badges_html`) - a lightweight string-level pass rather
-/// than a full HTML parser dependency, matching this module's existing
-/// preference for direct string manipulation over pulling in another
-/// crate for something this narrow.
+/// cluster (see `badges_html`) plus a visible caption underneath it if one
+/// is set - a lightweight string-level pass rather than a full HTML parser
+/// dependency, matching this module's existing preference for direct
+/// string manipulation over pulling in another crate for something this
+/// narrow.
+///
+/// The caption comes from the matching `MediaItem.caption`, not from the
+/// freshly-parsed HTML's own `title` attribute (pulldown-cmark's default
+/// rendering of `![alt](src "title")`) - `MediaItem` is what Medienverwaltung
+/// and the editor's "Alternativtext festlegen…" dialog actually edit, and
+/// an edit made there never touches the Markdown body itself (see
+/// `export::apply_media_metadata`'s doc comment for the same gap on the
+/// export side), so reading the raw HTML attribute here would leave a
+/// caption edited in either dialog invisible in the preview until the next
+/// direct Markdown edit re-seeds it.
 fn wrap_images_with_badges(html: &str, media: &[MediaItem]) -> String {
     let mut out = String::with_capacity(html.len());
     let mut rest = html;
@@ -582,11 +649,17 @@ fn wrap_images_with_badges(html: &str, media: &[MediaItem]) -> String {
         let tag_end = start + tag_end_rel + 1;
         let tag = &rest[start..tag_end];
         let src = extract_attr(tag, "src").map(|s| unescape_html_attr(&s)).unwrap_or_default();
+        let item = media.iter().find(|item| item.source == src);
 
         out.push_str("<span class=\"img-wrap\">");
         out.push_str(tag);
         out.push_str(&badges_html(&src, media));
         out.push_str("</span>");
+        if let Some(caption) = item.and_then(|item| item.caption.as_deref()).filter(|c| !c.is_empty()) {
+            out.push_str("<span class=\"img-caption\">");
+            out.push_str(&glib::markup_escape_text(caption));
+            out.push_str("</span>");
+        }
         rest = &rest[tag_end..];
     }
     out.push_str(rest);
@@ -622,8 +695,14 @@ fn badges_html(src: &str, media: &[MediaItem]) -> String {
     if item.wordpress.is_some() {
         badges.push(("↑".to_string(), tr("Bereits zu WordPress hochgeladen")));
     }
-    if !item.alt.is_undefined() {
-        badges.push((tr("Alt"), tr("Alternativtext ist definiert")));
+    // The tooltip shows the actual alt text, not a generic sentence - a
+    // quick way to check *what* was set, without opening Medienverwaltung,
+    // and a clear visual proof (different text per image) that this badge
+    // really is per-image data, not a shared/static label.
+    match &item.alt {
+        media::AltText::Text(text) => badges.push((tr("Alt"), text.clone())),
+        media::AltText::Empty => badges.push((tr("Alt"), tr("Bewusst ohne Alternativtext (dekoratives Bild)"))),
+        media::AltText::Undefined => {}
     }
     if let Some(format) = image_format_label(&item.filename) {
         badges.push((format, tr("Bildformat")));
@@ -802,6 +881,28 @@ mod tests {
     }
 
     #[test]
+    fn the_alt_badge_tooltip_is_the_actual_alt_text_not_a_generic_sentence() {
+        let item = media_item("cat.png", "cat.png", crate::media::AltText::Text("eine rote Katze".into()), false);
+        let out = render_body_with_line_anchors("![](cat.png)\n", std::slice::from_ref(&item));
+        assert!(out.contains("title=\"eine rote Katze\""), "{out}");
+    }
+
+    #[test]
+    fn a_caption_renders_as_a_visible_span_next_to_the_image() {
+        let mut item = media_item("cat.png", "cat.png", crate::media::AltText::Undefined, false);
+        item.caption = Some("Unsere Katze".to_string());
+        let out = render_body_with_line_anchors("![](cat.png)\n", std::slice::from_ref(&item));
+        assert!(out.contains("<span class=\"img-caption\">Unsere Katze</span>"), "{out}");
+    }
+
+    #[test]
+    fn no_caption_span_when_none_is_set() {
+        let item = media_item("cat.png", "cat.png", crate::media::AltText::Undefined, false);
+        let out = render_body_with_line_anchors("![](cat.png)\n", std::slice::from_ref(&item));
+        assert!(!out.contains("img-caption"), "{out}");
+    }
+
+    #[test]
     fn image_format_label_uppercases_the_extension() {
         assert_eq!(image_format_label("photo.webp"), Some("WEBP".to_string()));
         assert_eq!(image_format_label("photo.PNG"), Some("PNG".to_string()));
@@ -865,9 +966,21 @@ mod tests {
 
     #[test]
     fn full_html_embeds_the_scroll_to_line_script() {
-        let html = render_html("Hello", PreviewStyle::Modern, false, &[]);
+        let html = render_html("Hello", PreviewStyle::Modern, false, &[], 0.0);
         assert!(html.contains("window.scrollToLine = function(line)"));
         assert!(html.contains("data-line=\"1\""));
+    }
+
+    #[test]
+    fn full_html_restores_a_positive_scroll_position() {
+        let html = render_html("Hello", PreviewStyle::Modern, false, &[], 240.0);
+        assert!(html.contains("window.scrollTo(0, 240)"), "{html}");
+    }
+
+    #[test]
+    fn full_html_guards_the_scroll_restore_for_zero() {
+        let html = render_html("Hello", PreviewStyle::Modern, false, &[], 0.0);
+        assert!(html.contains("if (0 > 0) { window.scrollTo(0, 0); }"), "{html}");
     }
 
     #[test]

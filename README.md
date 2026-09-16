@@ -58,11 +58,18 @@ blocks. Implemented so far:
   `Adw.InlineViewSwitcher`, rendering all tabs as one seamless linked
   pill, in a toolbar row matching the editor's) are "Vorschau" (follows the app's light/dark
   mode, with a choice of Modern/Klassisch/Sepia typographic styles picked
-  in Einstellungen; every image gets small badges in its bottom-right
-  corner - an upload arrow once it's on WordPress, "Alt" once its alt text
-  is defined, and its file format - in that fixed order whenever more than
-  one applies, updated live from Medienverwaltung/the alt-text dialogs, not
-  just on the next edit), "Gutenberg-Code" (the exact block HTML that would be published),
+  in Einstellungen; a caption renders as a small line under its image,
+  matching the published post; every image gets small badges in its
+  bottom-right corner - an upload arrow once it's on WordPress, "Alt" once
+  its alt text is defined (hovering it shows the actual alt text as a
+  tooltip, not a generic sentence), and its file format - in that fixed
+  order whenever more than one applies, updated live from Medienverwaltung/
+  the alt-text dialogs, not just on the next edit; right-clicking an image
+  offers "Alternativtext bearbeiten…"/"KI-Alternativtext generieren…"/"Bild
+  bearbeiten…" - WebKit's own default image actions (open/save/copy the
+  rendered file, copy its address) are trimmed from that menu, alongside
+  the navigation items, since none of them apply to an embedded article
+  image), "Gutenberg-Code" (the exact block HTML that would be published),
   "Statistik" (word/character/paragraph counts, estimated reading time, and
   a German-adapted Flesch reading-ease score with a qualitative label -
   expandable into the formula itself, the article's actual average
@@ -144,7 +151,10 @@ blocks. Implemented so far:
 - **Medienverwaltung** (Ctrl+Shift+M, also embedded as a "Medien" tab in
   the "Artikel exportieren" dialog next to "Vorschau" so it can be checked
   right before publishing, and reachable per-image via "Alternativtext
-  festlegen…" in the editor's right-click context menu) — every image referenced in the
+  festlegen…" in the editor's right-click context menu - which, like its
+  "KI-Alternativtext generieren…" neighbor, only appears when the click
+  actually landed on a line with a media reference, rebuilt live from the
+  cursor position on every right-click rather than always shown) — every image referenced in the
   article gets its own alt text, caption, and WordPress upload state,
   independent of the Markdown source (persisted alongside the rest of the
   document in the frontmatter). Alt text is a three-state value rather
@@ -164,7 +174,10 @@ blocks. Implemented so far:
   media id/URL so re-opening the article recognizes it as already
   uploaded rather than re-uploading it; the list's own "Aufmacherbild" row
   does the same for the featured image, showing whether one is set,
-  pending upload, or already live. A "Bild einfügen…" button in the
+  pending upload, or already live. An "Alle hochladen" button above the
+  list uploads every not-yet-uploaded image in one go instead of one at a
+  time, tracked with a progress bar and a final summary of how many
+  succeeded, and a failure partway through doesn't stop the rest. A "Bild einfügen…" button in the
   editor toolbar opens a native image file picker and inserts a real
   Markdown image reference at the cursor (relative to the document's own
   folder when possible) - previously the only way to add an image
@@ -175,13 +188,17 @@ blocks. Implemented so far:
   Vorschau pane - also offers "KI-Alternativtext generieren…": the active
   KI-Chat provider looks at the real image and proposes an accessible alt
   text at a choice of three detail levels (Standard/Ausführlich/Hohe
-  Genauigkeit), shown for review and correction before it's applied
-  directly into the same alt-text field, ready for the next upload.
-  Right-clicking a rendered image in the Vorschau pane also offers "Bild
-  bearbeiten…": convert it to PNG/JPEG/WebP and/or resize it by width or
-  height (with an optional "Seitenverhältnis beibehalten" toggle for a
-  free, non-proportional resize) - writes a new sibling file and updates
-  the article's own image reference to it, leaving the original
+  Genauigkeit, remembered across uses), only starting once "Text
+  generieren" is actually clicked, shown for review and correction before
+  it's applied directly into the same alt-text field, ready for the next
+  upload - applying it keeps the preview scrolled to wherever it already
+  was rather than jumping back to the top. The rendered image in the
+  Vorschau pane also offers a plain "Alternativtext bearbeiten…" (the same
+  dialog as the editor's own line-based shortcut, without the AI step) and
+  "Bild bearbeiten…": convert it to PNG/JPEG/WebP and/or resize it by
+  width or height (with an optional "Seitenverhältnis beibehalten" toggle
+  for a free, non-proportional resize) - writes a new sibling file and
+  updates the article's own image reference to it, leaving the original
   untouched.
 - **Einstellungen dialog** (`Adw.PreferencesDialog`, Ctrl+,) — an
   "Erscheinungsbild" page adopted directly from GNOME Builder's own

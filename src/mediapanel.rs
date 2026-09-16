@@ -85,16 +85,220 @@ pub fn build_content(frontmatter: Rc<RefCell<Frontmatter>>, body: &str, doc_dir:
     // below) but shown as the list's first row anyway so there's one place
     // to check and trigger every WordPress image upload for the article.
     list_box.append(&build_featured_image_row(frontmatter.clone(), doc_dir.clone()));
+    let mut row_handles = Vec::with_capacity(item_count);
     for index in 0..item_count {
-        let row = build_row(index, frontmatter.clone(), doc_dir.clone(), status_label.clone(), preview_pane.clone());
-        list_box.append(&row);
+        let handles = build_row(index, frontmatter.clone(), doc_dir.clone(), status_label.clone(), preview_pane.clone());
+        list_box.append(&handles.expander);
+        row_handles.push(handles);
     }
+
+    let bulk_upload_section = build_bulk_upload_section(frontmatter.clone(), doc_dir.clone(), status_label.clone(), preview_pane.clone(), row_handles);
 
     let scroller = gtk4::ScrolledWindow::builder().child(&list_box).vexpand(true).min_content_height(360).build();
 
     content_box.append(&status_label);
+    content_box.append(&bulk_upload_section);
     content_box.append(&scroller);
     content_box.upcast()
+}
+
+/// "Alle hochladen": uploads every image in the article that isn't on
+/// WordPress yet (`UploadStatus::NotUploaded`/`Failed`, i.e.
+/// `item.wordpress.is_none()`) in one go, sequentially rather than in
+/// parallel - one background thread working through the list one image at
+/// a time, same rationale as every other upload here for being on a
+/// thread at all (`wpclient` is blocking) plus keeping requests against
+/// the site orderly and the progress bar meaningful. Already-uploaded
+/// images are left untouched (use the per-row "Erneut hochladen" for
+/// those); a failure partway through doesn't stop the rest - it's
+/// recorded and the loop continues, so one broken image never blocks
+/// every other one from getting uploaded.
+fn build_bulk_upload_section(
+    frontmatter: Rc<RefCell<Frontmatter>>,
+    doc_dir: Option<PathBuf>,
+    status_label: gtk4::Label,
+    preview_pane: Rc<preview::PreviewPane>,
+    row_handles: Vec<MediaRowHandles>,
+) -> gtk4::Widget {
+    let section = gtk4::Box::builder().orientation(gtk4::Orientation::Vertical).spacing(6).build();
+
+    let button_row = gtk4::Box::builder().orientation(gtk4::Orientation::Horizontal).spacing(8).build();
+    let bulk_button = gtk4::Button::with_label(&tr("Alle hochladen"));
+    let bulk_status_label = gtk4::Label::new(None);
+    bulk_status_label.set_wrap(true);
+    bulk_status_label.set_xalign(0.0);
+    button_row.append(&bulk_button);
+    button_row.append(&bulk_status_label);
+
+    let progress_bar = gtk4::ProgressBar::new();
+    progress_bar.set_visible(false);
+    progress_bar.set_show_text(true);
+
+    section.append(&button_row);
+    section.append(&progress_bar);
+
+    let pending_count = frontmatter.borrow().media.iter().filter(|item| item.wordpress.is_none()).count();
+    let total_count = frontmatter.borrow().media.len();
+    bulk_button.set_visible(total_count > 0);
+    bulk_button.set_sensitive(pending_count > 0);
+    if total_count > 0 && pending_count == 0 {
+        bulk_status_label.set_label(&tr("Alle Bilder bereits hochgeladen."));
+    }
+
+    let row_handles = Rc::new(row_handles);
+    bulk_button.connect_clicked(move |bulk_button| {
+        let pending: Vec<(usize, String, Option<String>, Option<String>)> = frontmatter
+            .borrow()
+            .media
+            .iter()
+            .enumerate()
+            .filter(|(_, item)| item.wordpress.is_none())
+            .map(|(index, item)| (index, item.source.clone(), item.alt.as_wordpress_value().map(str::to_string), item.caption.clone()))
+            .collect();
+        if pending.is_empty() {
+            return;
+        }
+        let total = pending.len();
+
+        bulk_button.set_sensitive(false);
+        progress_bar.set_visible(true);
+        progress_bar.set_fraction(0.0);
+        progress_bar.set_text(Some(&tr("0 von {total} hochgeladen").replace("{total}", &total.to_string())));
+        bulk_status_label.set_label(&tr("Wird hochgeladen …"));
+
+        let site = wpsite::load();
+        let doc_dir_for_thread = doc_dir.clone();
+        let (tx, rx) = mpsc::channel::<BulkUploadEvent>();
+        std::thread::spawn(move || {
+            let password = match futures_lite::future::block_on(secrets::load_app_password(&site.url, &site.username)) {
+                Ok(Some(password)) => password,
+                Ok(None) => {
+                    let _ = tx.send(BulkUploadEvent::Aborted { reason: tr("Kein Application Password im Schlüsselbund gefunden.") });
+                    return;
+                }
+                Err(err) => {
+                    let _ = tx.send(BulkUploadEvent::Aborted { reason: err.to_string() });
+                    return;
+                }
+            };
+            let client = wpclient::Client::new(&site.url, &site.username, &password);
+            let mut failed = 0;
+            for (index, source, alt_for_upload, caption_for_upload) in pending {
+                let filename = std::path::Path::new(&source).file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_else(|| source.clone());
+                let outcome = export::upload_image_file(&client, &source, doc_dir_for_thread.as_deref())
+                    .map_err(|err| err.to_string())
+                    .and_then(|uploaded| {
+                        client
+                            .update_media_metadata(uploaded.id, alt_for_upload.as_deref(), caption_for_upload.as_deref())
+                            .map_err(|err| err.to_string())?;
+                        let content_hash = media::hash_local_file(&source, doc_dir_for_thread.as_deref()).unwrap_or_default();
+                        Ok((uploaded, content_hash))
+                    });
+                if outcome.is_err() {
+                    failed += 1;
+                }
+                let _ = tx.send(BulkUploadEvent::Progress { index, filename, result: outcome });
+            }
+            let _ = tx.send(BulkUploadEvent::Done { failed });
+        });
+
+        let frontmatter = frontmatter.clone();
+        let status_label = status_label.clone();
+        let preview_pane = preview_pane.clone();
+        let bulk_button = bulk_button.clone();
+        let bulk_status_label = bulk_status_label.clone();
+        let progress_bar = progress_bar.clone();
+        let row_handles = row_handles.clone();
+        let mut completed = 0;
+        glib::timeout_add_local(Duration::from_millis(150), move || match rx.try_recv() {
+            Ok(BulkUploadEvent::Progress { index, filename, result }) => {
+                completed += 1;
+                progress_bar.set_fraction(completed as f64 / total as f64);
+                progress_bar.set_text(Some(&tr("{completed} von {total} hochgeladen").replace("{completed}", &completed.to_string()).replace("{total}", &total.to_string())));
+
+                match result {
+                    Ok((media_result, content_hash)) => {
+                        let reference = media::WordPressMediaRef { media_id: media_result.id, url: media_result.source_url.clone(), content_hash };
+                        if let Some(item) = frontmatter.borrow_mut().media.get_mut(index) {
+                            item.wordpress = Some(reference.clone());
+                        }
+                        if let Some(handles) = row_handles.get(index) {
+                            handles.expander.set_subtitle(&upload_status_text(&UploadStatus::Uploaded(reference)));
+                            handles.upload_status_label.set_label(&tr("Erfolgreich hochgeladen."));
+                            handles.upload_button.set_label(&tr("Erneut hochladen"));
+                            handles.upload_button.set_sensitive(true);
+                        }
+                    }
+                    Err(err) => {
+                        if let Some(handles) = row_handles.get(index) {
+                            handles.expander.set_subtitle(&upload_status_text(&UploadStatus::Failed(err.clone())));
+                            handles.upload_status_label.set_label(&tr("Fehler: {err}").replace("{err}", &err));
+                            handles.upload_button.set_sensitive(true);
+                        }
+                        notify::send("media-upload", &tr("Upload fehlgeschlagen"), &tr("„{filename}“: {err}").replace("{filename}", &filename).replace("{err}", &err));
+                    }
+                }
+                status_label.set_label(&summary_text(&frontmatter));
+                preview_pane.refresh_media(&frontmatter.borrow().media);
+                glib::ControlFlow::Continue
+            }
+            Ok(BulkUploadEvent::Done { failed }) => {
+                progress_bar.set_visible(false);
+                bulk_status_label.set_label(&if failed == 0 {
+                    tr("Alle {total} Bilder erfolgreich hochgeladen.").replace("{total}", &total.to_string())
+                } else {
+                    tr("{ok} von {total} Bildern hochgeladen, {failed} fehlgeschlagen.")
+                        .replace("{ok}", &(total - failed).to_string())
+                        .replace("{total}", &total.to_string())
+                        .replace("{failed}", &failed.to_string())
+                });
+                let remaining_pending = frontmatter.borrow().media.iter().filter(|item| item.wordpress.is_none()).count();
+                bulk_button.set_sensitive(remaining_pending > 0);
+                if failed == 0 {
+                    notify::send("media-upload", &tr("Bilder hochgeladen"), &tr("Alle {total} Bilder wurden erfolgreich hochgeladen.").replace("{total}", &total.to_string()));
+                } else {
+                    notify::send(
+                        "media-upload",
+                        &tr("Upload teilweise fehlgeschlagen"),
+                        &tr("{ok} von {total} Bildern hochgeladen, {failed} fehlgeschlagen.")
+                            .replace("{ok}", &(total - failed).to_string())
+                            .replace("{total}", &total.to_string())
+                            .replace("{failed}", &failed.to_string()),
+                    );
+                }
+                glib::ControlFlow::Break
+            }
+            Ok(BulkUploadEvent::Aborted { reason }) => {
+                progress_bar.set_visible(false);
+                bulk_status_label.set_label(&tr("Hochladen abgebrochen: {reason}").replace("{reason}", &reason));
+                bulk_button.set_sensitive(true);
+                glib::ControlFlow::Break
+            }
+            Err(mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
+            Err(mpsc::TryRecvError::Disconnected) => {
+                progress_bar.set_visible(false);
+                bulk_status_label.set_label(&tr("Interner Fehler: Upload-Thread hat kein Ergebnis geliefert."));
+                bulk_button.set_sensitive(true);
+                glib::ControlFlow::Break
+            }
+        });
+    });
+
+    section.upcast()
+}
+
+/// One event per bulk-uploaded image (`Progress`, sent as each image's
+/// upload finishes, success or failure), a final `Done` once the whole
+/// batch has been worked through (`total - failed` gives the success count
+/// without needing to send it separately), or `Aborted` when the batch
+/// never even started (e.g. no Application Password in the keyring) - kept
+/// distinct from `Done { failed: total }` so the status message explains
+/// *why* nothing uploaded instead of just reporting every image failed
+/// individually.
+enum BulkUploadEvent {
+    Progress { index: usize, filename: String, result: Result<(wpclient::MediaResult, String), String> },
+    Done { failed: usize },
+    Aborted { reason: String },
 }
 
 /// Every branch here is a complete, self-contained sentence (never grammar
@@ -216,13 +420,25 @@ fn build_featured_image_row(frontmatter: Rc<RefCell<Frontmatter>>, doc_dir: Opti
     row
 }
 
+/// The per-row widgets the bulk "Alle hochladen" button (see
+/// `build_bulk_upload_section`) needs to update as each image's upload
+/// finishes, alongside mutating `Frontmatter.media` itself - without this,
+/// a row would keep showing "Noch nicht hochgeladen" until the dialog was
+/// closed and reopened, even though the upload behind it had already
+/// succeeded.
+struct MediaRowHandles {
+    expander: adw::ExpanderRow,
+    upload_button: gtk4::Button,
+    upload_status_label: gtk4::Label,
+}
+
 fn build_row(
     index: usize,
     frontmatter: Rc<RefCell<Frontmatter>>,
     doc_dir: Option<PathBuf>,
     status_label: gtk4::Label,
     preview_pane: Rc<preview::PreviewPane>,
-) -> adw::ExpanderRow {
+) -> MediaRowHandles {
     let item = frontmatter.borrow().media[index].clone();
 
     let expander = adw::ExpanderRow::builder().title(item.filename.clone()).use_markup(false).build();
@@ -285,11 +501,13 @@ fn build_row(
     let caption_row = adw::EntryRow::builder().title(tr("Bildunterschrift")).text(item.caption.as_deref().unwrap_or("")).build();
     {
         let frontmatter = frontmatter.clone();
+        let preview_pane = preview_pane.clone();
         caption_row.connect_changed(move |row| {
             let text = row.text().to_string();
             if let Some(item) = frontmatter.borrow_mut().media.get_mut(index) {
                 item.caption = (!text.is_empty()).then_some(text);
             }
+            preview_pane.refresh_media(&frontmatter.borrow().media);
         });
     }
 
@@ -398,5 +616,5 @@ fn build_row(
     expander.add_row(&alt_entry_row);
     expander.add_row(&caption_row);
     expander.add_row(&upload_row);
-    expander
+    MediaRowHandles { expander, upload_button, upload_status_label }
 }

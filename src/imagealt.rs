@@ -5,17 +5,23 @@
 //! specific line holding an image reference jump straight to that image's
 //! fields, backed by the exact same `MediaItem`/`AltText` model.
 //!
-//! A plain `Gio.Menu`-based `extra-menu` (what `aimenu.rs` already builds)
-//! can't conditionally hide an item depending on where the click landed -
-//! so the item is always present, and clicking it when the line has no
-//! image reference shows a short explanation instead of silently doing
-//! nothing. "Where the click landed" comes from the buffer's insertion
-//! mark at the moment the menu item is activated - but a plain right-click
-//! does NOT reposition that mark on its own (confirmed live: it stayed
-//! wherever an earlier left-click/edit had left it), unlike e.g. a web
-//! browser's text field. So a small `Gtk.GestureClick` explicitly moves
-//! the cursor to the click point on every secondary-button press, purely
-//! so the existing cursor-based lookup has an accurate position to read.
+//! The menu section (`install`'s returned `gio::Menu` handle) starts empty
+//! and is rebuilt on every secondary click from whether the clicked line
+//! actually holds a media reference - mutating an already-installed
+//! `gio::Menu` is reflected immediately in the popover showing it, the
+//! same live-update trick `aimenu.rs` already uses for its custom-prompts
+//! section - so the item only ever appears when it would actually do
+//! something, instead of always showing and popping an explanation dialog
+//! when clicked on a line with nothing to act on. "KI-Alternativtext
+//! generieren…" additionally only appears for an actual image (not
+//! video/audio), since vision-based generation makes no sense for those.
+//! "Where the click landed" comes from the buffer's insertion mark at the
+//! moment the menu item is built/activated - but a plain right-click does
+//! NOT reposition that mark on its own (confirmed live: it stayed wherever
+//! an earlier left-click/edit had left it), unlike e.g. a web browser's
+//! text field. So a small `Gtk.GestureClick` explicitly moves the cursor
+//! to the click point on every secondary-button press, before rebuilding
+//! the menu from the now-accurate position.
 
 use std::cell::RefCell;
 use std::path::PathBuf;
@@ -30,30 +36,38 @@ use crate::i18n::tr;
 use crate::media::{self, AltText};
 use crate::preview;
 
-/// The context-menu section to merge into the editor's combined
-/// `extra-menu` (see `aimenu.rs`, the sole caller of `view.set_extra_menu`).
-pub fn menu_section() -> gio::Menu {
-    let menu = gio::Menu::new();
+/// Rebuilds the context-menu section (see `install`) from whether `line`
+/// actually holds a media reference - empty when it doesn't, so the
+/// section contributes no items (and no stray separator) to the popover.
+fn rebuild_menu_for_line(menu: &gio::Menu, buffer: &sourceview5::Buffer, line: i32) {
+    menu.remove_all();
+    let body = buffer.text(&buffer.start_iter(), &buffer.end_iter(), false).to_string();
+    let Some(source) = image_source_on_line(&body, line) else { return };
     menu.append(Some(&tr("Alternativtext festlegen…")), Some("imagealt.set"));
-    menu.append(Some(&tr("KI-Alternativtext generieren…")), Some("imagealt.generate-ai"));
-    menu
+    if document::media_reference_kind(&source) == document::MediaReferenceKind::Image {
+        menu.append(Some(&tr("KI-Alternativtext generieren…")), Some("imagealt.generate-ai"));
+    }
 }
 
 /// Moves the cursor to wherever a secondary click lands (see the module
 /// docs for why this can't just rely on default `Gtk.TextView` behavior),
-/// and wires the `imagealt.set` action activated by the menu item
-/// `menu_section` returns, which then reads the (now-accurate) cursor line.
+/// rebuilds the returned menu section from that now-accurate position, and
+/// wires the `imagealt.set`/`imagealt.generate-ai` actions the section's
+/// items invoke.
 pub fn install(
     view: &sourceview5::View,
     buffer: &sourceview5::Buffer,
     frontmatter: Rc<RefCell<Frontmatter>>,
     current_path: Rc<RefCell<Option<PathBuf>>>,
     preview_pane: Rc<preview::PreviewPane>,
-) {
+) -> gio::Menu {
+    let menu = gio::Menu::new();
+
     let gesture = gtk4::GestureClick::new();
     gesture.set_button(3); // secondary/right button
     {
         let buffer = buffer.clone();
+        let menu = menu.clone();
         let view_weak = view.downgrade();
         gesture.connect_pressed(move |_gesture, _n_press, x, y| {
             let Some(view) = view_weak.upgrade() else { return };
@@ -61,6 +75,8 @@ pub fn install(
             if let Some((iter, _trailing)) = view.iter_at_position(buffer_x, buffer_y) {
                 buffer.place_cursor(&iter);
             }
+            let line = buffer.iter_at_mark(&buffer.get_insert()).line();
+            rebuild_menu_for_line(&menu, &buffer, line);
         });
     }
     view.add_controller(gesture);
@@ -101,6 +117,8 @@ pub fn install(
     actions.add_action(&generate_ai_action);
 
     view.insert_action_group("imagealt", Some(&actions));
+
+    menu
 }
 
 /// Same image-on-line lookup + reconcile as `open_for_line`, but hands off
@@ -145,10 +163,8 @@ fn generate_ai_for_line(
 /// Finds the `![alt](source)` reference starting on `line` (0-indexed,
 /// matching `Gtk.TextIter::line()`), reconciles the tracked media list
 /// against the current body so the reference is guaranteed to have a
-/// `MediaItem`, then opens a small dialog for just that one image's alt
-/// text and caption - the same fields and wiring as `mediapanel.rs`'s row,
-/// minus the upload button, which isn't part of what a quick in-editor
-/// shortcut needs.
+/// `MediaItem`, then delegates to `open_dialog_for_index` for that image's
+/// own alt text and caption.
 fn open_for_line(window: &gtk4::Window, buffer: &sourceview5::Buffer, frontmatter: &Rc<RefCell<Frontmatter>>, line: i32, preview_pane: &Rc<preview::PreviewPane>) {
     let body = buffer.text(&buffer.start_iter(), &buffer.end_iter(), false).to_string();
 
@@ -169,7 +185,20 @@ fn open_for_line(window: &gtk4::Window, buffer: &sourceview5::Buffer, frontmatte
     let Some(index) = frontmatter.borrow().media.iter().position(|item| item.source == source) else {
         return;
     };
-    let item = frontmatter.borrow().media[index].clone();
+    open_dialog_for_index(window, frontmatter, index, preview_pane);
+}
+
+/// Opens the manual alt-text/caption dialog for one already-known
+/// `MediaItem` index - shared by `open_for_line` above (the editor
+/// context-menu path, which first has to look up the index from a clicked
+/// line) and the preview pane's own "Alternativtext bearbeiten…" context
+/// menu item (`preview.rs`, which already knows the index from the
+/// clicked image). Same fields and wiring as `mediapanel.rs`'s row, minus
+/// the upload button, which isn't part of what a quick shortcut needs.
+pub fn open_dialog_for_index(window: &gtk4::Window, frontmatter: &Rc<RefCell<Frontmatter>>, index: usize, preview_pane: &Rc<preview::PreviewPane>) {
+    let Some(item) = frontmatter.borrow().media.get(index).cloned() else {
+        return;
+    };
 
     let alt_switch_row = adw::SwitchRow::builder()
         .title(tr("Alternativtext definieren"))
@@ -220,11 +249,13 @@ fn open_for_line(window: &gtk4::Window, buffer: &sourceview5::Buffer, frontmatte
     let caption_row = adw::EntryRow::builder().title(tr("Bildunterschrift")).text(item.caption.as_deref().unwrap_or("")).build();
     {
         let frontmatter = frontmatter.clone();
+        let preview_pane = preview_pane.clone();
         caption_row.connect_changed(move |row| {
             let text = row.text().to_string();
             if let Some(item) = frontmatter.borrow_mut().media.get_mut(index) {
                 item.caption = (!text.is_empty()).then_some(text);
             }
+            preview_pane.refresh_media(&frontmatter.borrow().media);
         });
     }
 
