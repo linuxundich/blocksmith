@@ -74,11 +74,12 @@ what's already shipped.
   Flatpak build to find its compiled translations at all (`po/README.md`'s
   "Known limitation" - right now only a `cargo run` from source finds
   them).
-- **A CI pipeline.** There is no `.github/workflows` (or any other CI) at
-  all right now - `cargo build`/`test`/`clippy` only ever run locally,
-  by hand, before a commit. Not a user-facing feature, but real
-  protection against regressions that this project's pace of change
-  would benefit from.
+- ~~**A CI pipeline.**~~ Done (see CHANGELOG.md) -
+  `.github/workflows/ci.yml` runs `cargo build`/`test`/`clippy` on every
+  push/PR, in an `archlinux:latest` container (not Ubuntu's default
+  runner image - its packages lag behind the fairly recent GNOME stack
+  this app links against) so dependency versions never need separate
+  upkeep.
 - ~~**Distraction-free / focus writing mode.**~~ Done (see CHANGELOG.md) -
   Ctrl+Shift+F hides the header bar, toolbar, and right-hand pane down to
   just the editor text.

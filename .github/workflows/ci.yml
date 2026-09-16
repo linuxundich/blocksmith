@@ -1,0 +1,55 @@
+# Runs the same three checks every commit here is already expected to
+# pass locally (cargo build/test/clippy) - see ROADMAP.md's "A CI
+# pipeline" entry: before this, that protection only existed if someone
+# actually remembered to run them by hand before pushing.
+#
+# Arch Linux (rolling release), not Ubuntu's default runner image: this
+# app links against a fairly recent GNOME stack (libadwaita 1.7+,
+# GtkSourceView 5.4+, WebKitGTK 6.0, libspelling - see Cargo.toml's
+# feature flags and README.md's "Building & running"), which Ubuntu's
+# own package archive lags behind on. Arch's `pacman` always has current
+# versions, so there's no separate "is the distro new enough" question to
+# maintain over time - confirmed by cross-checking these exact package
+# names against a real working dev environment before writing this file.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-test-clippy:
+    name: build, test, clippy
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    steps:
+      # Needed before `actions/checkout` - that step shells out to `git`,
+      # which the base Arch image doesn't include.
+      - name: Install build dependencies
+        run: |
+          pacman -Syu --noconfirm
+          pacman -S --noconfirm --needed \
+            base-devel git rust \
+            gtk4 libadwaita gtksourceview5 webkitgtk-6.0 libspelling \
+            gdk-pixbuf2 gettext
+
+      - uses: actions/checkout@v4
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: cargo build
+        run: cargo build --workspace --verbose
+
+      - name: cargo test
+        run: cargo test --workspace --verbose
+
+      # Not `-D warnings`: a handful of pre-existing warnings (large
+      # `oo7::Error` variants in secrets.rs, one manual_is_multiple_of in
+      # statusbar.rs) are already known and accepted rather than fixed, so
+      # denying all warnings here would fail CI on every run regardless of
+      # what a given commit actually changed. This still surfaces new
+      # warnings in the job log for review - just doesn't hard-fail on
+      # them, matching how clippy is actually used locally in this project.
+      - name: cargo clippy
+        run: cargo clippy --workspace --all-targets

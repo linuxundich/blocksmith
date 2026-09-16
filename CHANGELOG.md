@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.46.2] - 2026-09-16
+
+### Added
+
+- A CI pipeline (`.github/workflows/ci.yml`): every push/PR now runs
+  `cargo build`/`test`/`clippy` automatically, instead of that protection
+  only existing when someone remembered to run them by hand before
+  pushing. Runs in an `archlinux:latest` container rather than the
+  default Ubuntu runner image - this app links against a fairly recent
+  GNOME stack (libadwaita 1.7+, GtkSourceView 5.4+, WebKitGTK 6.0,
+  libspelling), and Arch's rolling-release `pacman` always has current
+  versions of all of them, so there's no separate "is the distro new
+  enough yet" question to keep revisiting over time.
+
 ## [0.46.1] - 2026-09-16
 
 ### Fixed

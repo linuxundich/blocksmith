@@ -1,5 +1,7 @@
 # Blocksmith
 
+[![CI](https://github.com/linuxundich/blocksmith/actions/workflows/ci.yml/badge.svg)](https://github.com/linuxundich/blocksmith/actions/workflows/ci.yml)
+
 A GNOME (GTK4 + libadwaita) editor for writing blog articles in Markdown
 and exporting them as native WordPress **Gutenberg blocks** — not a single
 classic/freeform HTML block, but real, individually editable blocks
