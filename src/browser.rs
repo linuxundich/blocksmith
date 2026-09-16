@@ -42,6 +42,7 @@ pub fn save_home_url(url: &str) {
 
 pub struct BrowserView {
     pub widget: gtk4::Widget,
+    web_view: webkit6::WebView,
     content_manager: webkit6::UserContentManager,
 }
 
@@ -118,13 +119,22 @@ impl BrowserView {
 
         web_view.load_uri(&load_home_url());
 
-        Self { widget: content.upcast(), content_manager }
+        Self { widget: content.upcast(), web_view, content_manager }
     }
 
     /// Called from the "Browser" settings page's ad-block switch -
     /// applies live, no restart or tab reopen needed.
     pub fn set_adblock_enabled(&self, enabled: bool) {
         adblock::set_manager_enabled(&self.content_manager, enabled);
+    }
+
+    /// Loads `uri` directly, bypassing `resolve_address`'s bare-domain/
+    /// search-query heuristics - for callers that already have an exact
+    /// URL to show, e.g. `export.rs`'s WordPress preview link. Does not
+    /// itself switch the app to the Browser tab; callers pair this with
+    /// `view_stack.set_visible_child_name("browser")`.
+    pub fn load_uri(&self, uri: &str) {
+        self.web_view.load_uri(uri);
     }
 }
 

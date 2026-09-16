@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.47.0] - 2026-09-16
+
+### Added
+
+- A plain launch (no file argument) now reopens the most recently opened/
+  saved article instead of always starting at a blank "Unbenannt"
+  document - `Ctrl+N` still gets to a blank one in one step.
+- The featured image can now have its own alt text: a new "Alt-Text für
+  Aufmacherbild" field in Artikel-Eigenschaften, sent as the resulting
+  WordPress media attachment's `alt_text` on upload, the same way a body
+  image's alt text already was - previously only body images ever got
+  one.
+- A non-blocking warning appears once an alt text (body image, featured
+  image, or the quick-edit dialog) gets unusually long - WCAG guidance
+  suggests staying well under 150 characters, since a screen reader reads
+  the whole thing aloud; the warning is a hint, not a hard limit.
+- A new WordPress "Privat" post status, alongside Entwurf/Ausstehend/
+  Veröffentlicht/Geplant - a "Privat veröffentlichen" button appears in
+  the export dialog once it's picked in Artikel-Eigenschaften, the same
+  way "Terminieren" already does for "Geplant".
+- Two more Gutenberg blocks via the same fenced-code-block pattern
+  `columns`/`buttons`/`gallery` already established: ` ```pullquote ` (a
+  highlighted quote with an optional citation) and ` ```details ` (a
+  collapsible summary/body disclosure widget, `wp:details` in modern
+  WordPress) - both with full round-trip support back to the same
+  Markdown when re-opening an existing post.
+- A "Vorschau öffnen" button in the export dialog, shown once an article
+  already exists on WordPress but isn't published yet - it opens
+  WordPress's own unpublished-post preview link in the app's Browser tab,
+  switching to it automatically. Uses that tab's existing WebKit session,
+  so it only actually shows the live preview if that session is already
+  logged into wp-admin; otherwise it shows a login page instead, which
+  the button's tooltip and a status message both note up front.
+
 ## [0.46.2] - 2026-09-16
 
 ### Added

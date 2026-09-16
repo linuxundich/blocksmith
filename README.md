@@ -36,7 +36,10 @@ blocks. Implemented so far:
   leaving is a smooth slide rather than an abrupt layout jump. A "Zuletzt
   geöffnet" button next to "Öffnen" lists the most
   recently opened/saved articles (most-recent-first) for one-click
-  reopening. Markdown editing pane (GtkSourceView, syntax
+  reopening, and a plain launch with no file argument reopens the most
+  recent one automatically instead of always starting at a blank
+  "Unbenannt" document - `Ctrl+N` still gets to a blank one in one step.
+  Markdown editing pane (GtkSourceView, syntax
   highlighting, spell-checking via [`libspelling`](https://gitlab.gnome.org/GNOME/libspelling))
   with a grouped formatting toolbar (cut/copy/paste; bold/italic/
   strikethrough with Ctrl+B/I; heading/quote/code/code block; lists; table;
@@ -113,22 +116,31 @@ blocks. Implemented so far:
   Spotify recognized by name for a nicer immediate block-editor preview;
   any other URL still embeds generically, the same way WordPress's own
   editor falls back to oEmbed discovery for it). Since Markdown has no
-  native syntax for side-by-side columns, buttons, or a photo gallery,
-  those are written as fenced code blocks with a special "language" tag -
+  native syntax for side-by-side columns, buttons, a photo gallery, a
+  highlighted pullquote, or a collapsible disclosure widget, those are
+  written as fenced code blocks with a special "language" tag -
   ` ```columns ` (split into columns on a `+++` line, each side re-parsed
-  as ordinary Markdown), ` ```buttons ` (one Markdown link per line), and
-  ` ```gallery ` (one Markdown image per line) - all with full round-trip
-  support back to the same Markdown when re-opening an existing post.
-- **Document model** — per-article frontmatter (title, slug, status,
-  scheduled publish date/time, categories, tags, excerpt/meta description,
-  RankMath SEO title/description/focus keyword, featured image, WordPress
-  post id) stored in the `.md` file itself,
+  as ordinary Markdown), ` ```buttons ` (one Markdown link per line),
+  ` ```gallery ` (one Markdown image per line), ` ```pullquote ` (quote
+  text and an optional citation, split on a `+++` line), and
+  ` ```details ` (a summary and its body, also `+++`-split, the body
+  re-parsed as ordinary Markdown, `wp:details` in modern WordPress) - all
+  with full round-trip support back to the same Markdown when re-opening
+  an existing post.
+- **Document model** — per-article frontmatter (title, slug, status -
+  Entwurf/Ausstehend/Veröffentlicht/Geplant/Privat, matching every native
+  WordPress post status -, scheduled publish date/time, categories, tags,
+  excerpt/meta description, RankMath SEO title/description/focus keyword,
+  featured image and its own alt text, WordPress post id) stored in the
+  `.md` file itself,
   editable via an "Artikel-Eigenschaften" dialog with autocomplete for
   every existing WordPress
   category/tag (backed by an on-disk cache, `src/termcache.rs`, fully
   paginated so it never silently caps out on a site with hundreds of
   tags, refreshed at startup and on demand) and a native file picker for
-  the featured image, not just a path field. A "Slug aus Titel
+  the featured image, not just a path field - its alt text is sent as the
+  resulting WordPress attachment's `alt_text` on upload, the same as any
+  body image's. A "Slug aus Titel
   generieren" button fills the slug from the title using the same
   transliteration WordPress's own `sanitize_title()` uses, and a
   "URL-Länge (SEO)" row shows the full URL the post would actually
@@ -165,7 +177,11 @@ blocks. Implemented so far:
   time. Alt text is a three-state value rather
   than a plain on/off: not yet defined (flagged by a non-blocking "N von M
   Bildern haben noch keinen Alternativtext" hint), deliberately left empty
-  for decorative images (not treated as an error), or defined text; the
+  for decorative images (not treated as an error), or defined text - an
+  unusually long one (WCAG guidance: well under 150 characters, since a
+  screen reader reads the whole thing aloud) gets its own non-blocking
+  warning icon and tooltip, here and everywhere else alt text can be
+  entered (the featured image's field, the quick-edit dialog); the
   caption is a separate field, never derived from the alt text, though it
   is seeded the first time an image is seen from the Markdown image's
   optional `"title"` (`![alt](src "title")`) if present, else from its
@@ -238,8 +254,15 @@ blocks. Implemented so far:
   date/time set there - exporting without one is refused with a clear
   error rather than silently publishing immediately, which is what
   WordPress itself does with a scheduled status and no real future date.
-  On success, the post's real permalink appears as a clickable link
-  right in the dialog.
+  Likewise, a "Privat veröffentlichen" button appears once "Privat" is
+  picked instead. On success, the post's real permalink appears as a
+  clickable link right in the dialog. Once an article already exists on
+  WordPress but isn't published yet, a "Vorschau öffnen" button opens
+  WordPress's own unpublished-post preview link in the app's Browser tab
+  (switching to it automatically) - it only actually shows the live
+  preview if that tab's WebKit session already happens to be logged into
+  wp-admin, otherwise a login page appears instead, which the button's
+  tooltip notes up front.
 - **Broken-link checker** — a "Links" tab in the same "Artikel
   exportieren" dialog, next to "Vorschau" and "Medien". It scans the
   article for every unique `http(s)://` URL (Markdown link/image

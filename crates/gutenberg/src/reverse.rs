@@ -167,6 +167,8 @@ fn make_block(name: &str, attrs: Option<&str>, inner: &str) -> Block {
         "gallery" => Block::Gallery {
             images: parse_gallery(&strip_wrapper_tag(inner, "figure")),
         },
+        "pullquote" => parse_pullquote_block(inner),
+        "details" => parse_details_block(inner),
         // Unrecognized block types (custom blocks, embeds, ...) and our own
         // "html" passthrough both just keep their raw HTML - nothing lost.
         _ => Block::RawHtml { html: inner.trim().to_string() },
@@ -385,6 +387,44 @@ fn image_from_html(html: &str) -> GalleryImage {
     }
 }
 
+/// Reads a `wp:pullquote` block's `<figure><blockquote>` inner HTML back
+/// into paragraphs + an optional citation - the reverse of `render_pullquote`.
+/// Handles both this crate's own output (a bare `<p>` per paragraph) and a
+/// real WordPress-authored pullquote (same markup), splitting off the
+/// trailing `<cite>` before reading the paragraphs.
+fn parse_pullquote_block(inner: &str) -> Block {
+    let blockquote_inner = strip_wrapper_tag(&strip_wrapper_tag(inner, "figure"), "blockquote");
+    let (quote_html, citation) = match blockquote_inner.find("<cite") {
+        Some(idx) => {
+            let citation = extract_between(&blockquote_inner[idx..], ">", "</cite>").map(|c| unescape_entities(c.trim())).filter(|c| !c.is_empty());
+            (blockquote_inner[..idx].to_string(), citation)
+        }
+        None => (blockquote_inner, None),
+    };
+    let tagged_paragraphs = extract_all_tags(&quote_html, "p");
+    let paragraphs = if tagged_paragraphs.is_empty() {
+        vec![inline_html_to_markdown(quote_html.trim())]
+    } else {
+        tagged_paragraphs.into_iter().map(|(_, content)| inline_html_to_markdown(content)).collect()
+    };
+    Block::Pullquote { paragraphs, citation }
+}
+
+/// Reads a `wp:details` block's `<details><summary>...</summary>...` inner
+/// HTML back into a summary + body block tree - the reverse of
+/// `render_details`.
+fn parse_details_block(inner: &str) -> Block {
+    let details_inner = strip_wrapper_tag(inner, "details");
+    match details_inner.find("</summary>") {
+        Some(close_rel) => {
+            let summary = extract_between(&details_inner, "<summary>", "</summary>").map(inline_html_to_markdown).unwrap_or_default();
+            let body = &details_inner[close_rel + "</summary>".len()..];
+            Block::Details { summary, blocks: parse_gutenberg_blocks(body) }
+        }
+        None => Block::Details { summary: String::new(), blocks: parse_gutenberg_blocks(&details_inner) },
+    }
+}
+
 fn parse_table_block(inner: &str) -> Block {
     let table_inner = strip_wrapper_tag(inner, "table");
     let mut alignments = Vec::new();
@@ -559,6 +599,8 @@ fn render_block_markdown(block: &Block) -> String {
         Block::Columns { columns } => render_columns_markdown(columns),
         Block::Buttons { buttons } => render_buttons_markdown(buttons),
         Block::Gallery { images } => render_gallery_markdown(images),
+        Block::Pullquote { paragraphs, citation } => render_pullquote_markdown(paragraphs, citation),
+        Block::Details { summary, blocks } => render_details_markdown(summary, blocks),
         Block::RawHtml { html } => html.clone(),
     }
 }
@@ -617,6 +659,22 @@ fn render_buttons_markdown(buttons: &[ButtonItem]) -> String {
 fn render_gallery_markdown(images: &[GalleryImage]) -> String {
     let body = images.iter().map(|img| format!("![{}]({})", img.alt, markdown_destination(&img.url))).collect::<Vec<_>>().join("\n");
     format!("```gallery\n{body}\n```")
+}
+
+/// The `+++`-separator inverse of `parse_fenced_pullquote` - see
+/// `render_columns_markdown` for the same convention applied to columns.
+fn render_pullquote_markdown(paragraphs: &[String], citation: &Option<String>) -> String {
+    let mut body = paragraphs.join("\n\n");
+    if let Some(citation) = citation.as_ref().filter(|c| !c.is_empty()) {
+        body.push_str("\n+++\n");
+        body.push_str(citation);
+    }
+    format!("```pullquote\n{body}\n```")
+}
+
+/// The `+++`-separator inverse of `parse_fenced_details`.
+fn render_details_markdown(summary: &str, blocks: &[Block]) -> String {
+    format!("```details\n{summary}\n+++\n{}\n```", render_markdown(blocks))
 }
 
 fn render_table_markdown(alignments: &[ColumnAlignment], header: &[String], rows: &[Vec<String>]) -> String {
@@ -783,6 +841,35 @@ mod tests {
         assert_eq!(
             round_trip("```gallery\n![First](one.jpg)\n![Second](two.jpg)\n```"),
             "```gallery\n![First](one.jpg)\n![Second](two.jpg)\n```"
+        );
+    }
+
+    #[test]
+    fn fenced_pullquote_round_trips() {
+        assert_eq!(
+            round_trip("```pullquote\nA striking quote.\n+++\nJane Doe\n```"),
+            "```pullquote\nA striking quote.\n+++\nJane Doe\n```"
+        );
+    }
+
+    #[test]
+    fn fenced_pullquote_without_citation_round_trips() {
+        assert_eq!(round_trip("```pullquote\nNo attribution here.\n```"), "```pullquote\nNo attribution here.\n```");
+    }
+
+    #[test]
+    fn fenced_details_round_trips() {
+        assert_eq!(
+            round_trip("```details\nWie funktioniert das?\n+++\nSo funktioniert das.\n```"),
+            "```details\nWie funktioniert das?\n+++\nSo funktioniert das.\n```"
+        );
+    }
+
+    #[test]
+    fn fenced_details_with_an_image_in_the_body_round_trips() {
+        assert_eq!(
+            round_trip("```details\nGalerie?\n+++\n![a cat](cat.png)\n```"),
+            "```details\nGalerie?\n+++\n![a cat](cat.png)\n```"
         );
     }
 

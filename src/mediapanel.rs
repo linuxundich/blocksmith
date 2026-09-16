@@ -366,7 +366,11 @@ fn build_featured_image_row(frontmatter: Rc<RefCell<Frontmatter>>, doc_dir: Opti
         let row = row.clone();
         let upload_button_for_click = upload_button.clone();
         upload_button.connect_clicked(move |_| {
-            let Some(source) = frontmatter.borrow().featured_image.clone() else { return };
+            let (source, alt) = {
+                let fm = frontmatter.borrow();
+                let Some(source) = fm.featured_image.clone() else { return };
+                (source, fm.featured_image_alt.clone())
+            };
 
             upload_button_for_click.set_sensitive(false);
             row.set_subtitle(&tr("Wird hochgeladen …"));
@@ -382,7 +386,11 @@ fn build_featured_image_row(frontmatter: Rc<RefCell<Frontmatter>>, doc_dir: Opti
                     })
                     .and_then(|password| {
                         let client = wpclient::Client::new(&site.url, &site.username, &password);
-                        export::upload_image_file(&client, &source, doc_dir.as_deref()).map_err(|err| err.to_string())
+                        let uploaded = export::upload_image_file(&client, &source, doc_dir.as_deref()).map_err(|err| err.to_string())?;
+                        if alt.is_some() {
+                            client.update_media_metadata(uploaded.id, alt.as_deref(), None).map_err(|err| err.to_string())?;
+                        }
+                        Ok(uploaded)
                     });
                 let _ = tx.send(outcome);
             });
@@ -432,6 +440,19 @@ struct MediaRowHandles {
     upload_status_label: gtk4::Label,
 }
 
+/// Shows/hides an alt-text-length warning icon and sets its tooltip from
+/// `media::alt_text_length_warning` - shared by the initial per-row state
+/// and every subsequent edit.
+fn update_alt_length_warning(icon: &gtk4::Image, text: &str) {
+    match media::alt_text_length_warning(text) {
+        Some(message) => {
+            icon.set_tooltip_text(Some(&message));
+            icon.set_visible(true);
+        }
+        None => icon.set_visible(false),
+    }
+}
+
 fn build_row(
     index: usize,
     frontmatter: Rc<RefCell<Frontmatter>>,
@@ -456,9 +477,20 @@ fn build_row(
     }
     alt_entry_row.set_visible(alt_switch_row.is_active());
 
+    // Non-blocking hint for an unusually long alt text (see
+    // `media::alt_text_length_warning`) - a suffix icon with a tooltip,
+    // never something that blocks saving, since some images genuinely need
+    // a longer description.
+    let alt_length_warning_icon = gtk4::Image::from_icon_name("dialog-warning-symbolic");
+    alt_length_warning_icon.add_css_class("warning");
+    alt_length_warning_icon.set_visible(false);
+    alt_entry_row.add_suffix(&alt_length_warning_icon);
+    update_alt_length_warning(&alt_length_warning_icon, &alt_entry_row.text());
+
     {
         let frontmatter = frontmatter.clone();
         let alt_entry_row = alt_entry_row.clone();
+        let alt_length_warning_icon = alt_length_warning_icon.clone();
         let status_label = status_label.clone();
         let preview_pane = preview_pane.clone();
         alt_switch_row.connect_active_notify(move |row| {
@@ -476,6 +508,7 @@ fn build_row(
                     AltText::Undefined
                 };
             }
+            update_alt_length_warning(&alt_length_warning_icon, &alt_entry_row.text());
             status_label.set_label(&summary_text(&frontmatter));
             preview_pane.refresh_media(&frontmatter.borrow().media);
         });
@@ -483,6 +516,7 @@ fn build_row(
     {
         let frontmatter = frontmatter.clone();
         let alt_switch_row = alt_switch_row.clone();
+        let alt_length_warning_icon = alt_length_warning_icon.clone();
         let status_label = status_label.clone();
         let preview_pane = preview_pane.clone();
         alt_entry_row.connect_changed(move |row| {
@@ -490,6 +524,7 @@ fn build_row(
                 return;
             }
             let text = row.text().to_string();
+            update_alt_length_warning(&alt_length_warning_icon, &text);
             if let Some(item) = frontmatter.borrow_mut().media.get_mut(index) {
                 item.alt = if text.is_empty() { AltText::Empty } else { AltText::Text(text) };
             }

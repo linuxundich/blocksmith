@@ -113,6 +113,14 @@ pub struct PostDetail {
     /// Site-local `"YYYY-MM-DDTHH:MM:SS"` - the post's publish date, or for
     /// a `status == "future"` post, its scheduled publish date/time.
     pub date: String,
+    /// The post's permalink as WordPress's own `get_permalink()` computes
+    /// it, even for an unpublished post - not publicly viewable as-is for
+    /// anything but `status == "publish"`, but appending `?preview=true`
+    /// (or `&preview=true` if it already has a query string) to it is
+    /// WordPress's own convention for viewing an unpublished post's
+    /// current content, given a logged-in, authorized session - see
+    /// `export.rs`'s "Vorschau öffnen" button.
+    pub link: String,
 }
 
 fn network_error(err: ureq::Error) -> ApiError {
@@ -439,7 +447,7 @@ impl Client {
     /// Markdown.
     pub fn get_post(&self, id: u64) -> Result<PostDetail> {
         let url = format!(
-            "{}?context=edit&_fields=id,title,content,excerpt,status,slug,categories,tags,featured_media,date,meta",
+            "{}?context=edit&_fields=id,title,content,excerpt,status,slug,categories,tags,featured_media,date,meta,link",
             self.endpoint(&format!("posts/{id}"))
         );
         let value = self.get_json(&url)?;
@@ -466,6 +474,7 @@ impl Client {
             tags: u64_array("tags"),
             featured_media: value.get("featured_media").and_then(Value::as_u64).unwrap_or(0),
             date: value.get("date").and_then(Value::as_str).unwrap_or_default().to_string(),
+            link: value.get("link").and_then(Value::as_str).unwrap_or_default().to_string(),
         })
     }
 

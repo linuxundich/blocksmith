@@ -51,6 +51,20 @@ pub enum Block {
     /// block containing one Markdown image reference per line - see
     /// `parse_fenced_gallery`.
     Gallery { images: Vec<GalleryImage> },
+    /// `wp:pullquote` - a highlighted, larger-type quote pulled out of the
+    /// article, with an optional attribution. Unlike `wp:quote` this isn't
+    /// an `InnerBlocks` container in WordPress - it's plain RichText, so
+    /// each paragraph here becomes a bare `<p>`, not a nested
+    /// `wp:paragraph`. Written as a fenced ` ```pullquote ` block, split
+    /// into quote text and citation on a line containing exactly `+++`
+    /// (same convention as `Columns`) - see `parse_fenced_pullquote`.
+    Pullquote { paragraphs: Vec<String>, citation: Option<String> },
+    /// `wp:details` - a native collapsible disclosure widget (a `<summary>`
+    /// plus a hidden body that *is* a real `InnerBlocks` container, unlike
+    /// `Pullquote` above). Written as a fenced ` ```details ` block, split
+    /// into summary and body on a line containing exactly `+++` (same
+    /// convention as `Columns`) - see `parse_fenced_details`.
+    Details { summary: String, blocks: Vec<Block> },
     /// Passthrough for constructs not (yet) mapped to a specific Gutenberg
     /// block (footnotes, definition lists, ...) and for raw HTML the author
     /// wrote directly in the Markdown source.
@@ -259,18 +273,8 @@ fn as_lone_embed(events: &[Event]) -> Option<Block> {
 /// re-parsed as ordinary Markdown, so a column can hold anything a normal
 /// article body can (paragraphs, images, lists, ...).
 fn parse_fenced_columns(text: &str) -> Block {
-    let mut sections: Vec<String> = vec![String::new()];
-    for line in text.lines() {
-        if line.trim() == "+++" {
-            sections.push(String::new());
-        } else {
-            let current = sections.last_mut().expect("sections always has at least one element");
-            current.push_str(line);
-            current.push('\n');
-        }
-    }
     Block::Columns {
-        columns: sections.iter().map(|s| parse_markdown(s)).collect(),
+        columns: split_on_plus_separator(text).iter().map(|s| parse_markdown(s)).collect(),
     }
 }
 
@@ -325,6 +329,49 @@ fn parse_fenced_gallery(text: &str) -> Block {
     Block::Gallery { images }
 }
 
+/// Splits a fenced block's raw text into sections on any line containing
+/// exactly `+++` - the same separator convention `parse_fenced_columns`
+/// uses, shared here by `parse_fenced_pullquote` and `parse_fenced_details`
+/// since both need one "primary" section plus one optional second section.
+fn split_on_plus_separator(text: &str) -> Vec<String> {
+    let mut sections: Vec<String> = vec![String::new()];
+    for line in text.lines() {
+        if line.trim() == "+++" {
+            sections.push(String::new());
+        } else {
+            let current = sections.last_mut().expect("sections always has at least one element");
+            current.push_str(line);
+            current.push('\n');
+        }
+    }
+    sections
+}
+
+/// Splits a ` ```pullquote ` block's raw text into quote text and an
+/// optional citation on a `+++` line (see `split_on_plus_separator`). The
+/// quote text is parsed as ordinary Markdown and flattened to one HTML
+/// string per paragraph (`block_inner_html`), matching how WordPress's own
+/// pullquote RichText field holds a bare `<p>` per paragraph rather than a
+/// nested block tree.
+fn parse_fenced_pullquote(text: &str) -> Block {
+    let sections = split_on_plus_separator(text);
+    let citation = sections.get(1).map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+    let paragraphs = parse_markdown(&sections[0]).iter().map(block_inner_html).collect();
+    Block::Pullquote { paragraphs, citation }
+}
+
+/// Splits a ` ```details ` block's raw text into a summary and body on a
+/// `+++` line (see `split_on_plus_separator`). The summary is flattened to
+/// a single inline HTML string (`<summary>` holds plain RichText, not a
+/// block tree); the body is parsed as ordinary Markdown into a real `Block`
+/// tree, since `wp:details`'s body *is* an `InnerBlocks` container.
+fn parse_fenced_details(text: &str) -> Block {
+    let sections = split_on_plus_separator(text);
+    let summary = parse_markdown(&sections[0]).first().map(block_inner_html).unwrap_or_default();
+    let blocks = sections.get(1).map(|s| parse_markdown(s)).unwrap_or_default();
+    Block::Details { summary, blocks }
+}
+
 fn parse_blocks(events: &[Event], mut i: usize, stop: usize) -> Vec<Block> {
     let mut blocks = Vec::new();
     while i < stop {
@@ -373,6 +420,8 @@ fn parse_blocks(events: &[Event], mut i: usize, stop: usize) -> Vec<Block> {
                             Some("columns") => parse_fenced_columns(&text),
                             Some("buttons") => parse_fenced_buttons(&text),
                             Some("gallery") => parse_fenced_gallery(&text),
+                            Some("pullquote") => parse_fenced_pullquote(&text),
+                            Some("details") => parse_fenced_details(&text),
                             _ => Block::CodeBlock { lang, text },
                         });
                     }
@@ -667,6 +716,29 @@ fn render_gallery(images: &[GalleryImage]) -> String {
     )
 }
 
+fn render_pullquote(paragraphs: &[String], citation: &Option<String>) -> String {
+    let text = paragraphs.iter().map(|p| format!("<p>{p}</p>")).collect::<Vec<_>>().join("");
+    let cite = citation
+        .as_ref()
+        .filter(|c| !c.is_empty())
+        .map(|c| format!("<cite>{}</cite>", escape_html(c)))
+        .unwrap_or_default();
+    wrap(
+        "pullquote",
+        None,
+        &format!("<figure class=\"wp-block-pullquote\"><blockquote>{text}{cite}</blockquote></figure>"),
+    )
+}
+
+fn render_details(summary: &str, blocks: &[Block]) -> String {
+    let inner = render_blocks(blocks);
+    wrap(
+        "details",
+        None,
+        &format!("<details class=\"wp-block-details\"><summary>{summary}</summary>\n{inner}</details>"),
+    )
+}
+
 fn render_block(block: &Block) -> String {
     match block {
         Block::Paragraph { html } => wrap("paragraph", None, &format!("<p>{html}</p>")),
@@ -728,6 +800,8 @@ fn render_block(block: &Block) -> String {
         Block::Columns { columns } => render_columns(columns),
         Block::Buttons { buttons } => render_buttons(buttons),
         Block::Gallery { images } => render_gallery(images),
+        Block::Pullquote { paragraphs, citation } => render_pullquote(paragraphs, citation),
+        Block::Details { summary, blocks } => render_details(summary, blocks),
         // WordPress's "Weiterlesen" marker is, unusually among Gutenberg
         // blocks, still just the bare `<!--more-->` HTML comment as its own
         // inner content - `pulldown-cmark` already hands that to us as an
@@ -952,6 +1026,36 @@ mod tests {
              <!-- wp:image {\"sizeSlug\":\"large\"} -->\n<figure class=\"wp-block-image size-large\"><img src=\"one.jpg\" alt=\"First\"/></figure>\n<!-- /wp:image -->\n\n\
              <!-- wp:image {\"sizeSlug\":\"large\"} -->\n<figure class=\"wp-block-image size-large\"><img src=\"two.jpg\" alt=\"Second\"/></figure>\n<!-- /wp:image -->\n\
              </figure>\n<!-- /wp:gallery -->"
+        );
+    }
+
+    #[test]
+    fn fenced_pullquote_block_becomes_wp_pullquote_with_citation() {
+        let out = markdown_to_gutenberg("```pullquote\nA striking quote.\n+++\nJane Doe\n```");
+        assert_eq!(
+            out,
+            "<!-- wp:pullquote -->\n<figure class=\"wp-block-pullquote\"><blockquote>\
+             <p>A striking quote.</p><cite>Jane Doe</cite></blockquote></figure>\n<!-- /wp:pullquote -->"
+        );
+    }
+
+    #[test]
+    fn fenced_pullquote_block_without_citation_omits_cite_tag() {
+        let out = markdown_to_gutenberg("```pullquote\nNo attribution here.\n```");
+        assert_eq!(
+            out,
+            "<!-- wp:pullquote -->\n<figure class=\"wp-block-pullquote\"><blockquote>\
+             <p>No attribution here.</p></blockquote></figure>\n<!-- /wp:pullquote -->"
+        );
+    }
+
+    #[test]
+    fn fenced_details_block_becomes_wp_details() {
+        let out = markdown_to_gutenberg("```details\nWie funktioniert das?\n+++\nSo funktioniert das.\n```");
+        assert_eq!(
+            out,
+            "<!-- wp:details -->\n<details class=\"wp-block-details\"><summary>Wie funktioniert das?</summary>\n\
+             <!-- wp:paragraph -->\n<p>So funktioniert das.</p>\n<!-- /wp:paragraph --></details>\n<!-- /wp:details -->"
         );
     }
 

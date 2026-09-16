@@ -314,6 +314,7 @@ fn fetch_and_convert(site: &wpsite::SiteConfig, password: &str, post_id: u64) ->
         rank_math_description: (!detail.rank_math_description.is_empty()).then_some(detail.rank_math_description),
         rank_math_focus_keyword: (!detail.rank_math_focus_keyword.is_empty()).then_some(detail.rank_math_focus_keyword),
         featured_image: None,
+        featured_image_alt: None,
         wp_post_id: Some(detail.id),
         featured_media_id: (detail.featured_media != 0).then_some(detail.featured_media),
         media: crate::media::reconcile(&[], &body),

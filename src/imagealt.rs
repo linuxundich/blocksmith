@@ -36,6 +36,19 @@ use crate::i18n::tr;
 use crate::media::{self, AltText};
 use crate::preview;
 
+/// Shows/hides an alt-text-length warning icon and sets its tooltip from
+/// `media::alt_text_length_warning` - shared by the initial state when a
+/// dialog opens and every subsequent edit.
+fn update_alt_length_warning(icon: &gtk4::Image, text: &str) {
+    match media::alt_text_length_warning(text) {
+        Some(message) => {
+            icon.set_tooltip_text(Some(&message));
+            icon.set_visible(true);
+        }
+        None => icon.set_visible(false),
+    }
+}
+
 /// Rebuilds the context-menu section (see `install`) from whether `line`
 /// actually holds a media reference - empty when it doesn't, so the
 /// section contributes no items (and no stray separator) to the popover.
@@ -212,9 +225,19 @@ pub fn open_dialog_for_index(window: &gtk4::Window, frontmatter: &Rc<RefCell<Fro
     }
     alt_entry_row.set_visible(alt_switch_row.is_active());
 
+    // Non-blocking hint for an unusually long alt text (see
+    // `media::alt_text_length_warning`) - only ever a suffix icon with a
+    // tooltip, never something that stops the dialog from being closed, since
+    // some images genuinely need a longer description.
+    let alt_length_warning_icon = gtk4::Image::from_icon_name("dialog-warning-symbolic");
+    alt_length_warning_icon.add_css_class("warning");
+    alt_length_warning_icon.set_visible(false);
+    alt_entry_row.add_suffix(&alt_length_warning_icon);
+
     {
         let frontmatter = frontmatter.clone();
         let alt_entry_row = alt_entry_row.clone();
+        let alt_length_warning_icon = alt_length_warning_icon.clone();
         let preview_pane = preview_pane.clone();
         alt_switch_row.connect_active_notify(move |row| {
             let active = row.is_active();
@@ -227,24 +250,28 @@ pub fn open_dialog_for_index(window: &gtk4::Window, frontmatter: &Rc<RefCell<Fro
                     AltText::Undefined
                 };
             }
+            update_alt_length_warning(&alt_length_warning_icon, &alt_entry_row.text());
             preview_pane.refresh_media(&frontmatter.borrow().media);
         });
     }
     {
         let frontmatter = frontmatter.clone();
         let alt_switch_row = alt_switch_row.clone();
+        let alt_length_warning_icon = alt_length_warning_icon.clone();
         let preview_pane = preview_pane.clone();
         alt_entry_row.connect_changed(move |row| {
             if !alt_switch_row.is_active() {
                 return;
             }
             let text = row.text().to_string();
+            update_alt_length_warning(&alt_length_warning_icon, &text);
             if let Some(item) = frontmatter.borrow_mut().media.get_mut(index) {
                 item.alt = if text.is_empty() { AltText::Empty } else { AltText::Text(text) };
             }
             preview_pane.refresh_media(&frontmatter.borrow().media);
         });
     }
+    update_alt_length_warning(&alt_length_warning_icon, &alt_entry_row.text());
 
     let caption_row = adw::EntryRow::builder().title(tr("Bildunterschrift")).text(item.caption.as_deref().unwrap_or("")).build();
     {

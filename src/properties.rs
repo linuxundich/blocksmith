@@ -13,7 +13,21 @@ use gtk4::gio;
 
 use crate::document::{self, parse_list, Frontmatter, PostStatus};
 use crate::i18n::tr;
-use crate::{autocomplete, taxonomy, termcache, wpsite};
+use crate::{autocomplete, media, taxonomy, termcache, wpsite};
+
+/// Shows/hides an alt-text-length warning icon and sets its tooltip from
+/// `media::alt_text_length_warning` - same non-blocking hint as
+/// `mediapanel.rs`/`imagealt.rs` use for body-image alt text, applied here
+/// to the featured image's alt text.
+fn update_alt_length_warning(icon: &gtk4::Image, text: &str) {
+    match media::alt_text_length_warning(text) {
+        Some(message) => {
+            icon.set_tooltip_text(Some(&message));
+            icon.set_visible(true);
+        }
+        None => icon.set_visible(false),
+    }
+}
 
 /// Google's search results truncate a URL display around this many
 /// characters - past it, the SEO recommendation is a shorter slug (or,
@@ -135,6 +149,25 @@ pub fn open(parent: &adw::ApplicationWindow, frontmatter: Rc<RefCell<Frontmatter
     featured_image_picker_button.set_valign(gtk4::Align::Center);
     featured_image_picker_button.add_css_class("flat");
     featured_image_row.add_suffix(&featured_image_picker_button);
+    // Unlike a body image's alt text (`MediaItem.alt`, scanned from the
+    // Markdown), the featured image is a single `Frontmatter` field with
+    // nothing to scan it from - so it needs its own plain entry here
+    // rather than piggybacking on Medienverwaltung's per-image rows. Sent
+    // as the resulting WordPress attachment's `alt_text` on upload
+    // (`mediapanel.rs`), same as any other image.
+    let featured_image_alt_row = adw::EntryRow::builder()
+        .title(tr("Alt-Text für Aufmacherbild"))
+        .text(current.featured_image_alt.clone().unwrap_or_default().as_str())
+        .build();
+    // Non-blocking hint for an unusually long alt text (see
+    // `media::alt_text_length_warning`) - a suffix icon with a tooltip,
+    // matching the same warning on the per-image rows in
+    // `mediapanel.rs`/`imagealt.rs`.
+    let featured_image_alt_length_warning_icon = gtk4::Image::from_icon_name("dialog-warning-symbolic");
+    featured_image_alt_length_warning_icon.add_css_class("warning");
+    featured_image_alt_length_warning_icon.set_visible(false);
+    featured_image_alt_row.add_suffix(&featured_image_alt_length_warning_icon);
+    update_alt_length_warning(&featured_image_alt_length_warning_icon, &featured_image_alt_row.text());
 
     let status_labels: Vec<String> = PostStatus::ALL.iter().map(|s| s.label()).collect();
     let status_label_refs: Vec<&str> = status_labels.iter().map(String::as_str).collect();
@@ -193,6 +226,7 @@ pub fn open(parent: &adw::ApplicationWindow, frontmatter: Rc<RefCell<Frontmatter
     group.add(&categories_row);
     group.add(&tags_row);
     group.add(&featured_image_row);
+    group.add(&featured_image_alt_row);
 
     autocomplete::attach(&categories_row, category_terms);
     autocomplete::attach(&tags_row, tag_terms);
@@ -301,6 +335,15 @@ pub fn open(parent: &adw::ApplicationWindow, frontmatter: Rc<RefCell<Frontmatter
         featured_image_row.connect_changed(move |row| {
             let text = row.text().to_string();
             frontmatter.borrow_mut().featured_image = (!text.is_empty()).then_some(text);
+        });
+    }
+    {
+        let frontmatter = frontmatter.clone();
+        let featured_image_alt_length_warning_icon = featured_image_alt_length_warning_icon.clone();
+        featured_image_alt_row.connect_changed(move |row| {
+            let text = row.text().to_string();
+            update_alt_length_warning(&featured_image_alt_length_warning_icon, &text);
+            frontmatter.borrow_mut().featured_image_alt = (!text.is_empty()).then_some(text);
         });
     }
     {

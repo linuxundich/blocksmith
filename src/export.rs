@@ -19,7 +19,7 @@ use gtk4::glib;
 
 use crate::document::{Frontmatter, PostStatus};
 use crate::i18n::tr;
-use crate::{linkcheck, media, mediapanel, notify, preview, secrets, wpclient, wpsite};
+use crate::{browser, linkcheck, media, mediapanel, notify, preview, secrets, wpclient, wpsite};
 
 pub fn open(
     parent: &adw::ApplicationWindow,
@@ -27,6 +27,8 @@ pub fn open(
     frontmatter: Rc<RefCell<Frontmatter>>,
     doc_dir: Option<PathBuf>,
     preview_pane: Rc<preview::PreviewPane>,
+    app_view_stack: &adw::ViewStack,
+    browser_view: &Rc<browser::BrowserView>,
 ) {
     let site = wpsite::load();
     let current_fm = frontmatter.borrow().clone();
@@ -130,15 +132,37 @@ pub fn open(
     schedule_button.set_halign(gtk4::Align::End);
     schedule_button.set_visible(current_fm.status == PostStatus::Future);
 
+    // Same reasoning as `schedule_button` above, for the "Privat" status.
+    let private_button = gtk4::Button::with_label(&tr("Privat veröffentlichen"));
+    private_button.set_halign(gtk4::Align::End);
+    private_button.set_visible(current_fm.status == PostStatus::Private);
+
     let delete_button = gtk4::Button::with_label(&tr("Von WordPress löschen"));
     delete_button.add_css_class("destructive-action");
     delete_button.set_halign(gtk4::Align::End);
     delete_button.set_visible(current_fm.wp_post_id.is_some());
 
+    // Only useful for a post that already exists on WordPress but isn't
+    // publicly published yet - once it's `Publish`, the real permalink
+    // shown via `link_button` after a successful send already covers this.
+    // Uncertain by nature (see the tooltip): WordPress's `?preview=true`
+    // convention only shows the current draft content to a session that's
+    // logged into wp-admin as a user allowed to edit this post, and the
+    // Browser tab this opens it in has no share to that session unless the
+    // user has separately logged in there themselves.
+    let preview_button = gtk4::Button::with_label(&tr("Vorschau öffnen"));
+    preview_button.set_halign(gtk4::Align::End);
+    preview_button.set_tooltip_text(Some(&tr(
+        "Öffnet die WordPress-Vorschau im Browser-Tab. Dafür muss dort eine bei wp-admin angemeldete Sitzung bestehen - falls nicht, erscheint dort ein Login statt der Vorschau.",
+    )));
+    preview_button.set_visible(current_fm.wp_post_id.is_some() && current_fm.status != PostStatus::Publish);
+
     let button_row = gtk4::Box::builder().orientation(gtk4::Orientation::Horizontal).spacing(6).halign(gtk4::Align::End).build();
     button_row.append(&delete_button);
+    button_row.append(&preview_button);
     button_row.append(&draft_button);
     button_row.append(&schedule_button);
+    button_row.append(&private_button);
     button_row.append(&publish_button);
 
     if site.url.is_empty() {
@@ -146,12 +170,15 @@ pub fn open(
         publish_button.set_sensitive(false);
         draft_button.set_sensitive(false);
         schedule_button.set_sensitive(false);
+        private_button.set_sensitive(false);
         delete_button.set_sensitive(false);
+        preview_button.set_sensitive(false);
     } else if current_fm.title.is_empty() {
         status_label.set_label(&tr("Bitte zuerst einen Titel in den Artikel-Eigenschaften setzen."));
         publish_button.set_sensitive(false);
         draft_button.set_sensitive(false);
         schedule_button.set_sensitive(false);
+        private_button.set_sensitive(false);
     }
 
     content_box.append(&view_stack);
@@ -244,10 +271,71 @@ pub fn open(
         });
     }
 
+    {
+        let frontmatter = frontmatter.clone();
+        let status_label = status_label.clone();
+        let link_button = link_button.clone();
+        let preview_button_for_click = preview_button.clone();
+        let app_view_stack = app_view_stack.clone();
+        let browser_view = browser_view.clone();
+        preview_button.connect_clicked(move |_| {
+            let Some(post_id) = frontmatter.borrow().wp_post_id else { return };
+            preview_button_for_click.set_sensitive(false);
+            status_label.set_label(&tr("Vorschau wird geladen …"));
+            link_button.set_visible(false);
+
+            let site = wpsite::load();
+            let (tx, rx) = mpsc::channel::<Result<String, String>>();
+            std::thread::spawn(move || {
+                let outcome = futures_lite::future::block_on(secrets::load_app_password(&site.url, &site.username))
+                    .map_err(|err| err.to_string())
+                    .and_then(|maybe_password| {
+                        maybe_password.ok_or_else(|| tr("Kein Application Password im Schlüsselbund gefunden."))
+                    })
+                    .and_then(|password| {
+                        wpclient::Client::new(&site.url, &site.username, &password)
+                            .get_post(post_id)
+                            .map(|detail| detail.link)
+                            .map_err(|err| err.to_string())
+                    })
+                    .map(|link| preview_url_for(&link));
+                let _ = tx.send(outcome);
+            });
+
+            let status_label = status_label.clone();
+            let preview_button = preview_button_for_click.clone();
+            let app_view_stack = app_view_stack.clone();
+            let browser_view = browser_view.clone();
+            glib::timeout_add_local(Duration::from_millis(150), move || match rx.try_recv() {
+                Ok(Ok(preview_url)) => {
+                    browser_view.load_uri(&preview_url);
+                    app_view_stack.set_visible_child_name("browser");
+                    status_label.set_label(&tr(
+                        "Vorschau im Browser-Tab geöffnet - dort ist ggf. eine Anmeldung bei wp-admin nötig, falls noch keine angemeldete Sitzung besteht.",
+                    ));
+                    preview_button.set_sensitive(true);
+                    glib::ControlFlow::Break
+                }
+                Ok(Err(err)) => {
+                    status_label.set_label(&tr("Fehler beim Laden der Vorschau: {err}").replace("{err}", &err));
+                    preview_button.set_sensitive(true);
+                    glib::ControlFlow::Break
+                }
+                Err(mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    status_label.set_label(&tr("Interner Fehler: Vorschau-Thread hat kein Ergebnis geliefert."));
+                    preview_button.set_sensitive(true);
+                    glib::ControlFlow::Break
+                }
+            });
+        });
+    }
+
     let status = StatusWidgets { label: status_label.clone(), link: link_button.clone() };
-    wire_publish_button(&publish_button, &[&draft_button, &schedule_button], PostStatus::Publish, &frontmatter, &body, &doc_dir, &status);
-    wire_publish_button(&draft_button, &[&publish_button, &schedule_button], PostStatus::Draft, &frontmatter, &body, &doc_dir, &status);
-    wire_publish_button(&schedule_button, &[&publish_button, &draft_button], PostStatus::Future, &frontmatter, &body, &doc_dir, &status);
+    wire_publish_button(&publish_button, &[&draft_button, &schedule_button, &private_button], PostStatus::Publish, &frontmatter, &body, &doc_dir, &status);
+    wire_publish_button(&draft_button, &[&publish_button, &schedule_button, &private_button], PostStatus::Draft, &frontmatter, &body, &doc_dir, &status);
+    wire_publish_button(&schedule_button, &[&publish_button, &draft_button, &private_button], PostStatus::Future, &frontmatter, &body, &doc_dir, &status);
+    wire_publish_button(&private_button, &[&publish_button, &draft_button, &schedule_button], PostStatus::Private, &frontmatter, &body, &doc_dir, &status);
 
     dialog.present(Some(parent));
 }
@@ -262,6 +350,18 @@ pub fn open(
 struct StatusWidgets {
     label: gtk4::Label,
     link: gtk4::LinkButton,
+}
+
+/// Appends WordPress's `preview=true` query parameter to a post's
+/// permalink (`PostDetail::link`) - its documented convention for showing
+/// an unpublished post's current content to a logged-in, authorized
+/// session, used by the "Vorschau öffnen" button's click handler.
+fn preview_url_for(link: &str) -> String {
+    if link.contains('?') {
+        format!("{link}&preview=true")
+    } else {
+        format!("{link}?preview=true")
+    }
 }
 
 /// Wires one of the three publish-flow buttons ("Veröffentlichen" /
@@ -500,6 +600,7 @@ fn apply_media_metadata(blocks: &mut [gutenberg::Block], media: &[media::MediaIt
                     apply_media_metadata(column, media);
                 }
             }
+            gutenberg::Block::Details { blocks, .. } => apply_media_metadata(blocks, media),
             _ => {}
         }
     }
@@ -536,6 +637,7 @@ fn rewrite_image_urls(blocks: &mut [gutenberg::Block], urls: &std::collections::
                     }
                 }
             }
+            gutenberg::Block::Details { blocks, .. } => rewrite_image_urls(blocks, urls),
             _ => {}
         }
     }
@@ -616,6 +718,16 @@ mod tests {
     use super::*;
 
     #[test]
+    fn preview_url_appends_preview_true_to_a_plain_permalink() {
+        assert_eq!(preview_url_for("https://example.com/?p=123"), "https://example.com/?p=123&preview=true");
+    }
+
+    #[test]
+    fn preview_url_appends_preview_true_with_a_question_mark_when_the_link_has_no_query_string() {
+        assert_eq!(preview_url_for("https://example.com/my-slug/"), "https://example.com/my-slug/?preview=true");
+    }
+
+    #[test]
     fn rewrite_image_urls_recurses_into_columns_and_gallery_blocks() {
         let urls: std::collections::HashMap<String, String> =
             [("local-a.png".to_string(), "https://example.com/a.png".to_string()), ("local-b.png".to_string(), "https://example.com/b.png".to_string())]
@@ -635,6 +747,19 @@ mod tests {
         assert_eq!(url, "https://example.com/a.png");
         let gutenberg::Block::Gallery { images } = &blocks[1] else { panic!("expected Gallery") };
         assert_eq!(images[0].url, "https://example.com/b.png");
+    }
+
+    #[test]
+    fn rewrite_image_urls_recurses_into_details_blocks() {
+        let urls: std::collections::HashMap<String, String> = [("local-c.png".to_string(), "https://example.com/c.png".to_string())].into_iter().collect();
+        let mut blocks = vec![gutenberg::Block::Details {
+            summary: "Mehr anzeigen".to_string(),
+            blocks: vec![gutenberg::Block::Image { url: "local-c.png".to_string(), alt: String::new(), title: None }],
+        }];
+        rewrite_image_urls(&mut blocks, &urls);
+        let gutenberg::Block::Details { blocks: inner, .. } = &blocks[0] else { panic!("expected Details") };
+        let gutenberg::Block::Image { url, .. } = &inner[0] else { panic!("expected Image") };
+        assert_eq!(url, "https://example.com/c.png");
     }
 
     #[test]
@@ -708,6 +833,7 @@ mod tests {
             rank_math_description: None,
             rank_math_focus_keyword: None,
             featured_image: None,
+            featured_image_alt: None,
             wp_post_id: None,
             featured_media_id: None,
             media: Vec::new(),
@@ -755,6 +881,7 @@ mod tests {
             rank_math_description: None,
             rank_math_focus_keyword: None,
             featured_image: None,
+            featured_image_alt: None,
             wp_post_id: None,
             featured_media_id: None,
             media: Vec::new(),
@@ -805,6 +932,7 @@ mod tests {
             rank_math_description: None,
             rank_math_focus_keyword: None,
             featured_image: None,
+            featured_image_alt: None,
             wp_post_id: None,
             featured_media_id: None,
             media: Vec::new(),

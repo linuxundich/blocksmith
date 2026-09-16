@@ -80,7 +80,15 @@ fn main() -> glib::ExitCode {
     app.connect_activate(|app| {
         appearance::apply_saved_color_scheme();
         load_chat_bubble_css();
-        let win = window::build(app, None);
+        // A plain launch (no file argument - see `connect_open` below for
+        // that case) reopens the most recently opened/saved article
+        // instead of always starting at a blank "Unbenannt" document -
+        // `recentfiles::load()` already tracks exactly this, filtered to
+        // paths that still exist, so there's nothing new to persist here.
+        // `Ctrl+N` still gets to a blank document in one step, same as
+        // always.
+        let initial_path = recentfiles::load().into_iter().next();
+        let win = window::build(app, initial_path);
         win.present();
     });
 

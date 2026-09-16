@@ -28,6 +28,12 @@ pub enum PostStatus {
     /// with this status and no valid `scheduled_at` rather than let that
     /// surprise happen.
     Future,
+    /// Published, but visible only to logged-in users with permission to
+    /// read private posts (WordPress's own "Private" visibility) - unlike
+    /// `Future`, this behaves like an immediate publish from the REST API's
+    /// perspective, just with different visibility, so it needs no
+    /// `scheduled_at`-style special-casing anywhere else.
+    Private,
 }
 
 impl PostStatus {
@@ -37,6 +43,7 @@ impl PostStatus {
             PostStatus::Pending => "pending",
             PostStatus::Publish => "publish",
             PostStatus::Future => "future",
+            PostStatus::Private => "private",
         }
     }
 
@@ -45,11 +52,12 @@ impl PostStatus {
             "pending" => PostStatus::Pending,
             "publish" => PostStatus::Publish,
             "future" => PostStatus::Future,
+            "private" => PostStatus::Private,
             _ => PostStatus::Draft,
         }
     }
 
-    pub const ALL: [PostStatus; 4] = [PostStatus::Draft, PostStatus::Pending, PostStatus::Publish, PostStatus::Future];
+    pub const ALL: [PostStatus; 5] = [PostStatus::Draft, PostStatus::Pending, PostStatus::Publish, PostStatus::Future, PostStatus::Private];
 
     /// Human-readable, translated label, for the properties dialog's
     /// dropdown. Each arm calls `tr()` directly on its own literal (rather
@@ -62,6 +70,7 @@ impl PostStatus {
             PostStatus::Pending => crate::i18n::tr("Ausstehend"),
             PostStatus::Publish => crate::i18n::tr("Veröffentlicht"),
             PostStatus::Future => crate::i18n::tr("Geplant"),
+            PostStatus::Private => crate::i18n::tr("Privat"),
         }
     }
 }
@@ -94,6 +103,13 @@ pub struct Frontmatter {
     pub rank_math_description: Option<String>,
     pub rank_math_focus_keyword: Option<String>,
     pub featured_image: Option<String>,
+    /// Alt text for `featured_image` - sent as the resulting WordPress
+    /// media attachment's `alt_text` on upload (`mediapanel.rs`), the same
+    /// way a body image's alt text is. Independent of any body `MediaItem`
+    /// even if the same file happens to also appear in the article body,
+    /// since the featured image is a single `Frontmatter` field, not a
+    /// `MediaItem` scanned from the body.
+    pub featured_image_alt: Option<String>,
     /// Set once the document has been published/updated via the WordPress
     /// REST API (see M5), so re-exporting updates the same post.
     pub wp_post_id: Option<u64>,
@@ -186,6 +202,9 @@ pub fn parse(input: &str) -> Document {
             "featured_image" => {
                 frontmatter.featured_image = (!value.is_empty()).then(|| unquote(value));
             }
+            "featured_image_alt" => {
+                frontmatter.featured_image_alt = (!value.is_empty()).then(|| unquote(value));
+            }
             "wp_post_id" => frontmatter.wp_post_id = value.parse::<u64>().ok(),
             "wp_featured_media_id" => frontmatter.featured_media_id = value.parse::<u64>().ok(),
             "media_json" => frontmatter.media = crate::media::from_json_str(value),
@@ -234,6 +253,9 @@ pub fn serialize(doc: &Document) -> String {
     }
     if let Some(img) = &fm.featured_image {
         out.push_str(&format!("featured_image: \"{}\"\n", escape(img)));
+    }
+    if let Some(alt) = &fm.featured_image_alt {
+        out.push_str(&format!("featured_image_alt: \"{}\"\n", escape(alt)));
     }
     if let Some(id) = fm.wp_post_id {
         out.push_str(&format!("wp_post_id: {id}\n"));
@@ -556,6 +578,7 @@ mod tests {
                      rank_math_description: \"SEO description.\"\n\
                      rank_math_focus_keyword: \"gtk markdown editor\"\n\
                      featured_image: \"/tmp/cat.png\"\n\
+                     featured_image_alt: \"a sleeping cat\"\n\
                      wp_post_id: 42\n\
                      wp_featured_media_id: 7\n\
                      ---\n\
@@ -572,6 +595,7 @@ mod tests {
         assert_eq!(doc.frontmatter.rank_math_description.as_deref(), Some("SEO description."));
         assert_eq!(doc.frontmatter.rank_math_focus_keyword.as_deref(), Some("gtk markdown editor"));
         assert_eq!(doc.frontmatter.featured_image.as_deref(), Some("/tmp/cat.png"));
+        assert_eq!(doc.frontmatter.featured_image_alt.as_deref(), Some("a sleeping cat"));
         assert_eq!(doc.frontmatter.wp_post_id, Some(42));
         assert_eq!(doc.frontmatter.featured_media_id, Some(7));
         assert_eq!(doc.body, "Body text here.\n");
@@ -601,6 +625,7 @@ mod tests {
                 rank_math_description: Some("An SEO description.".to_string()),
                 rank_math_focus_keyword: Some("gtk markdown editor".to_string()),
                 featured_image: None,
+                featured_image_alt: Some("a sleeping cat".to_string()),
                 wp_post_id: Some(7),
                 featured_media_id: Some(99),
                 media: vec![MediaItem {
@@ -625,6 +650,11 @@ mod tests {
     #[test]
     fn unknown_status_falls_back_to_draft() {
         assert_eq!(PostStatus::from_str("bogus"), PostStatus::Draft);
+    }
+
+    #[test]
+    fn private_status_round_trips_through_as_str_and_from_str() {
+        assert_eq!(PostStatus::from_str(PostStatus::Private.as_str()), PostStatus::Private);
     }
 
     /// The whole reason `media` exists: a decorative image's deliberately

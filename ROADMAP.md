@@ -16,11 +16,11 @@ what's already shipped.
   CHANGELOG.md) - a `Gtk.DropTarget` on the editor view accepts one or
   more dropped files, same insertion logic as "Bild einfügen"/clipboard
   paste.
-- **Reopen the last article on launch.** `recentfiles.rs` (v0.25.0)
-  already tracks the most-recently-opened path - starting the app with
-  that file already loaded (instead of a blank "Unbenannt" document) is
-  now a small addition on top of infrastructure that already exists,
-  rather than a new subsystem.
+- ~~**Reopen the last article on launch.**~~ Done (see CHANGELOG.md) - a
+  plain launch (no file argument) now reopens the most recently opened/
+  saved article via `recentfiles::load()`, instead of always starting at
+  a blank "Unbenannt" document; `Ctrl+N` still gets to a blank one in one
+  step.
 - ~~**Find & replace in the editor.**~~ Done (see CHANGELOG.md) - a Ctrl+F
   bar at the bottom of the editor, backed by GtkSourceView's own
   SearchContext/SearchSettings.
@@ -229,3 +229,73 @@ that a GNOME/Flatpak-native app is expected to have? Checked against
 **Why:** the earlier 2026-09-04/2026-09-06 passes were both scoped to the
 editor/WordPress domain; this pass asked specifically what's missing on
 the "feels native on GNOME/Linux" axis instead, per the user's request.
+
+## New candidate features (2026-09-16 analysis)
+
+Grounded in actual gaps found by reading `document.rs`, `wpclient.rs`,
+`mediapanel.rs`, `media.rs`, and `crates/gutenberg/src/lib.rs` - not
+speculation. The accessibility-focused work done this cycle (real
+per-image alt text/captions reaching the published post, hover tooltips,
+context-sensitive menus) surfaced a couple of these directly.
+
+### Quick wins
+
+- ~~**The featured image never gets an alt text on WordPress.**~~ Done
+  (see CHANGELOG.md) - a new "Alt-Text für Aufmacherbild" field in
+  Artikel-Eigenschaften, sent as the resulting attachment's `alt_text` on
+  upload, the same way a body image's already was.
+- ~~**No warning for an unusually long alt text.**~~ Done (see
+  CHANGELOG.md) - a non-blocking warning icon/tooltip once an entry (body
+  image, featured image, or the quick-edit dialog) passes WCAG's ~150
+  character guidance, matching the Statistik tab's own readability-tips
+  pattern.
+- ~~**No WordPress `private` post status.**~~ Done (see CHANGELOG.md) - a
+  `Private` variant, a `ComboRow` entry, and a "Privat veröffentlichen"
+  button in the export dialog, the same shape as `Future`/"Terminieren".
+
+### Moderate scope, higher value
+
+- **Categories are flat - no parent/child hierarchy.**
+  `Client::resolve_or_create_term` always creates a new category as
+  top-level (`{"name": name}`, no `parent`), and the "Kategorien"
+  field is a plain comma-separated text entry with no way to express
+  "this one's a child of that one" - even though WordPress categories
+  (unlike tags) are genuinely hierarchical, and a site that already
+  organizes them that way (e.g. this project's own linuxundich.de, per
+  its "Netz-/Politik" category) can't have a new sub-category created
+  from inside the app at all.
+- **No way to set the post author.** Neither `Frontmatter` nor
+  `wpclient.rs` has any concept of a post's `author` - every post is
+  always attributed to whichever user the configured Application
+  Password belongs to. Only matters on a multi-author site, but there's
+  currently no way around it even there.
+- **No way to reuse an image already in the WordPress media library.**
+  Every image reference has to be a local file - `wpclient.rs` has
+  `upload_media` but nothing like `list_media`, so a graphic already
+  uploaded once (a shared header image, a recurring banner) can only be
+  referenced by re-uploading the local file again, creating a duplicate
+  attachment, rather than picking the existing one by browsing the
+  library.
+- **No control over comment status.** `Frontmatter` has no
+  `comment_status` field - there's no way to publish a post with
+  comments closed (or reopen them) from inside the app; wp-admin is the
+  only way today.
+
+### Larger / architectural
+
+- ~~**More Gutenberg blocks via the existing fenced-block pattern.**~~
+  Done (see CHANGELOG.md) - ` ```pullquote ` and ` ```details ` join
+  `columns`/`buttons`/`gallery`, same `+++`-split fenced-block mechanism,
+  full round-trip both ways.
+- ~~**A real preview link for an unpublished draft.**~~ Done (see
+  CHANGELOG.md) - a "Vorschau öffnen" button in the export dialog opens
+  WordPress's `?preview=true` link in the app's own Browser tab. As
+  suspected going in, it only actually shows the live preview if that
+  tab's WebKit session already happens to be logged into wp-admin -
+  there's no separate authenticated path, so an un-logged-in Browser tab
+  just shows a login page instead, which the button's tooltip and a
+  status message both call out up front rather than papering over it.
+
+**Why:** same reason as the earlier passes - a periodic fresh look
+grounded in the actual code, this time prompted directly by the
+accessibility gaps the alt-text/caption work this cycle kept surfacing.

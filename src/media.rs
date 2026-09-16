@@ -36,6 +36,27 @@ pub enum AltText {
     Text(String),
 }
 
+/// WCAG guidance: alt text should stay well under this many characters -
+/// screen readers read it aloud in full, so a long alt text is read out as
+/// a wall of prose instead of a quick image description. Not enforced (an
+/// image can genuinely need a longer description), just flagged as a hint
+/// in the UI - see `alt_text_length_warning` and its callers in
+/// `mediapanel.rs`, `imagealt.rs`, and `properties.rs`.
+pub const RECOMMENDED_MAX_ALT_TEXT_LENGTH: usize = 150;
+
+/// A short, non-blocking hint for an unusually long alt text, `None`
+/// otherwise - `text` is a caption or fuller description, not a screen-
+/// reader-friendly alt text (that distinction is what `MediaItem::caption`
+/// exists for).
+pub fn alt_text_length_warning(text: &str) -> Option<String> {
+    let length = text.chars().count();
+    (length > RECOMMENDED_MAX_ALT_TEXT_LENGTH).then(|| {
+        tr("Alternativtext ist lang ({length} Zeichen) - Screenreader lesen ihn vollständig vor; empfohlen: deutlich unter {max} Zeichen.")
+            .replace("{length}", &length.to_string())
+            .replace("{max}", &RECOMMENDED_MAX_ALT_TEXT_LENGTH.to_string())
+    })
+}
+
 impl AltText {
     pub fn is_undefined(&self) -> bool {
         matches!(self, AltText::Undefined)
@@ -131,14 +152,19 @@ impl MediaItem {
 /// distinguish "alt intentionally left blank" from "alt never set", so that
 /// distinction is only made in `reconcile` too.
 ///
-/// Also looks *inside* a ` ```columns `/` ```gallery ` fenced block
-/// (`crates/gutenberg`'s syntax for `wp:columns`/`wp:gallery`) by
-/// recursing into its raw text - pulldown-cmark never re-parses a fenced
-/// code block's content as Markdown on its own, so an image referenced only
-/// there would otherwise never reach Medienverwaltung's alt-text/upload
-/// tracking, and `export.rs::rewrite_image_urls`'s local-to-uploaded-URL
-/// substitution would then have nothing to rewrite - shipping a broken
-/// local path straight into the published post.
+/// Also looks *inside* a ` ```columns `/` ```gallery `/` ```details `
+/// fenced block (`crates/gutenberg`'s syntax for
+/// `wp:columns`/`wp:gallery`/`wp:details`) by recursing into its raw text -
+/// pulldown-cmark never re-parses a fenced code block's content as Markdown
+/// on its own, so an image referenced only there would otherwise never
+/// reach Medienverwaltung's alt-text/upload tracking, and
+/// `export.rs::rewrite_image_urls`'s local-to-uploaded-URL substitution
+/// would then have nothing to rewrite - shipping a broken local path
+/// straight into the published post. ` ```pullquote ` is deliberately not
+/// included: its content becomes plain RichText (see `Block::Pullquote`'s
+/// doc comment), not a real block tree, so an image inside one wouldn't be
+/// rewritten on export either - matching how WordPress's own pullquote
+/// block doesn't support inline images.
 fn scan_images(markdown: &str) -> Vec<(String, String, String)> {
     let mut out = Vec::new();
     let mut in_image = false;
@@ -149,7 +175,7 @@ fn scan_images(markdown: &str) -> Vec<(String, String, String)> {
 
     for event in Parser::new(markdown) {
         match event {
-            Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(lang))) if lang.as_ref() == "columns" || lang.as_ref() == "gallery" => {
+            Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(lang))) if lang.as_ref() == "columns" || lang.as_ref() == "gallery" || lang.as_ref() == "details" => {
                 fenced_block_text = Some(String::new());
             }
             Event::Text(text) if fenced_block_text.is_some() => {
@@ -395,6 +421,18 @@ mod tests {
     use super::*;
 
     #[test]
+    fn alt_text_length_warning_is_none_for_a_normal_length_text() {
+        assert_eq!(alt_text_length_warning("Eine schlafende Katze auf einem Sofa"), None);
+    }
+
+    #[test]
+    fn alt_text_length_warning_flags_text_past_the_recommended_length() {
+        let long_text = "a".repeat(RECOMMENDED_MAX_ALT_TEXT_LENGTH + 1);
+        let warning = alt_text_length_warning(&long_text).expect("should warn");
+        assert!(warning.contains(&(RECOMMENDED_MAX_ALT_TEXT_LENGTH + 1).to_string()));
+    }
+
+    #[test]
     fn scan_finds_images_in_order_with_their_alt_text_and_title() {
         let markdown = "Text.\n\n![first alt](a.png \"first title\")\n\nMore.\n\n![](b.png)\n";
         let found = scan_images(markdown);
@@ -425,6 +463,19 @@ mod tests {
         let markdown = "```columns\n![left image](left.jpg)\n+++\nJust text, no image.\n```\n";
         let found = scan_images(markdown);
         assert_eq!(found, vec![("left.jpg".to_string(), "left image".to_string(), String::new())]);
+    }
+
+    #[test]
+    fn scan_finds_images_inside_a_fenced_details_block() {
+        let markdown = "```details\nMehr anzeigen\n+++\n![hidden image](hidden.jpg)\n```\n";
+        let found = scan_images(markdown);
+        assert_eq!(found, vec![("hidden.jpg".to_string(), "hidden image".to_string(), String::new())]);
+    }
+
+    #[test]
+    fn scan_does_not_look_inside_a_fenced_pullquote_block() {
+        let markdown = "```pullquote\n![not tracked](untracked.jpg)\n```\n";
+        assert!(scan_images(markdown).is_empty());
     }
 
     #[test]

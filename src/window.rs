@@ -398,7 +398,7 @@ pub fn build(app: &adw::Application, initial_path: Option<PathBuf>) -> adw::Appl
     wire_properties_action(&window, &frontmatter, &term_caches, &current_path);
     wire_settings_action(&window, &buffer, ai_menu_handles, &preview_pane, &browser_view);
     wire_about_action(&window);
-    wire_publish_action(&window, &buffer, &current_path, &frontmatter, &preview_pane);
+    wire_publish_action(&window, &buffer, &current_path, &frontmatter, &preview_pane, &view_stack, &browser_view);
     wire_media_action(&window, &buffer, &current_path, &frontmatter, &preview_pane);
     wire_insert_image_action(&window, &buffer, &current_path);
     wire_insert_media_action(&window, &buffer, &current_path);
@@ -946,12 +946,16 @@ fn wire_publish_action(
     current_path: &Rc<RefCell<Option<PathBuf>>>,
     frontmatter: &Rc<RefCell<Frontmatter>>,
     preview_pane: &Rc<preview::PreviewPane>,
+    view_stack: &adw::ViewStack,
+    browser_view: &Rc<browser::BrowserView>,
 ) {
     let action = gio::SimpleAction::new("publish", None);
     let buffer = buffer.clone();
     let current_path = current_path.clone();
     let frontmatter = frontmatter.clone();
     let preview_pane = preview_pane.clone();
+    let view_stack = view_stack.clone();
+    let browser_view = browser_view.clone();
     let window_weak = window.downgrade();
     action.connect_activate(move |_, _| {
         let Some(window) = window_weak.upgrade() else {
@@ -959,7 +963,7 @@ fn wire_publish_action(
         };
         let body = buffer.text(&buffer.start_iter(), &buffer.end_iter(), false).to_string();
         let doc_dir = current_path.borrow().as_ref().and_then(|p| p.parent().map(Path::to_path_buf));
-        export::open(&window, body, frontmatter.clone(), doc_dir, preview_pane.clone());
+        export::open(&window, body, frontmatter.clone(), doc_dir, preview_pane.clone(), &view_stack, &browser_view);
     });
     window.add_action(&action);
 }
