@@ -10,7 +10,7 @@ use crate::document::{Document, Frontmatter};
 use crate::i18n::tr;
 use crate::{
     about, aimenu, autosave, browser, chat, codeview, document, editor, export, formatting, imagealt, importer, linkpicker, media, mediapanel, preview,
-    properties, recentfiles, searchbar, settings, shortcuts, stats, statusbar, termcache, windowstate,
+    properties, recentfiles, richtext, searchbar, settings, shortcuts, stats, statusbar, termcache, windowstate,
 };
 
 const DEBOUNCE_MS: u64 = 250;
@@ -403,7 +403,7 @@ pub fn build(app: &adw::Application, initial_path: Option<PathBuf>) -> adw::Appl
     wire_insert_image_action(&window, &buffer, &current_path);
     wire_insert_media_action(&window, &buffer, &current_path);
     wire_insert_post_link_action(&window, &buffer);
-    wire_paste_image_shortcut(&view, &buffer, &current_path, &toast_overlay);
+    wire_paste_shortcut(&view, &buffer, &current_path, &toast_overlay);
     wire_drop_target(&view, &buffer, &current_path);
     wire_startup_recovery(&window, &buffer, &current_path, &frontmatter, &title, &preview_pane);
     wire_find_action(&window, &search_bar);
@@ -1045,15 +1045,27 @@ fn wire_insert_post_link_action(window: &adw::ApplicationWindow, buffer: &source
     window.add_action(&action);
 }
 
-/// Intercepts Ctrl+V on the editor view: if the clipboard holds an image
-/// (a screenshot, or "Copy Image" from a browser - not a file picked via a
-/// dialog, which already goes through `wire_insert_image_action`), it's
-/// saved as a new PNG file directly in the article's own folder and
-/// inserted as a Markdown image reference, instead of falling through to
-/// GtkSourceView's own paste handling (which has no text form for an image
-/// and would just do nothing). A clipboard with plain text is left
+/// Intercepts Ctrl+V on the editor view for two clipboard shapes
+/// GtkSourceView's own paste handling can't do anything useful with on its
+/// own:
+///
+/// - An image (a screenshot, or "Copy Image" from a browser - not a file
+///   picked via a dialog, which already goes through
+///   `wire_insert_image_action`) is saved as a new PNG file directly in the
+///   article's own folder and inserted as a Markdown image reference -
+///   GtkSourceView has no text form for an image at all and would just do
+///   nothing.
+/// - Rich text (formatted content copied from a browser, word processor,
+///   or anywhere else that puts a `text/html` clipboard entry alongside
+///   its plain-text one) is converted to Markdown (`richtext.rs`) and
+///   inserted in its place - GtkSourceView's default paste only ever takes
+///   the plain-text entry, silently dropping every bit of formatting.
+///
+/// An image takes priority when both are somehow present (matches how
+/// "Copy Image" from a browser already behaves - most such copies don't
+/// carry HTML at all). A clipboard with neither is left completely
 /// untouched - `glib::Propagation::Proceed` lets the normal paste run.
-fn wire_paste_image_shortcut(view: &sourceview5::View, buffer: &sourceview5::Buffer, current_path: &Rc<RefCell<Option<PathBuf>>>, toast_overlay: &adw::ToastOverlay) {
+fn wire_paste_shortcut(view: &sourceview5::View, buffer: &sourceview5::Buffer, current_path: &Rc<RefCell<Option<PathBuf>>>, toast_overlay: &adw::ToastOverlay) {
     let controller = gtk4::EventControllerKey::new();
     let buffer = buffer.clone();
     let current_path = current_path.clone();
@@ -1067,32 +1079,71 @@ fn wire_paste_image_shortcut(view: &sourceview5::View, buffer: &sourceview5::Buf
             return glib::Propagation::Proceed;
         };
         let clipboard = view.clipboard();
-        if !document::mime_types_contain_image(&clipboard.formats().mime_types()) {
-            return glib::Propagation::Proceed;
-        }
-        let Some(doc_dir) = current_path.borrow().as_ref().and_then(|p| p.parent().map(Path::to_path_buf)) else {
-            show_toast(&toast_overlay, &tr("Bitte den Artikel zuerst speichern, um Bilder einzufügen."));
-            return glib::Propagation::Stop;
-        };
-        let buffer = buffer.clone();
-        let toast_overlay = toast_overlay.clone();
-        clipboard.read_texture_async(gio::Cancellable::NONE, move |result| {
-            let texture = match result {
-                Ok(Some(texture)) => texture,
-                _ => {
-                    show_toast(&toast_overlay, &tr("Bild konnte nicht aus der Zwischenablage gelesen werden."));
+        let mime_types = clipboard.formats().mime_types();
+
+        if document::mime_types_contain_image(&mime_types) {
+            let Some(doc_dir) = current_path.borrow().as_ref().and_then(|p| p.parent().map(Path::to_path_buf)) else {
+                show_toast(&toast_overlay, &tr("Bitte den Artikel zuerst speichern, um Bilder einzufügen."));
+                return glib::Propagation::Stop;
+            };
+            let buffer = buffer.clone();
+            let toast_overlay = toast_overlay.clone();
+            clipboard.read_texture_async(gio::Cancellable::NONE, move |result| {
+                let texture = match result {
+                    Ok(Some(texture)) => texture,
+                    _ => {
+                        show_toast(&toast_overlay, &tr("Bild konnte nicht aus der Zwischenablage gelesen werden."));
+                        return;
+                    }
+                };
+                let path = document::unique_pasted_image_path(&doc_dir, |p| p.exists());
+                if let Err(err) = texture.save_to_png(&path) {
+                    show_toast(&toast_overlay, &tr("Bild konnte nicht gespeichert werden: {err}").replace("{err}", &err.to_string()));
                     return;
                 }
-            };
-            let path = document::unique_pasted_image_path(&doc_dir, |p| p.exists());
-            if let Err(err) = texture.save_to_png(&path) {
-                show_toast(&toast_overlay, &tr("Bild konnte nicht gespeichert werden: {err}").replace("{err}", &err.to_string()));
-                return;
-            }
-            let reference = document::image_reference(&path, Some(&doc_dir));
-            formatting::insert_image(&buffer, &reference);
-        });
-        glib::Propagation::Stop
+                let reference = document::image_reference(&path, Some(&doc_dir));
+                formatting::insert_image(&buffer, &reference);
+            });
+            return glib::Propagation::Stop;
+        }
+
+        if mime_types.iter().any(|m| m.as_str() == "text/html") {
+            let buffer = buffer.clone();
+            let toast_overlay = toast_overlay.clone();
+            clipboard.read_async(&["text/html"], glib::Priority::DEFAULT, gio::Cancellable::NONE, move |result| {
+                let Ok((stream, _mime_type)) = result else {
+                    show_toast(&toast_overlay, &tr("Formatierter Text konnte nicht aus der Zwischenablage gelesen werden."));
+                    return;
+                };
+                let sink = gio::MemoryOutputStream::new_resizable();
+                let buffer = buffer.clone();
+                let toast_overlay = toast_overlay.clone();
+                let sink_for_read = sink.clone();
+                sink.splice_async(
+                    &stream,
+                    gio::OutputStreamSpliceFlags::CLOSE_SOURCE | gio::OutputStreamSpliceFlags::CLOSE_TARGET,
+                    glib::Priority::DEFAULT,
+                    gio::Cancellable::NONE,
+                    move |result| {
+                        if result.is_err() {
+                            show_toast(&toast_overlay, &tr("Formatierter Text konnte nicht aus der Zwischenablage gelesen werden."));
+                            return;
+                        }
+                        let Some(html) = richtext::decode_clipboard_html(&sink_for_read.steal_as_bytes()) else {
+                            show_toast(&toast_overlay, &tr("Formatierter Text aus der Zwischenablage hat ein unbekanntes Format."));
+                            return;
+                        };
+                        match richtext::html_to_markdown(&html) {
+                            Ok(markdown) => formatting::insert_pasted_text(&buffer, &markdown),
+                            Err(err) => show_toast(&toast_overlay, &tr("Formatierter Text konnte nicht umgewandelt werden: {err}").replace("{err}", &err)),
+                        }
+                    },
+                );
+            });
+            return glib::Propagation::Stop;
+        }
+
+        glib::Propagation::Proceed
     });
     view.add_controller(controller);
 }

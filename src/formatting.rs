@@ -268,6 +268,20 @@ pub fn insert_image(buffer: &sourceview5::Buffer, path: &str) {
     }
 }
 
+/// Replaces the current selection (if any) with `text` and leaves the
+/// cursor right after it - the same behavior GtkSourceView's own plain-text
+/// paste already has, used here for the converted-Markdown path of
+/// `window.rs`'s `wire_paste_shortcut` since that path bypasses normal
+/// paste handling entirely (it hands the buffer already-final text, not a
+/// clipboard value GTK pastes on its own).
+pub fn insert_pasted_text(buffer: &sourceview5::Buffer, text: &str) {
+    if let Some((mut start, mut end)) = buffer.selection_bounds() {
+        buffer.delete(&mut start, &mut end);
+    }
+    let mut iter = buffer.iter_at_mark(&buffer.get_insert());
+    buffer.insert(&mut iter, text);
+}
+
 fn select(buffer: &sourceview5::Buffer, start_offset: i32, end_offset: i32) {
     let start = buffer.iter_at_offset(start_offset);
     let end = buffer.iter_at_offset(end_offset);

@@ -13,6 +13,8 @@
 
 use std::path::{Path, PathBuf};
 
+use sha2::Digest;
+
 use crate::media::MediaItem;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -113,6 +115,20 @@ pub struct Frontmatter {
     /// Set once the document has been published/updated via the WordPress
     /// REST API (see M5), so re-exporting updates the same post.
     pub wp_post_id: Option<u64>,
+    /// SHA-256 hex digest of the Gutenberg HTML content last known to
+    /// actually match the WordPress server - set from the literal fetched
+    /// content on import (`importer.rs`) and from the literal just-sent
+    /// content after every successful publish/update (`export.rs`), so a
+    /// re-fetch's hash can be compared against it right before the *next*
+    /// update. A mismatch means the post changed on the server since -
+    /// someone editing it directly in wp-admin, most likely - and
+    /// `export.rs` warns before overwriting rather than silently
+    /// clobbering that change. `None` for a document never yet synced with
+    /// a server copy (a brand new article, or one opened from a `.md` file
+    /// written before this field existed) - the check has no baseline to
+    /// compare against then, so it's silently skipped rather than treated
+    /// as a conflict.
+    pub wp_content_hash: Option<String>,
     /// The WordPress media id of the post's *current* featured image, when
     /// the document was opened from an existing post (`importer.rs`) - not
     /// user-editable. `featured_image` is a local path to *upload as a new*
@@ -206,6 +222,9 @@ pub fn parse(input: &str) -> Document {
                 frontmatter.featured_image_alt = (!value.is_empty()).then(|| unquote(value));
             }
             "wp_post_id" => frontmatter.wp_post_id = value.parse::<u64>().ok(),
+            "wp_content_hash" => {
+                frontmatter.wp_content_hash = (!value.is_empty()).then(|| unquote(value));
+            }
             "wp_featured_media_id" => frontmatter.featured_media_id = value.parse::<u64>().ok(),
             "media_json" => frontmatter.media = crate::media::from_json_str(value),
             _ => {}
@@ -260,6 +279,9 @@ pub fn serialize(doc: &Document) -> String {
     if let Some(id) = fm.wp_post_id {
         out.push_str(&format!("wp_post_id: {id}\n"));
     }
+    if let Some(hash) = &fm.wp_content_hash {
+        out.push_str(&format!("wp_content_hash: \"{}\"\n", escape(hash)));
+    }
     if let Some(id) = fm.featured_media_id {
         out.push_str(&format!("wp_featured_media_id: {id}\n"));
     }
@@ -269,6 +291,16 @@ pub fn serialize(doc: &Document) -> String {
     out.push_str("---\n\n");
     out.push_str(&doc.body);
     out
+}
+
+/// SHA-256 hex digest of `content` - shared by `importer.rs` (hashing the
+/// literal content a post was just fetched with) and `export.rs` (hashing
+/// the literal content just sent, and re-hashing a fresh fetch to compare
+/// against `Frontmatter::wp_content_hash` before the next update). Lives
+/// here rather than in `media.rs`'s own file-content hashing since this
+/// hashes an in-memory Gutenberg HTML string, not a local file's bytes.
+pub fn content_hash(content: &str) -> String {
+    sha2::Sha256::digest(content.as_bytes()).iter().map(|b| format!("{b:02x}")).collect()
 }
 
 fn escape(s: &str) -> String {
@@ -581,6 +613,7 @@ mod tests {
                      featured_image_alt: \"a sleeping cat\"\n\
                      wp_post_id: 42\n\
                      wp_featured_media_id: 7\n\
+                     wp_content_hash: \"abc123\"\n\
                      ---\n\
                      \n\
                      Body text here.\n";
@@ -598,6 +631,7 @@ mod tests {
         assert_eq!(doc.frontmatter.featured_image_alt.as_deref(), Some("a sleeping cat"));
         assert_eq!(doc.frontmatter.wp_post_id, Some(42));
         assert_eq!(doc.frontmatter.featured_media_id, Some(7));
+        assert_eq!(doc.frontmatter.wp_content_hash.as_deref(), Some("abc123"));
         assert_eq!(doc.body, "Body text here.\n");
     }
 
@@ -627,6 +661,7 @@ mod tests {
                 featured_image: None,
                 featured_image_alt: Some("a sleeping cat".to_string()),
                 wp_post_id: Some(7),
+                wp_content_hash: Some("deadbeef".to_string()),
                 featured_media_id: Some(99),
                 media: vec![MediaItem {
                     id: "media-001".to_string(),
@@ -655,6 +690,12 @@ mod tests {
     #[test]
     fn private_status_round_trips_through_as_str_and_from_str() {
         assert_eq!(PostStatus::from_str(PostStatus::Private.as_str()), PostStatus::Private);
+    }
+
+    #[test]
+    fn content_hash_is_stable_and_distinguishes_different_content() {
+        assert_eq!(content_hash("<p>Hello</p>"), content_hash("<p>Hello</p>"));
+        assert_ne!(content_hash("<p>Hello</p>"), content_hash("<p>Hello!</p>"));
     }
 
     /// The whole reason `media` exists: a decorative image's deliberately

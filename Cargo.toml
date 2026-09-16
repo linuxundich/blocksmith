@@ -4,7 +4,7 @@ resolver = "2"
 
 [package]
 name = "blocksmith"
-version = "0.47.0"
+version = "0.48.0"
 edition = "2021"
 license = "GPL-3.0-or-later"
 
@@ -29,3 +29,4 @@ futures-lite = "2"
 libspelling = "0.5"
 gutenberg = { path = "crates/gutenberg" }
 webp = { version = "0.3.1", default-features = false }
+htmd = "0.5.5"

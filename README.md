@@ -48,8 +48,14 @@ blocks. Implemented so far:
   opening a searchable picker over the site's existing posts and inserting
   a real Markdown link to the one picked; pasting an image straight from the
   clipboard with Ctrl+V - a screenshot, or "Copy Image" from a browser -
-  saves it into the article's own folder and inserts it, falling through to
-  a normal text paste when there's no image on the clipboard; dragging one or
+  saves it into the article's own folder and inserts it; pasting rich text
+  copied from a browser, word processor, or anywhere else that puts a
+  `text/html` entry on the clipboard alongside its plain-text one converts
+  that formatting to Markdown on the way in (headings, bold/italic, links,
+  lists, tables - via a real HTML5 parser rather than a hand-rolled one, to
+  hold up against how varied real-world HTML actually is) instead of
+  dropping it, falling through to a normal plain-text paste only when
+  there's genuinely no image or HTML on the clipboard; dragging one or
   more local files from a file manager onto the editor inserts them the same
   way, even in an unsaved article; a "Weiterlesen"
   button inserting WordPress's `<!--more-->` marker, exported as a real
@@ -262,7 +268,16 @@ blocks. Implemented so far:
   (switching to it automatically) - it only actually shows the live
   preview if that tab's WebKit session already happens to be logged into
   wp-admin, otherwise a login page appears instead, which the button's
-  tooltip notes up front.
+  tooltip notes up front. Re-exporting an already-published post first
+  re-fetches its current server content and compares it against a
+  locally-remembered baseline (set on import and after every successful
+  publish/update) - if the post changed on WordPress since (edited
+  directly in wp-admin, most likely), a confirmation dialog asks whether
+  to overwrite that change before sending anything, instead of silently
+  clobbering it. Skipped for a new post or an article never yet synced
+  with a server copy, since there's nothing to compare against, and
+  skipped (fails open) if the check itself can't complete, so a network
+  hiccup never blocks publishing outright.
 - **Broken-link checker** — a "Links" tab in the same "Artikel
   exportieren" dialog, next to "Vorschau" and "Medien". It scans the
   article for every unique `http(s)://` URL (Markdown link/image

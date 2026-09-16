@@ -36,6 +36,7 @@ mod preview;
 mod promptsettings;
 mod properties;
 mod recentfiles;
+mod richtext;
 mod searchbar;
 mod secrets;
 mod settings;

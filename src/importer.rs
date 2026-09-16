@@ -14,7 +14,7 @@ use std::time::Duration;
 use adw::prelude::*;
 use gtk4::glib;
 
-use crate::document::{Frontmatter, PostStatus};
+use crate::document::{self, Frontmatter, PostStatus};
 use crate::i18n::tr;
 use crate::{secrets, wpclient, wpsite};
 
@@ -316,6 +316,12 @@ fn fetch_and_convert(site: &wpsite::SiteConfig, password: &str, post_id: u64) ->
         featured_image: None,
         featured_image_alt: None,
         wp_post_id: Some(detail.id),
+        // The just-fetched content is, by definition, in sync with the
+        // server right now - establishes a baseline so `export.rs`'s
+        // revision-conflict check can detect a *later* external edit,
+        // right from the moment this post is opened rather than only
+        // after the first local publish.
+        wp_content_hash: Some(document::content_hash(&detail.content)),
         featured_media_id: (detail.featured_media != 0).then_some(detail.featured_media),
         media: crate::media::reconcile(&[], &body),
     };

@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.48.0] - 2026-09-16
+
+### Added
+
+- Revision-conflict awareness: re-exporting an already-published post now
+  first re-fetches its current content from WordPress and compares it
+  against a locally-remembered baseline (set on import and after every
+  successful publish/update) - if it changed on the server since (edited
+  directly in wp-admin, most likely), a confirmation dialog asks whether
+  to overwrite that change before sending anything, instead of silently
+  clobbering it. Skipped entirely for a new post or a `.md` file written
+  before this baseline existed, since there's nothing to compare against;
+  also skipped (fails open) if the check itself can't complete, so a
+  transient network hiccup never blocks publishing outright.
+- Pasting rich text (Ctrl+V) now converts real formatting instead of just
+  dropping it: if the clipboard holds a `text/html` entry alongside its
+  plain-text one - copied from a browser, word processor, or anywhere
+  else - it's converted to Markdown and inserted in its place, using a
+  real HTML5 parser rather than a hand-rolled one to hold up against the
+  wide variety of real-world HTML sources (Google Docs, Word, web pages)
+  actually produce. An image on the clipboard still takes priority, same
+  as before; plain text with no HTML entry pastes exactly as it did
+  before.
+
 ## [0.47.0] - 2026-09-16
 
 ### Added

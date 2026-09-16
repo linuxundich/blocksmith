@@ -17,7 +17,7 @@ use std::time::Duration;
 use adw::prelude::*;
 use gtk4::glib;
 
-use crate::document::{Frontmatter, PostStatus};
+use crate::document::{self, Frontmatter, PostStatus};
 use crate::i18n::tr;
 use crate::{browser, linkcheck, media, mediapanel, notify, preview, secrets, wpclient, wpsite};
 
@@ -332,10 +332,10 @@ pub fn open(
     }
 
     let status = StatusWidgets { label: status_label.clone(), link: link_button.clone() };
-    wire_publish_button(&publish_button, &[&draft_button, &schedule_button, &private_button], PostStatus::Publish, &frontmatter, &body, &doc_dir, &status);
-    wire_publish_button(&draft_button, &[&publish_button, &schedule_button, &private_button], PostStatus::Draft, &frontmatter, &body, &doc_dir, &status);
-    wire_publish_button(&schedule_button, &[&publish_button, &draft_button, &private_button], PostStatus::Future, &frontmatter, &body, &doc_dir, &status);
-    wire_publish_button(&private_button, &[&publish_button, &draft_button, &schedule_button], PostStatus::Private, &frontmatter, &body, &doc_dir, &status);
+    wire_publish_button(&publish_button, &[&draft_button, &schedule_button, &private_button], PostStatus::Publish, &frontmatter, &body, &doc_dir, &status, &dialog);
+    wire_publish_button(&draft_button, &[&publish_button, &schedule_button, &private_button], PostStatus::Draft, &frontmatter, &body, &doc_dir, &status, &dialog);
+    wire_publish_button(&schedule_button, &[&publish_button, &draft_button, &private_button], PostStatus::Future, &frontmatter, &body, &doc_dir, &status, &dialog);
+    wire_publish_button(&private_button, &[&publish_button, &draft_button, &schedule_button], PostStatus::Private, &frontmatter, &body, &doc_dir, &status, &dialog);
 
     dialog.present(Some(parent));
 }
@@ -364,6 +364,17 @@ fn preview_url_for(link: &str) -> String {
     }
 }
 
+/// True when a re-fetched server content hash no longer matches the
+/// locally-known baseline - i.e. the post changed on the server (most
+/// likely edited directly in wp-admin) since it was last fetched or sent
+/// from here. `local_hash` is `None` for a document never yet synced with
+/// a server copy (see `Frontmatter::wp_content_hash`'s doc comment), in
+/// which case there's no baseline to compare against, so this is never a
+/// conflict.
+fn has_conflicting_server_change(local_hash: Option<&str>, server_hash: &str) -> bool {
+    local_hash.is_some_and(|local| local != server_hash)
+}
+
 /// Wires one of the three publish-flow buttons ("Veröffentlichen" /
 /// "Als Entwurf hochladen" / "Terminieren") - `target_status` is sent
 /// regardless of whatever `Frontmatter.status` happens to currently hold
@@ -374,6 +385,19 @@ fn preview_url_for(link: &str) -> String {
 /// race the same post/media at once; on success `Frontmatter.status` is
 /// updated to match, so "Artikel-Eigenschaften" reflects what was actually
 /// just sent.
+///
+/// For a post that already exists on WordPress (`wp_post_id` set) and has
+/// a known content baseline (`wp_content_hash` set - see its doc comment),
+/// a click first re-fetches the post's current server content and compares
+/// its hash against that baseline (`has_conflicting_server_change`) before
+/// ever sending anything - if it doesn't match, the post was edited
+/// somewhere else (wp-admin, most likely) since this article was last
+/// synced, and `dialog_parent` hosts a confirmation dialog asking whether
+/// to overwrite that change anyway, rather than silently clobbering it.
+/// This check has no way to run for a brand new post (nothing to compare
+/// against yet) or a document opened from a `.md` file written before this
+/// field existed, so those publish immediately, same as before.
+#[allow(clippy::too_many_arguments)]
 fn wire_publish_button(
     button: &gtk4::Button,
     other_buttons: &[&gtk4::Button],
@@ -382,6 +406,7 @@ fn wire_publish_button(
     body: &str,
     doc_dir: &Option<PathBuf>,
     status: &StatusWidgets,
+    dialog_parent: &adw::Dialog,
 ) {
     let other_buttons: Vec<gtk4::Button> = other_buttons.iter().map(|b| (*b).clone()).collect();
     let frontmatter = frontmatter.clone();
@@ -389,78 +414,198 @@ fn wire_publish_button(
     let doc_dir = doc_dir.clone();
     let status_label = status.label.clone();
     let link_button = status.link.clone();
+    let dialog_parent = dialog_parent.clone();
 
     let button_for_click = button.clone();
     button.connect_clicked(move |_| {
+        let (post_id, local_hash) = {
+            let fm = frontmatter.borrow();
+            (fm.wp_post_id, fm.wp_content_hash.clone())
+        };
+        let Some(post_id) = post_id.filter(|_| local_hash.is_some()) else {
+            start_export(target_status, &frontmatter, &body, &doc_dir, &status_label, &link_button, &button_for_click, &other_buttons);
+            return;
+        };
+
         button_for_click.set_sensitive(false);
         for b in &other_buttons {
             b.set_sensitive(false);
         }
-        status_label.set_label(&tr("Wird gesendet …"));
+        status_label.set_label(&tr("Prüfe auf Änderungen auf WordPress …"));
         link_button.set_visible(false);
 
         let site = wpsite::load();
-        let mut current_fm = frontmatter.borrow().clone();
-        current_fm.status = target_status;
-        let body = body.clone();
-        let doc_dir = doc_dir.clone();
-
-        let (tx, rx) = mpsc::channel::<Result<(wpclient::PostResult, Vec<media::MediaItem>), String>>();
+        let (tx, rx) = mpsc::channel::<Result<String, String>>();
         std::thread::spawn(move || {
             let outcome = futures_lite::future::block_on(secrets::load_app_password(&site.url, &site.username))
                 .map_err(|err| err.to_string())
                 .and_then(|maybe_password| {
                     maybe_password.ok_or_else(|| tr("Kein Application Password im Schlüsselbund gefunden."))
                 })
-                .and_then(|password| run_export(&site, &password, &mut current_fm, &body, doc_dir.as_deref()))
-                .map(|post| (post, current_fm.media));
+                .and_then(|password| {
+                    wpclient::Client::new(&site.url, &site.username, &password)
+                        .get_post(post_id)
+                        .map(|detail| document::content_hash(&detail.content))
+                        .map_err(|err| err.to_string())
+                });
             let _ = tx.send(outcome);
         });
 
+        let target_status = target_status;
         let frontmatter = frontmatter.clone();
+        let body = body.clone();
+        let doc_dir = doc_dir.clone();
         let status_label = status_label.clone();
         let link_button = link_button.clone();
         let button = button_for_click.clone();
         let other_buttons = other_buttons.clone();
-        glib::timeout_add_local(Duration::from_millis(150), move || match rx.try_recv() {
-            Ok(Ok((post, media))) => {
-                let title = {
-                    let mut fm = frontmatter.borrow_mut();
-                    fm.wp_post_id = Some(post.id);
-                    fm.media = media;
-                    fm.status = target_status;
-                    fm.title.clone()
-                };
-                status_label.set_label(&tr("Erfolgreich gesendet:"));
-                link_button.set_uri(&post.link);
-                link_button.set_label(&post.link);
-                link_button.set_visible(true);
-                notify::send("export", &tr("Veröffentlicht"), &tr("„{title}“ wurde erfolgreich gesendet.").replace("{title}", &title));
-                button.set_sensitive(true);
-                for b in &other_buttons {
-                    b.set_sensitive(true);
+        let dialog_parent = dialog_parent.clone();
+        glib::timeout_add_local(Duration::from_millis(150), move || {
+            let proceed_directly = |status_label: &gtk4::Label| {
+                start_export(target_status, &frontmatter, &body, &doc_dir, status_label, &link_button, &button, &other_buttons);
+            };
+            match rx.try_recv() {
+                Ok(Ok(server_hash)) => {
+                    if has_conflicting_server_change(local_hash.as_deref(), &server_hash) {
+                        let confirm = adw::AlertDialog::new(
+                            Some(&tr("Artikel wurde extern geändert")),
+                            Some(&tr(
+                                "Der Artikel wurde seit dem letzten Abruf/Senden direkt auf WordPress geändert - z. B. in wp-admin. Trotzdem mit der lokalen Version überschreiben?",
+                            )),
+                        );
+                        confirm.add_response("cancel", &tr("Abbrechen"));
+                        confirm.add_response("overwrite", &tr("Überschreiben"));
+                        confirm.set_response_appearance("overwrite", adw::ResponseAppearance::Destructive);
+                        confirm.set_default_response(Some("cancel"));
+                        confirm.set_close_response("cancel");
+
+                        let target_status = target_status;
+                        let frontmatter = frontmatter.clone();
+                        let body = body.clone();
+                        let doc_dir = doc_dir.clone();
+                        let status_label = status_label.clone();
+                        let link_button = link_button.clone();
+                        let button = button.clone();
+                        let other_buttons = other_buttons.clone();
+                        confirm.connect_response(None, move |_, response| {
+                            if response == "overwrite" {
+                                start_export(target_status, &frontmatter, &body, &doc_dir, &status_label, &link_button, &button, &other_buttons);
+                            } else {
+                                status_label.set_label(&tr("Abgebrochen - lokale Änderungen wurden nicht gesendet."));
+                                button.set_sensitive(true);
+                                for b in &other_buttons {
+                                    b.set_sensitive(true);
+                                }
+                            }
+                        });
+                        confirm.present(Some(&dialog_parent));
+                    } else {
+                        proceed_directly(&status_label);
+                    }
+                    glib::ControlFlow::Break
                 }
-                glib::ControlFlow::Break
-            }
-            Ok(Err(err)) => {
-                status_label.set_label(&tr("Fehler: {err}").replace("{err}", &err));
-                notify::send("export", &tr("Veröffentlichen fehlgeschlagen"), &err);
-                button.set_sensitive(true);
-                for b in &other_buttons {
-                    b.set_sensitive(true);
+                Ok(Err(_)) | Err(mpsc::TryRecvError::Disconnected) => {
+                    // Fail-open: the conflict check itself is a secondary
+                    // safety net, not the actual publish attempt - if *it*
+                    // can't complete (a transient network/auth hiccup), the
+                    // real publish attempt right after will surface its own,
+                    // more specific error if something is genuinely wrong.
+                    // Refusing to publish at all just because this extra
+                    // check failed would trade a rare conflict risk for a
+                    // much more common "can't publish edits at all" one.
+                    proceed_directly(&status_label);
+                    glib::ControlFlow::Break
                 }
-                glib::ControlFlow::Break
-            }
-            Err(mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
-            Err(mpsc::TryRecvError::Disconnected) => {
-                status_label.set_label(&tr("Interner Fehler: Export-Thread hat kein Ergebnis geliefert."));
-                button.set_sensitive(true);
-                for b in &other_buttons {
-                    b.set_sensitive(true);
-                }
-                glib::ControlFlow::Break
+                Err(mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
             }
         });
+    });
+}
+
+/// Actually sends the article to WordPress - the second half of
+/// `wire_publish_button`'s click handler, split out so it can be invoked
+/// either immediately (no conflict to check, or nothing to check against)
+/// or from the confirmation dialog's "Überschreiben" response.
+#[allow(clippy::too_many_arguments)]
+fn start_export(
+    target_status: PostStatus,
+    frontmatter: &Rc<RefCell<Frontmatter>>,
+    body: &str,
+    doc_dir: &Option<PathBuf>,
+    status_label: &gtk4::Label,
+    link_button: &gtk4::LinkButton,
+    button: &gtk4::Button,
+    other_buttons: &[gtk4::Button],
+) {
+    button.set_sensitive(false);
+    for b in other_buttons {
+        b.set_sensitive(false);
+    }
+    status_label.set_label(&tr("Wird gesendet …"));
+    link_button.set_visible(false);
+
+    let site = wpsite::load();
+    let mut current_fm = frontmatter.borrow().clone();
+    current_fm.status = target_status;
+    let body = body.to_string();
+    let doc_dir = doc_dir.clone();
+
+    let (tx, rx) = mpsc::channel::<Result<(wpclient::PostResult, Vec<media::MediaItem>, Option<String>), String>>();
+    std::thread::spawn(move || {
+        let outcome = futures_lite::future::block_on(secrets::load_app_password(&site.url, &site.username))
+            .map_err(|err| err.to_string())
+            .and_then(|maybe_password| {
+                maybe_password.ok_or_else(|| tr("Kein Application Password im Schlüsselbund gefunden."))
+            })
+            .and_then(|password| run_export(&site, &password, &mut current_fm, &body, doc_dir.as_deref()))
+            .map(|post| (post, current_fm.media, current_fm.wp_content_hash));
+        let _ = tx.send(outcome);
+    });
+
+    let frontmatter = frontmatter.clone();
+    let status_label = status_label.clone();
+    let link_button = link_button.clone();
+    let button = button.clone();
+    let other_buttons: Vec<gtk4::Button> = other_buttons.to_vec();
+    glib::timeout_add_local(Duration::from_millis(150), move || match rx.try_recv() {
+        Ok(Ok((post, media, content_hash))) => {
+            let title = {
+                let mut fm = frontmatter.borrow_mut();
+                fm.wp_post_id = Some(post.id);
+                fm.media = media;
+                fm.status = target_status;
+                fm.wp_content_hash = content_hash;
+                fm.title.clone()
+            };
+            status_label.set_label(&tr("Erfolgreich gesendet:"));
+            link_button.set_uri(&post.link);
+            link_button.set_label(&post.link);
+            link_button.set_visible(true);
+            notify::send("export", &tr("Veröffentlicht"), &tr("„{title}“ wurde erfolgreich gesendet.").replace("{title}", &title));
+            button.set_sensitive(true);
+            for b in &other_buttons {
+                b.set_sensitive(true);
+            }
+            glib::ControlFlow::Break
+        }
+        Ok(Err(err)) => {
+            status_label.set_label(&tr("Fehler: {err}").replace("{err}", &err));
+            notify::send("export", &tr("Veröffentlichen fehlgeschlagen"), &err);
+            button.set_sensitive(true);
+            for b in &other_buttons {
+                b.set_sensitive(true);
+            }
+            glib::ControlFlow::Break
+        }
+        Err(mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
+        Err(mpsc::TryRecvError::Disconnected) => {
+            status_label.set_label(&tr("Interner Fehler: Export-Thread hat kein Ergebnis geliefert."));
+            button.set_sensitive(true);
+            for b in &other_buttons {
+                b.set_sensitive(true);
+            }
+            glib::ControlFlow::Break
+        }
     });
 }
 
@@ -559,8 +704,16 @@ fn run_export(
     let result = match frontmatter.wp_post_id {
         Some(id) => client.update_post(id, &payload),
         None => client.create_post(&payload),
-    };
-    result.map_err(|err| err.to_string())
+    }
+    .map_err(|err| err.to_string())?;
+    // `content` is exactly what the server now stores (WordPress's REST API
+    // persists the `content` field verbatim, it doesn't re-serialize it on
+    // save) - recording its hash here, not just on import, is what lets the
+    // *next* update's conflict check (`wire_publish_button`) compare a
+    // fresh fetch against a baseline that's actually still in sync, instead
+    // of against a stale one from whenever this document was last opened.
+    frontmatter.wp_content_hash = Some(document::content_hash(&content));
+    Ok(result)
 }
 
 /// Overlays each image block's alt text/caption with the corresponding
@@ -718,6 +871,21 @@ mod tests {
     use super::*;
 
     #[test]
+    fn no_conflict_when_there_is_no_known_baseline_to_compare_against() {
+        assert!(!has_conflicting_server_change(None, "any-server-hash"));
+    }
+
+    #[test]
+    fn no_conflict_when_the_server_hash_still_matches_the_baseline() {
+        assert!(!has_conflicting_server_change(Some("abc123"), "abc123"));
+    }
+
+    #[test]
+    fn conflict_when_the_server_hash_no_longer_matches_the_baseline() {
+        assert!(has_conflicting_server_change(Some("abc123"), "def456"));
+    }
+
+    #[test]
     fn preview_url_appends_preview_true_to_a_plain_permalink() {
         assert_eq!(preview_url_for("https://example.com/?p=123"), "https://example.com/?p=123&preview=true");
     }
@@ -835,6 +1003,7 @@ mod tests {
             featured_image: None,
             featured_image_alt: None,
             wp_post_id: None,
+            wp_content_hash: None,
             featured_media_id: None,
             media: Vec::new(),
         };
@@ -883,6 +1052,7 @@ mod tests {
             featured_image: None,
             featured_image_alt: None,
             wp_post_id: None,
+            wp_content_hash: None,
             featured_media_id: None,
             media: Vec::new(),
         };
@@ -934,6 +1104,7 @@ mod tests {
             featured_image: None,
             featured_image_alt: None,
             wp_post_id: None,
+            wp_content_hash: None,
             featured_media_id: None,
             media: Vec::new(),
         };

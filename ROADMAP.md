@@ -134,20 +134,19 @@ speculation.
 
 ### Larger / architectural
 
-- **Revision-conflict awareness.** Re-exporting an already-published post
-  always overwrites it outright - there's no check for whether the post
-  changed on the server since it was last fetched (e.g. someone edited it
-  live in wp-admin in the meantime). WordPress's REST API exposes
-  revisions; comparing the fetched-at content hash against the current
-  server content before an update, and warning rather than silently
-  clobbering, would close a real (if rare) data-loss risk.
-- **Paste rich text as Markdown.** Clipboard paste today only special-
-  cases an image (see `wire_paste_image_shortcut`); pasting formatted
-  text copied from Google Docs, Word, or a webpage lands as plain,
-  unformatted text or raw HTML, not Markdown. Detecting an HTML clipboard
-  format and converting it to Markdown on paste would make drafting from
-  outside sources far less lossy - a genuinely bigger feature (HTML→MD
-  conversion, GTK clipboard format negotiation) than anything above.
+- ~~**Revision-conflict awareness.**~~ Done (see CHANGELOG.md) - a
+  `Frontmatter.wp_content_hash` baseline (set on import and after every
+  successful publish/update) is compared against a fresh fetch's hash
+  right before the next update; a mismatch means the post changed on the
+  server since, and a confirmation dialog asks before overwriting it
+  rather than silently clobbering it.
+- ~~**Paste rich text as Markdown.**~~ Done (see CHANGELOG.md) - Ctrl+V
+  now also checks for a `text/html` clipboard entry (image still takes
+  priority) and converts it to Markdown via `htmd`, a real HTML5 parser
+  (same engine as Firefox) rather than a hand-rolled one, since arbitrary
+  pasted HTML (Google Docs, Word, a webpage) is far too varied for the
+  hand-rolled approach `crates/gutenberg`'s own well-defined Gutenberg-
+  comment scanner gets away with.
 - ~~**SEO plugin field support (RankMath).**~~ Done (see CHANGELOG.md) -
   a "RankMath SEO" group in Artikel-Eigenschaften (SEO-Titel,
   SEO-Beschreibung, Fokus-Keyword) sends RankMath's own post meta keys on
