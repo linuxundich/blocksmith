@@ -398,6 +398,22 @@ impl PreviewPane {
         self.web_view.evaluate_javascript(&format!("window.scrollToLine && window.scrollToLine({line});"), None, None, gio::Cancellable::NONE, |_| {});
     }
 
+    /// Snaps the preview to its true top/bottom rather than "the block
+    /// starting at line N" - `scroll_to_line`'s closest-preceding-block
+    /// mapping is the right general-purpose sync, but at either end of the
+    /// editor it systematically falls short: once the editor is scrolled as
+    /// far as it goes, the line sitting at the *top* of its viewport (what
+    /// `sync_editor_to_preview` reports) is rarely the article's actual
+    /// last block, especially when a tall element (an image, an embed
+    /// placeholder) makes the preview's scrollable range disproportionate
+    /// to the editor's. `window.rs::sync_editor_to_preview` calls this
+    /// instead of `scroll_to_line` specifically when the editor's own
+    /// `vadjustment` is already at its min/max.
+    pub fn scroll_to_edge(&self, bottom: bool) {
+        let edge = if bottom { "bottom" } else { "top" };
+        self.web_view.evaluate_javascript(&format!("window.scrollToEdge && window.scrollToEdge('{edge}');"), None, None, gio::Cancellable::NONE, |_| {});
+    }
+
     /// The preview is a rendered *article*, not a browsing session (see the
     /// module doc comment) - a click on a link inside it must never
     /// navigate the preview itself away from the article. `callback` fires
@@ -432,12 +448,18 @@ impl PreviewPane {
 
     /// Wires the reverse leg of scroll-sync: `callback` fires with a source
     /// line number whenever the user scrolls the preview itself (not when a
-    /// `scroll_to_line` call from this side moves it - the rendered HTML's
-    /// own script guards against echoing those back, see `render_html`'s
-    /// `__suppressScrollEcho`). Every `WebView` has a `UserContentManager`
-    /// of its own, so this only needs calling once, independent of how many
-    /// times the page itself gets reloaded (`register_script_message_handler`
-    /// isn't tied to a specific loaded document).
+    /// `scroll_to_line`/`scroll_to_edge` call from this side moves it - the
+    /// rendered HTML's own script guards against echoing those back, see
+    /// `render_html`'s `__suppressScrollEcho`). Two sentinel values stand
+    /// in for "the preview is at its true top/bottom" rather than a real
+    /// line number - `-1` for top, `-2` for bottom - the same "snap to the
+    /// real edge instead of the nearest block" case `scroll_to_edge`'s own
+    /// doc comment explains, just detected on the preview's side of the
+    /// sync instead of the editor's. Every `WebView` has a
+    /// `UserContentManager` of its own, so this only needs calling once,
+    /// independent of how many times the page itself gets reloaded
+    /// (`register_script_message_handler` isn't tied to a specific loaded
+    /// document).
     pub fn connect_scroll(&self, callback: impl Fn(i32) + 'static) {
         let Some(manager) = self.web_view.user_content_manager() else { return };
         manager.register_script_message_handler(SCROLL_SYNC_HANDLER, None);
@@ -645,6 +667,14 @@ window.scrollToLine = function(line) {{
     setTimeout(function() {{ window.__suppressScrollEcho = false; }}, 200);
   }}
 }};
+// Snaps to the page's true top/bottom rather than a block boundary - see
+// `PreviewPane::scroll_to_edge`'s doc comment for why `scrollToLine` alone
+// can't reliably reach either end.
+window.scrollToEdge = function(edge) {{
+  window.__suppressScrollEcho = true;
+  window.scrollTo(0, edge === 'bottom' ? document.body.scrollHeight : 0);
+  setTimeout(function() {{ window.__suppressScrollEcho = false; }}, 200);
+}};
 // The reverse of `scrollToLine`'s search: which block is at (or just above)
 // the current scroll position, i.e. what the user is looking at right now.
 window.currentTopLine = function() {{
@@ -661,7 +691,13 @@ window.addEventListener('scroll', function() {{
   if (window.__scrollSyncTimer) clearTimeout(window.__scrollSyncTimer);
   window.__scrollSyncTimer = setTimeout(function() {{
     if (window.webkit && window.webkit.messageHandlers.{SCROLL_SYNC_HANDLER}) {{
-      window.webkit.messageHandlers.{SCROLL_SYNC_HANDLER}.postMessage(window.currentTopLine());
+      // Sentinels for "already at the true top/bottom" (-1/-2) - see
+      // `PreviewPane::connect_scroll`'s doc comment for why the editor
+      // side needs to know this instead of just the nearest line.
+      const atBottom = (window.scrollY + window.innerHeight) >= (document.body.scrollHeight - 2);
+      const atTop = window.scrollY <= 2;
+      const payload = atBottom ? -2 : (atTop ? -1 : window.currentTopLine());
+      window.webkit.messageHandlers.{SCROLL_SYNC_HANDLER}.postMessage(payload);
     }}
   }}, 80);
 }});
@@ -1051,6 +1087,14 @@ mod tests {
         assert!(html.contains("window.currentTopLine = function()"));
         assert!(html.contains("messageHandlers.scrollSync"));
         assert!(html.contains("__suppressScrollEcho"));
+    }
+
+    #[test]
+    fn full_html_embeds_the_scroll_to_edge_script_and_its_sentinels() {
+        let html = render_html("Hello", PreviewStyle::Modern, false, &[], 0.0);
+        assert!(html.contains("window.scrollToEdge = function(edge)"), "{html}");
+        assert!(html.contains("document.body.scrollHeight"), "{html}");
+        assert!(html.contains("atBottom ? -2"), "{html}");
     }
 
     fn media_item(source: &str, filename: &str, alt: crate::media::AltText, uploaded: bool) -> MediaItem {

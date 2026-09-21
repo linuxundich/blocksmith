@@ -607,12 +607,14 @@ fn wire_scroll_sync(scroller: &gtk4::ScrolledWindow, view: &sourceview5::View, b
     let last_synced: Rc<Cell<Instant>> = Rc::new(Cell::new(Instant::now() - throttle_interval));
     let trailing: Rc<RefCell<Option<glib::SourceId>>> = Rc::new(RefCell::new(None));
     let ignore_editor_scroll_until: Rc<Cell<Instant>> = Rc::new(Cell::new(Instant::now()));
+    let scroller = scroller.clone();
     let view = view.clone();
     let buffer = buffer.clone();
     let preview_pane = preview_pane.clone();
 
     {
         let view = view.clone();
+        let buffer = buffer.clone();
         let preview_pane = preview_pane.clone();
         let ignore_editor_scroll_until = ignore_editor_scroll_until.clone();
         scroller.vadjustment().connect_value_changed(move |_adjustment| {
@@ -624,7 +626,7 @@ fn wire_scroll_sync(scroller: &gtk4::ScrolledWindow, view: &sourceview5::View, b
                 if let Some(id) = trailing.borrow_mut().take() {
                     id.remove();
                 }
-                sync_editor_to_preview(&view, &preview_pane);
+                sync_editor_to_preview(&view, &buffer, &preview_pane);
                 last_synced.set(Instant::now());
                 return;
             }
@@ -632,11 +634,12 @@ fn wire_scroll_sync(scroller: &gtk4::ScrolledWindow, view: &sourceview5::View, b
                 return;
             }
             let view = view.clone();
+            let buffer = buffer.clone();
             let preview_pane = preview_pane.clone();
             let last_synced = last_synced.clone();
             let trailing_inner = trailing.clone();
             let id = glib::timeout_add_local(throttle_interval - elapsed, move || {
-                sync_editor_to_preview(&view, &preview_pane);
+                sync_editor_to_preview(&view, &buffer, &preview_pane);
                 last_synced.set(Instant::now());
                 *trailing_inner.borrow_mut() = None;
                 glib::ControlFlow::Break
@@ -651,16 +654,54 @@ fn wire_scroll_sync(scroller: &gtk4::ScrolledWindow, view: &sourceview5::View, b
     });
 }
 
-fn sync_editor_to_preview(view: &sourceview5::View, preview_pane: &preview::PreviewPane) {
+/// Maps the editor's current scroll position onto the preview - `line_at_y`
+/// against the top *and* bottom of the editor's own visible rect (see
+/// `wire_scroll_sync`'s doc comment for why a real widget lookup beats a
+/// scroll-fraction estimate), snapped to the preview's true top/bottom
+/// instead whenever the visible range already reaches line 0 or the
+/// buffer's last line.
+///
+/// Deliberately compares *logical* line numbers, not `vadjustment`'s pixel
+/// `value`/`upper`/`page_size` - `GtkTextView` only validates the exact
+/// pixel height of lines near the viewport, so `upper()` is an *estimate*
+/// for a document that hasn't been fully scrolled through yet, and stays
+/// stale (too small) for a while after a big jump like Ctrl+End. Comparing
+/// `value + page_size` against that stale `upper` undershot "are we at the
+/// bottom" by a wide margin in exactly the case this whole check exists
+/// for; the buffer's own line count doesn't have that problem.
+fn sync_editor_to_preview(view: &sourceview5::View, buffer: &sourceview5::Buffer, preview_pane: &preview::PreviewPane) {
     let visible_rect = view.visible_rect();
-    let (iter, _line_top_y) = view.line_at_y(visible_rect.y());
-    preview_pane.scroll_to_line(iter.line() + 1);
+    let (top_iter, _) = view.line_at_y(visible_rect.y());
+    let (bottom_iter, _) = view.line_at_y(visible_rect.y() + visible_rect.height());
+    if bottom_iter.line() >= buffer.end_iter().line() {
+        preview_pane.scroll_to_edge(true);
+        return;
+    }
+    if top_iter.line() <= 0 {
+        preview_pane.scroll_to_edge(false);
+        return;
+    }
+    preview_pane.scroll_to_line(top_iter.line() + 1);
 }
 
+/// `line` is either a real source line, or one of the two sentinels
+/// `preview::PreviewPane::connect_scroll`'s doc comment describes (`-1`
+/// top, `-2` bottom) - reported by the preview's own script when *it* is
+/// at its true top/bottom, so the editor snaps to its real top/bottom too.
+/// Scrolls the buffer's own start/end iter into view (`yalign` 0.0/1.0)
+/// rather than setting `vadjustment`'s pixel value directly, for the same
+/// "logical position, not a possibly-stale pixel estimate" reason
+/// `sync_editor_to_preview` compares line numbers instead of `upper()`.
 fn sync_preview_to_editor(view: &sourceview5::View, buffer: &sourceview5::Buffer, line: i32) {
-    let target_line = (line - 1).clamp(0, buffer.end_iter().line());
-    let Some(mut iter) = buffer.iter_at_line(target_line) else { return };
-    view.scroll_to_iter(&mut iter, 0.0, true, 0.0, 0.0);
+    match line {
+        -2 => view.scroll_to_iter(&mut buffer.end_iter(), 0.0, true, 0.0, 1.0),
+        -1 => view.scroll_to_iter(&mut buffer.start_iter(), 0.0, true, 0.0, 0.0),
+        _ => {
+            let target_line = (line - 1).clamp(0, buffer.end_iter().line());
+            let Some(mut iter) = buffer.iter_at_line(target_line) else { return };
+            view.scroll_to_iter(&mut iter, 0.0, true, 0.0, 0.0)
+        }
+    };
 }
 
 fn wire_new_action(

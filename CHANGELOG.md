@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.50.1] - 2026-09-21
+
+### Fixed
+
+- Scroll-sync's editor-to-preview direction could fall far short of the
+  preview's actual end when scrolling the editor all the way down (e.g.
+  via Ctrl+End) - the check compared `GtkTextView`'s pixel-based
+  `vadjustment` bounds, which are only an *estimate* until the whole
+  document has been scrolled through and stayed stale (too small) right
+  after a big jump. Now compares logical buffer line numbers instead,
+  which don't have that problem.
+
 ## [0.50.0] - 2026-09-21
 
 ### Added
