@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.51.1] - 2026-09-21
+
+### Changed
+
+- Cleaned up the article header's category/tag chips: both now sit in a
+  `flex`-wrapped row with even spacing instead of fixed margins, and tags
+  render as proper outlined pills instead of unstyled `#text` next to the
+  filled category pills. Slightly bolder title and more breathing room
+  between the title/excerpt/meta/taxonomy rows.
+
 ## [0.51.0] - 2026-09-21
 
 ### Added

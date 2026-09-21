@@ -916,15 +916,22 @@ const BADGE_CSS: &str = ".img-wrap { position: relative; display: inline-block; 
 /// styles' light/dark variants. `text-align`/`text-indent` are reset
 /// explicitly on the title/excerpt since Classic's `body { text-align:
 /// justify }` / `p { text-indent: 1.5em }` would otherwise bleed into them.
+/// Categories and tags each get their own `.article-header-taxonomy` flex
+/// row (`gap`, not per-chip margins, so wrapping stays even at any width)
+/// and share `.article-header-chip`'s pill shape - `.article-header-tag`
+/// only swaps the fill for an outline, so tags read as a visually distinct
+/// but equally deliberate group, not unstyled leftover text next to a
+/// "real" filled category chip.
 const HEADER_CSS: &str = ".article-header { margin: 0 0 2.5rem 0; padding-bottom: 1.75rem; border-bottom: 1px solid rgba(127, 127, 127, 0.25); }
 .article-header-image { display: block; width: 100%; max-height: 22rem; object-fit: cover; border-radius: 8px; margin: 0 0 1.25rem 0; }
-.article-header-title { font-size: 2rem; line-height: 1.2; margin: 0 0 .5rem 0; text-align: left; text-indent: 0; }
-.article-header-excerpt { font-size: 1.1em; opacity: .75; margin: 0 0 .9rem 0; text-align: left; text-indent: 0; }
-.article-header-meta { font-size: .82em; opacity: .6; margin: 0 0 .6rem 0; }
-.article-header-meta a { opacity: 1; }
-.article-header-chips { margin: 0 0 .4rem 0; }
-.article-header-chip { display: inline-block; background: rgba(127, 127, 127, 0.18); border-radius: 999px; padding: .15rem .7rem; margin: 0 .35rem .35rem 0; font-size: .8em; }
-.article-header-tag { background: transparent; padding: 0 .35rem 0 0; }";
+.article-header-title { font-size: 2rem; font-weight: 700; line-height: 1.25; margin: 0 0 .6rem 0; text-align: left; text-indent: 0; }
+.article-header-excerpt { font-size: 1.1em; opacity: .75; margin: 0 0 1rem 0; text-align: left; text-indent: 0; }
+.article-header-meta { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; font-size: .82em; opacity: .6; margin: 0 0 1rem 0; }
+.article-header-meta a { opacity: 1; overflow-wrap: anywhere; }
+.article-header-taxonomy { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; margin: 0 0 .5rem 0; }
+.article-header-taxonomy:last-child { margin-bottom: 0; }
+.article-header-chip { display: inline-flex; align-items: center; background: rgba(127, 127, 127, 0.18); border-radius: 999px; padding: .2rem .75rem; font-size: .78em; font-weight: 500; line-height: 1.4; white-space: nowrap; }
+.article-header-tag { background: transparent; border: 1px solid rgba(127, 127, 127, 0.35); }";
 
 /// The magazine-style header shown above the article body (see
 /// `render_html`'s `show_header`) - the same fields "Artikel-Eigenschaften"
@@ -961,7 +968,7 @@ fn render_header(frontmatter: &Frontmatter) -> String {
 
     if !frontmatter.categories.is_empty() {
         let chips: String = frontmatter.categories.iter().map(|name| format!("<span class=\"article-header-chip\">{}</span>", glib::markup_escape_text(name))).collect();
-        html.push_str(&format!("<div class=\"article-header-chips\">{chips}</div>"));
+        html.push_str(&format!("<div class=\"article-header-taxonomy\">{chips}</div>"));
     }
     if !frontmatter.tags.is_empty() {
         let chips: String = frontmatter
@@ -969,7 +976,7 @@ fn render_header(frontmatter: &Frontmatter) -> String {
             .iter()
             .map(|name| format!("<span class=\"article-header-chip article-header-tag\">#{}</span>", glib::markup_escape_text(name)))
             .collect();
-        html.push_str(&format!("<div class=\"article-header-chips\">{chips}</div>"));
+        html.push_str(&format!("<div class=\"article-header-taxonomy\">{chips}</div>"));
     }
 
     html.push_str("</header>");
