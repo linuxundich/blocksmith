@@ -6,8 +6,18 @@
 //! 1-indexed Markdown source line it starts on, so the editor can drive
 //! scroll-sync by asking the preview to scroll a specific *source line*
 //! into view rather than assuming a fixed proportion of the document - an
-//! image is one source line but can be many times taller than a text line
-//! once rendered, so a naive "scroll to the same percentage" would drift.
+//! image (or an embed placeholder, see `render_embed_placeholder`) is one
+//! source line but can be many times taller than a text line once
+//! rendered, so a naive "scroll to the same percentage" would drift. Sync
+//! runs the other way too (scrolling the preview moves the editor) via
+//! `connect_scroll`/`window.currentTopLine` - see `window.rs::wire_scroll_sync`
+//! for how both directions are wired together without echoing back and
+//! forth.
+//!
+//! This is a rendered article, not a browser: a click on a link never
+//! navigates the preview itself away from the article - `connect_link_clicked`
+//! intercepts it and hands the URL to the caller instead (wired in
+//! `window.rs` to open it in the "Browser" tab).
 //!
 //! The preview also follows the app's light/dark mode and offers a choice
 //! of typographic styles ("Modern"/"Klassisch"/"Sepia") via a small picker
@@ -28,7 +38,11 @@ use webkit6::prelude::*;
 use crate::document::{self, Frontmatter};
 use crate::fontutil;
 use crate::i18n::tr;
-use crate::media::{self, MediaItem};
+use crate::media::{self, AltText, MediaItem};
+
+/// Name registered on the `WebView`'s `UserContentManager` for the reverse
+/// (preview -> editor) leg of scroll-sync - see `PreviewPane::connect_scroll`.
+const SCROLL_SYNC_HANDLER: &str = "scrollSync";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PreviewStyle {
@@ -287,11 +301,50 @@ impl PreviewPane {
                 let doc_dir_value = doc_dir_value.clone();
                 let preview_pane = preview_pane.clone();
                 action.connect_activate(move |_, _| {
-                    crate::aialt::open(&window, frontmatter.clone(), index, doc_dir_value.clone(), preview_pane.clone());
+                    let (title, source) = {
+                        let fm = frontmatter.borrow();
+                        let Some(item) = fm.media.get(index) else { return };
+                        (item.filename.clone(), item.source.clone())
+                    };
+                    let frontmatter = frontmatter.clone();
+                    let preview_pane = preview_pane.clone();
+                    crate::aialt::open(&window, title, source, doc_dir_value.clone(), move |text| {
+                        if let Some(item) = frontmatter.borrow_mut().media.get_mut(index) {
+                            item.alt = if text.is_empty() { AltText::Empty } else { AltText::Text(text) };
+                        }
+                        preview_pane.refresh_media(&frontmatter.borrow().media);
+                    });
                 });
             }
             let item = webkit6::ContextMenuItem::from_gaction(&action, &tr("KI-Alternativtext generieren…"), None);
             context_menu.append(&item);
+
+            let caption_action = gio::SimpleAction::new("generate-ai-caption", None);
+            {
+                let frontmatter = frontmatter.clone();
+                let window = window.clone();
+                let doc_dir_value = doc_dir_value.clone();
+                let last_markdown = last_markdown.clone();
+                let preview_pane = preview_pane.clone();
+                caption_action.connect_activate(move |_, _| {
+                    let (title, source) = {
+                        let fm = frontmatter.borrow();
+                        let Some(item) = fm.media.get(index) else { return };
+                        (item.filename.clone(), item.source.clone())
+                    };
+                    let context = crate::imagealt::surrounding_context(&last_markdown.borrow(), &source);
+                    let frontmatter = frontmatter.clone();
+                    let preview_pane = preview_pane.clone();
+                    crate::aicaption::open(&window, title, source, context, doc_dir_value.clone(), move |text| {
+                        if let Some(item) = frontmatter.borrow_mut().media.get_mut(index) {
+                            item.caption = (!text.is_empty()).then_some(text);
+                        }
+                        preview_pane.refresh_media(&frontmatter.borrow().media);
+                    });
+                });
+            }
+            let caption_item = webkit6::ContextMenuItem::from_gaction(&caption_action, &tr("KI-Bildunterschrift generieren…"), None);
+            context_menu.append(&caption_item);
             false
         });
     }
@@ -343,6 +396,54 @@ impl PreviewPane {
 
     pub fn scroll_to_line(&self, line: i32) {
         self.web_view.evaluate_javascript(&format!("window.scrollToLine && window.scrollToLine({line});"), None, None, gio::Cancellable::NONE, |_| {});
+    }
+
+    /// The preview is a rendered *article*, not a browsing session (see the
+    /// module doc comment) - a click on a link inside it must never
+    /// navigate the preview itself away from the article. `callback` fires
+    /// with the clicked link's URL instead, so the caller can open it
+    /// somewhere actually meant for browsing (`window.rs` wires this to the
+    /// "Browser" tab: load the URL there and switch to it). Only an actual
+    /// link click is intercepted this way (`NavigationType::LinkClicked`) -
+    /// the initial `load_html` (and any other internal navigation) is left
+    /// alone so the article keeps rendering normally.
+    pub fn connect_link_clicked(&self, callback: impl Fn(String) + 'static) {
+        self.web_view.connect_decide_policy(move |_web_view, decision, decision_type| {
+            if decision_type != webkit6::PolicyDecisionType::NavigationAction {
+                return false;
+            }
+            let Some(nav_decision) = decision.downcast_ref::<webkit6::NavigationPolicyDecision>() else {
+                return false;
+            };
+            let Some(action) = nav_decision.navigation_action() else {
+                return false;
+            };
+            if action.navigation_type() != webkit6::NavigationType::LinkClicked {
+                return false;
+            }
+            let Some(uri) = action.request().and_then(|request| request.uri()) else {
+                return false;
+            };
+            nav_decision.ignore();
+            callback(uri.to_string());
+            true
+        });
+    }
+
+    /// Wires the reverse leg of scroll-sync: `callback` fires with a source
+    /// line number whenever the user scrolls the preview itself (not when a
+    /// `scroll_to_line` call from this side moves it - the rendered HTML's
+    /// own script guards against echoing those back, see `render_html`'s
+    /// `__suppressScrollEcho`). Every `WebView` has a `UserContentManager`
+    /// of its own, so this only needs calling once, independent of how many
+    /// times the page itself gets reloaded (`register_script_message_handler`
+    /// isn't tied to a specific loaded document).
+    pub fn connect_scroll(&self, callback: impl Fn(i32) + 'static) {
+        let Some(manager) = self.web_view.user_content_manager() else { return };
+        manager.register_script_message_handler(SCROLL_SYNC_HANDLER, None);
+        manager.connect_script_message_received(Some(SCROLL_SYNC_HANDLER), move |_manager, value| {
+            callback(value.to_int32());
+        });
     }
 
     pub fn style(&self) -> PreviewStyle {
@@ -520,16 +621,51 @@ img {{ max-width: 100%; }}
 table {{ border-collapse: collapse; }}
 th, td {{ border: 1px solid #ccc; padding: .4rem .6rem; }}
 {BADGE_CSS}
+{EMBED_CSS}
 </style></head><body>{body}<script>
+// `__suppressScrollEcho` distinguishes a scroll *this script* performs
+// (restoring position after a reload, or `scrollToLine` driven by the
+// editor) from one the user just did by hand with the mouse/trackpad - the
+// DOM's plain `scroll` event can't tell those apart on its own, so every
+// programmatic scroll below sets this first and clears it shortly after,
+// and the listener that reports back to the editor (the reverse leg of
+// scroll-sync, see `PreviewPane::connect_scroll`) skips reporting while
+// it's set. Without this, every editor-driven preview scroll would
+// immediately echo back and nudge the editor again.
+window.__suppressScrollEcho = false;
 window.scrollToLine = function(line) {{
   const blocks = document.querySelectorAll('[data-line]');
   let target = null;
   for (const b of blocks) {{
     if (parseInt(b.getAttribute('data-line'), 10) <= line) {{ target = b; }} else {{ break; }}
   }}
-  if (target) {{ target.scrollIntoView({{block: 'start', behavior: 'auto'}}); }}
+  if (target) {{
+    window.__suppressScrollEcho = true;
+    target.scrollIntoView({{block: 'start', behavior: 'auto'}});
+    setTimeout(function() {{ window.__suppressScrollEcho = false; }}, 200);
+  }}
 }};
-if ({scroll_y} > 0) {{ window.scrollTo(0, {scroll_y}); }}
+// The reverse of `scrollToLine`'s search: which block is at (or just above)
+// the current scroll position, i.e. what the user is looking at right now.
+window.currentTopLine = function() {{
+  const blocks = document.querySelectorAll('[data-line]');
+  let target = null;
+  for (const b of blocks) {{
+    if (b.offsetTop <= window.scrollY + 2) {{ target = b; }} else {{ break; }}
+  }}
+  return target ? parseInt(target.getAttribute('data-line'), 10) : 1;
+}};
+window.__scrollSyncTimer = null;
+window.addEventListener('scroll', function() {{
+  if (window.__suppressScrollEcho) return;
+  if (window.__scrollSyncTimer) clearTimeout(window.__scrollSyncTimer);
+  window.__scrollSyncTimer = setTimeout(function() {{
+    if (window.webkit && window.webkit.messageHandlers.{SCROLL_SYNC_HANDLER}) {{
+      window.webkit.messageHandlers.{SCROLL_SYNC_HANDLER}.postMessage(window.currentTopLine());
+    }}
+  }}, 80);
+}});
+if ({scroll_y} > 0) {{ window.__suppressScrollEcho = true; window.scrollTo(0, {scroll_y}); setTimeout(function() {{ window.__suppressScrollEcho = false; }}, 200); }}
 </script></body></html>"#
     )
 }
@@ -558,8 +694,17 @@ fn render_body_with_line_anchors(markdown: &str, media: &[MediaItem]) -> String 
                 let end_marker = tag.to_end();
                 let end = find_matching_end(&events, i, &end_marker);
                 let line = line_number(markdown, events[i].1.start);
-                let mut inner = String::new();
-                pulldown_cmark::html::push_html(&mut inner, events[i..=end].iter().map(|(event, _)| event.clone()));
+                let embed_url = matches!(tag, Tag::Paragraph)
+                    .then(|| events[i + 1..end].iter().map(|(event, _)| event.clone()).collect::<Vec<_>>())
+                    .and_then(|inner_events| gutenberg::lone_embed_url(&inner_events));
+                let inner = match embed_url {
+                    Some(url) => render_embed_placeholder(&url),
+                    None => {
+                        let mut inner = String::new();
+                        pulldown_cmark::html::push_html(&mut inner, events[i..=end].iter().map(|(event, _)| event.clone()));
+                        inner
+                    }
+                };
                 out.push_str(&format!("<div data-line=\"{line}\">{inner}</div>\n"));
                 i = end + 1;
             }
@@ -611,6 +756,45 @@ fn media_tag_for(src: &str) -> Option<&'static str> {
         document::MediaReferenceKind::Video => Some("video"),
         document::MediaReferenceKind::Audio => Some("audio"),
         document::MediaReferenceKind::Image => None,
+    }
+}
+
+const EMBED_CSS: &str = ".embed-placeholder { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .5rem; aspect-ratio: 16 / 9; max-width: 100%; margin: 1rem auto; padding: 1rem; box-sizing: border-box; text-align: center; border: 1px solid rgba(127, 127, 127, 0.3); border-radius: 8px; background: rgba(127, 127, 127, 0.08); }
+.embed-placeholder .embed-icon { font-size: 2.5rem; opacity: .6; }
+.embed-placeholder .embed-label { font-weight: 600; opacity: .85; }
+.embed-placeholder .embed-url { font-size: .8em; opacity: .55; word-break: break-all; max-width: 90%; }";
+
+/// A lone embeddable URL (see `gutenberg::lone_embed_url`) renders as a
+/// fixed-aspect-ratio placeholder card instead of a live embed - matching
+/// the user-facing request this was built for ("zeige die Vorschau als
+/// Platzhalter an"), and avoiding a live `WebView` silently loading a
+/// third-party iframe/script on every keystroke. Sized with a real
+/// `aspect-ratio` (16:9, the same shape WordPress's own block editor gives
+/// an embed) rather than a fixed pixel height, so it takes up roughly the
+/// space the real embed will - the reason scroll-sync doesn't need any
+/// special-casing for this block, see the module doc comment's note on
+/// `data-line` anchoring by source line rather than proportion.
+fn render_embed_placeholder(url: &str) -> String {
+    let (icon, label) = embed_placeholder_label(url);
+    format!(
+        "<div class=\"embed-placeholder\"><span class=\"embed-icon\">{icon}</span><span class=\"embed-label\">{}</span><span class=\"embed-url\">{}</span></div>",
+        glib::markup_escape_text(&label),
+        glib::markup_escape_text(url)
+    )
+}
+
+/// An icon glyph and display label for a lone embed URL - German for the
+/// generic fallback (matching this app's UI language elsewhere), but the
+/// known providers' own names are proper nouns and stay untranslated.
+fn embed_placeholder_label(url: &str) -> (&'static str, String) {
+    match gutenberg::embed_provider(url) {
+        Some((_, "youtube")) => ("▶", tr("YouTube-Video")),
+        Some((_, "vimeo")) => ("▶", tr("Vimeo-Video")),
+        Some((_, "twitter")) => ("🔗", "Twitter/X".to_string()),
+        Some((_, "instagram")) => ("🔗", "Instagram".to_string()),
+        Some((_, "soundcloud")) => ("🎵", "SoundCloud".to_string()),
+        Some((_, "spotify")) => ("🎵", "Spotify".to_string()),
+        _ => ("🔗", tr("Eingebetteter Inhalt")),
     }
 }
 
@@ -831,6 +1015,44 @@ mod tests {
         assert!(out.contains("<div data-line=\"5\"><p>Outro text.</p>"));
     }
 
+    #[test]
+    fn a_lone_youtube_url_line_becomes_an_embed_placeholder() {
+        let markdown = "Intro text.\n\nhttps://www.youtube.com/watch?v=dQw4w9WgXcQ\n\nOutro text.\n";
+        let out = render_body_with_line_anchors(markdown, &[]);
+        assert!(out.contains("<div data-line=\"3\"><div class=\"embed-placeholder\">"), "{out}");
+        assert!(out.contains("YouTube-Video"), "{out}");
+        assert!(out.contains("https://www.youtube.com/watch?v=dQw4w9WgXcQ"), "{out}");
+        // No live iframe/script is ever loaded for this - just a static card.
+        assert!(!out.contains("<iframe"), "{out}");
+    }
+
+    #[test]
+    fn a_lone_vimeo_url_line_becomes_an_embed_placeholder() {
+        let out = render_body_with_line_anchors("https://vimeo.com/123456\n", &[]);
+        assert!(out.contains("Vimeo-Video"), "{out}");
+    }
+
+    #[test]
+    fn a_lone_url_from_an_unknown_provider_gets_a_generic_placeholder() {
+        let out = render_body_with_line_anchors("https://example.com/some-article\n", &[]);
+        assert!(out.contains("Eingebetteter Inhalt"), "{out}");
+    }
+
+    #[test]
+    fn a_normal_link_inside_a_sentence_is_not_treated_as_an_embed() {
+        let out = render_body_with_line_anchors("Check out [this video](https://www.youtube.com/watch?v=x) sometime.\n", &[]);
+        assert!(!out.contains("embed-placeholder"), "{out}");
+        assert!(out.contains("<a href=\"https://www.youtube.com/watch?v=x\">"), "{out}");
+    }
+
+    #[test]
+    fn full_html_embeds_the_reverse_scroll_sync_script() {
+        let html = render_html("Hello", PreviewStyle::Modern, false, &[], 0.0);
+        assert!(html.contains("window.currentTopLine = function()"));
+        assert!(html.contains("messageHandlers.scrollSync"));
+        assert!(html.contains("__suppressScrollEcho"));
+    }
+
     fn media_item(source: &str, filename: &str, alt: crate::media::AltText, uploaded: bool) -> MediaItem {
         MediaItem {
             id: "media-001".to_string(),
@@ -980,7 +1202,7 @@ mod tests {
     #[test]
     fn full_html_guards_the_scroll_restore_for_zero() {
         let html = render_html("Hello", PreviewStyle::Modern, false, &[], 0.0);
-        assert!(html.contains("if (0 > 0) { window.scrollTo(0, 0); }"), "{html}");
+        assert!(html.contains("if (0 > 0) { window.__suppressScrollEcho = true; window.scrollTo(0, 0);"), "{html}");
     }
 
     #[test]

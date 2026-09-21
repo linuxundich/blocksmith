@@ -266,6 +266,27 @@ fn as_lone_embed(events: &[Event]) -> Option<Block> {
     (url.starts_with("http://") || url.starts_with("https://")).then(|| Block::Embed { url: url.to_string() })
 }
 
+/// Same detection as `as_lone_embed`, exposed for the live preview
+/// (`preview.rs`), which wants to show a placeholder for exactly the
+/// paragraphs this crate turns into a `wp:embed` block at export time -
+/// returns just the URL rather than a `Block`, so the preview doesn't need
+/// to know about this crate's block tree at all.
+pub fn lone_embed_url(events: &[Event]) -> Option<String> {
+    match as_lone_embed(events)? {
+        Block::Embed { url } => Some(url),
+        _ => unreachable!("as_lone_embed only ever returns Block::Embed"),
+    }
+}
+
+/// The provider's display type (`"video"`, `"rich"`, ...) and slug (e.g.
+/// `"youtube"`) for a known embed URL - `None` for an unrecognized host,
+/// matching `render_embed`'s own "still works, just more generic" fallback.
+/// Exposed for the live preview to label its placeholder the same way this
+/// crate's own export-time embed attributes would.
+pub fn embed_provider(url: &str) -> Option<(&'static str, &'static str)> {
+    embed_provider_for(url).map(|p| (p.type_, p.slug))
+}
+
 /// Splits a ` ```columns ` block's raw text into one section per column, on
 /// any line containing exactly `+++` - chosen over Markdown's own `---`
 /// thematic break so a real thematic break can still be written *inside* a
@@ -944,6 +965,34 @@ mod tests {
             "<!-- wp:embed {\"url\":\"https://example.com/some-article\"} -->\n\
              <figure class=\"wp-block-embed\"><div class=\"wp-block-embed__wrapper\">\nhttps://example.com/some-article\n</div></figure>\n<!-- /wp:embed -->"
         );
+    }
+
+    #[test]
+    fn lone_embed_url_matches_a_bare_url_paragraph() {
+        let events: Vec<Event> = Parser::new("https://www.youtube.com/watch?v=dQw4w9WgXcQ").collect();
+        // Strip the paragraph Start/End wrapper, the same slice `parse_blocks`
+        // itself passes to `as_lone_embed`.
+        let inner = &events[1..events.len() - 1];
+        assert_eq!(lone_embed_url(inner), Some("https://www.youtube.com/watch?v=dQw4w9WgXcQ".to_string()));
+    }
+
+    #[test]
+    fn lone_embed_url_is_none_for_ordinary_prose() {
+        let events: Vec<Event> = Parser::new("Just a normal sentence.").collect();
+        let inner = &events[1..events.len() - 1];
+        assert_eq!(lone_embed_url(inner), None);
+    }
+
+    #[test]
+    fn embed_provider_recognizes_youtube_and_vimeo() {
+        assert_eq!(embed_provider("https://www.youtube.com/watch?v=x"), Some(("video", "youtube")));
+        assert_eq!(embed_provider("https://youtu.be/x"), Some(("video", "youtube")));
+        assert_eq!(embed_provider("https://vimeo.com/123456"), Some(("video", "vimeo")));
+    }
+
+    #[test]
+    fn embed_provider_is_none_for_an_unknown_host() {
+        assert_eq!(embed_provider("https://example.com/some-article"), None);
     }
 
     #[test]

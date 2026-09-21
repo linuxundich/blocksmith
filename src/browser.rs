@@ -3,7 +3,9 @@
 //! reference page without alt-tabbing away from the editor. Deliberately
 //! just a browser - no history list, bookmarks, or tabs of its own beyond
 //! WebKit's own back/forward stack; a general-purpose browser already
-//! does all of that better than this app needs to.
+//! does all of that better than this app needs to. Also where a link
+//! clicked in the Vorschau pane ends up (`preview::PreviewPane::connect_link_clicked`,
+//! wired in `window.rs`) - the preview itself refuses to navigate.
 
 use std::path::PathBuf;
 
@@ -71,11 +73,15 @@ impl BrowserView {
         let reload_button = gtk4::Button::from_icon_name("view-refresh-symbolic");
         reload_button.set_tooltip_text(Some(&tr("Neu laden")));
 
+        let copy_url_button = gtk4::Button::from_icon_name("edit-copy-symbolic");
+        copy_url_button.set_tooltip_text(Some(&tr("Aktuelle Adresse kopieren")));
+
         let toolbar = gtk4::Box::builder().orientation(gtk4::Orientation::Horizontal).spacing(6).margin_top(6).margin_bottom(6).margin_start(6).margin_end(6).build();
         toolbar.append(&back_button);
         toolbar.append(&forward_button);
         toolbar.append(&reload_button);
         toolbar.append(&url_entry);
+        toolbar.append(&copy_url_button);
 
         let content = gtk4::Box::builder().orientation(gtk4::Orientation::Vertical).build();
         content.append(&toolbar);
@@ -99,6 +105,14 @@ impl BrowserView {
         {
             let web_view = web_view.clone();
             forward_button.connect_clicked(move |_| web_view.go_forward());
+        }
+        {
+            let web_view = web_view.clone();
+            copy_url_button.connect_clicked(move |button| {
+                if let Some(uri) = web_view.uri() {
+                    button.clipboard().set_text(&uri);
+                }
+            });
         }
         // Keeps the toolbar in sync with whatever navigation actually
         // happens - a link clicked *inside* the page, not just the

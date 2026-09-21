@@ -279,6 +279,25 @@ context-sensitive menus) surfaced a couple of these directly.
   `comment_status` field - there's no way to publish a post with
   comments closed (or reopen them) from inside the app; wp-admin is the
   only way today.
+- **No VG Wort length check / counting-pixel toggle.** VG Wort (the
+  German collecting society compensating authors for online text use)
+  only counts an article once it clears a minimum length, tracked via an
+  invisible "Zählmarke"/counting-pixel embedded in the post - `stats.rs`
+  already computes `chars_without_spaces` (used today for the readability
+  score), which is the natural signal to check that threshold against
+  before publishing, surfaced as a hint the way the alt-text-length
+  warning already is. Per the user's request, the app should then also be
+  able to actually toggle the marker on/off for the post - reading/
+  writing whatever post-meta key(s) the site's VG Wort WordPress plugin
+  registers, the same shape as the existing RankMath integration
+  (`Frontmatter::rank_math_title` and friends), sent only when set so
+  it's harmless against a site without that plugin. Needs research before
+  implementing: which plugin exactly (the user said "Worthy", but that
+  name doesn't match any VG Wort plugin this analysis could confirm -
+  worth double-checking with them), its actual meta key name(s), and
+  today's real minimum-length threshold (VG Wort's own rules have
+  changed over the years; don't hardcode a number this analysis merely
+  remembers).
 
 ### Larger / architectural
 

@@ -2,10 +2,14 @@
 //! the editor (see `imagealt.rs`) or the rendered image itself in the
 //! Vorschau pane (see `preview.rs`) - to have the active KI-Chat provider
 //! look at the real image bytes and propose an accessible alt text, at one
-//! of three levels of detail. The result is shown for review/correction
-//! before anything is written, and applying it goes straight into the same
-//! `MediaItem.alt` field the manual editor and Medienverwaltung already
-//! use - so it's what the WordPress media upload sends, no separate step.
+//! of three levels of detail. Also reachable for the featured image from
+//! Artikel-Eigenschaften (`properties.rs`), which isn't a `MediaItem` at
+//! all. The result is shown for review/correction before anything is
+//! written; applying it just calls the caller's own `on_apply` (see
+//! `open`'s doc comment) - so it's the caller's job to decide where that
+//! text actually goes (`MediaItem.alt` for a body image,
+//! `Frontmatter.featured_image_alt` for the featured one), not this
+//! module's.
 //!
 //! Deliberately no attempt to hide this behind "is an LLM actually
 //! configured" - matching `imagealt.rs`'s own choice to always show its
@@ -13,19 +17,15 @@
 //! API key surfaces as a normal inline error from the same generation call
 //! chat.rs already makes, not as a pre-check.
 
-use std::cell::RefCell;
 use std::path::PathBuf;
-use std::rc::Rc;
 use std::sync::mpsc;
 use std::time::Duration;
 
 use adw::prelude::*;
 use gtk4::glib;
 
-use crate::document::Frontmatter;
 use crate::i18n::tr;
-use crate::media::AltText;
-use crate::{chatconfig, export, llm, preview, secrets};
+use crate::{chatconfig, export, llm, secrets};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DetailLevel {
@@ -116,13 +116,18 @@ fn save_detail_level(level: DetailLevel) {
     let _ = std::fs::write(detail_level_path(), level.id());
 }
 
-/// Opens the review dialog for `frontmatter.media[index]` - the caller is
-/// responsible for having already reconciled the media list against the
-/// current document body (see `imagealt.rs`/`preview.rs`), so `index` is
-/// guaranteed valid at the moment this is called.
-pub fn open(window: &gtk4::Window, frontmatter: Rc<RefCell<Frontmatter>>, index: usize, doc_dir: Option<PathBuf>, preview_pane: Rc<preview::PreviewPane>) {
-    let Some(item) = frontmatter.borrow().media.get(index).cloned() else { return };
-
+/// Opens the review dialog for one image, identified only by `title`
+/// (shown as the dialog's group heading - a filename for a body image, or
+/// a fixed label for the featured image, which has no filename of its
+/// own) and `source` (resolved against `doc_dir` the same way any other
+/// local image reference is). Applying the result just calls `on_apply`
+/// with the trimmed text - deliberately not tied to `MediaItem`/
+/// `Frontmatter.media` at all, so the same dialog serves both a body
+/// image (`imagealt.rs`/`preview.rs`, writing into `frontmatter.media
+/// [index].alt`) and the featured image (`properties.rs`, writing into
+/// `Frontmatter.featured_image_alt`), which isn't a `MediaItem` and has
+/// no index into that list.
+pub fn open(window: &gtk4::Window, title: String, source: String, doc_dir: Option<PathBuf>, on_apply: impl Fn(String) + 'static) {
     let level_labels: Vec<String> = DetailLevel::ALL.iter().map(DetailLevel::label).collect();
     let level_label_refs: Vec<&str> = level_labels.iter().map(String::as_str).collect();
     let selected_level = DetailLevel::ALL.iter().position(|l| *l == load_detail_level()).unwrap_or(0) as u32;
@@ -158,7 +163,7 @@ pub fn open(window: &gtk4::Window, frontmatter: Rc<RefCell<Frontmatter>>, index:
     let generate_row_box = gtk4::Box::builder().orientation(gtk4::Orientation::Horizontal).spacing(8).build();
     generate_row_box.append(&generate_button);
 
-    let group = adw::PreferencesGroup::builder().title(&item.filename).build();
+    let group = adw::PreferencesGroup::builder().title(&title).build();
     group.add(&level_row);
 
     let content = gtk4::Box::builder()
@@ -187,8 +192,7 @@ pub fn open(window: &gtk4::Window, frontmatter: Rc<RefCell<Frontmatter>>, index:
     let dialog = adw::Dialog::builder().title(tr("KI-Alternativtext")).content_width(460).content_height(420).child(&toolbar_view).build();
 
     {
-        let source = item.source.clone();
-        let filename = item.filename.clone();
+        let source = source.clone();
         let doc_dir = doc_dir.clone();
         let level_row = level_row.clone();
         let generate_button_for_click = generate_button.clone();
@@ -196,21 +200,22 @@ pub fn open(window: &gtk4::Window, frontmatter: Rc<RefCell<Frontmatter>>, index:
         let text_buffer = text_buffer.clone();
         generate_button.connect_clicked(move |_| {
             let level = DetailLevel::ALL[level_row.selected() as usize];
-            run_generation(level, &source, &filename, doc_dir.clone(), &generate_button_for_click, &status_label, &text_buffer);
+            // `source` doubles as the mime-detection input - it always has
+            // a real file extension (a bare filename for a body image, a
+            // local path for the featured image), and
+            // `export::mime_from_extension` only ever looks at the part
+            // after the last `.` anyway, so a full path works the same as
+            // a bare filename here.
+            run_generation(level, &source, &source, doc_dir.clone(), &generate_button_for_click, &status_label, &text_buffer);
         });
     }
 
     {
-        let frontmatter = frontmatter.clone();
         let text_buffer = text_buffer.clone();
         let dialog = dialog.clone();
         apply_button.connect_clicked(move |_| {
             let text = text_buffer.text(&text_buffer.start_iter(), &text_buffer.end_iter(), false).to_string();
-            let text = text.trim().to_string();
-            if let Some(item) = frontmatter.borrow_mut().media.get_mut(index) {
-                item.alt = if text.is_empty() { AltText::Empty } else { AltText::Text(text) };
-            }
-            preview_pane.refresh_media(&frontmatter.borrow().media);
+            on_apply(text.trim().to_string());
             dialog.close();
         });
     }

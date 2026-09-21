@@ -369,6 +369,14 @@ pub fn build(app: &adw::Application, initial_path: Option<PathBuf>) -> adw::Appl
     let image_alt_menu = imagealt::install(&view, &buffer, frontmatter.clone(), current_path.clone(), preview_pane.clone());
     preview::PreviewPane::install_alt_text_menu(&preview_pane, &window, frontmatter.clone());
     preview::PreviewPane::install_image_edit_menu(&preview_pane, &window, frontmatter.clone(), buffer.clone());
+    {
+        let browser_view = browser_view.clone();
+        let view_stack = view_stack.clone();
+        preview_pane.connect_link_clicked(move |uri| {
+            browser_view.load_uri(&uri);
+            view_stack.set_visible_child_name("browser");
+        });
+    }
     let ai_menu_handles = aimenu::install(&view, &buffer, &view_stack, chat_view.clone(), &spelling_menu, image_alt_menu.upcast_ref());
 
     let doc_ctx = DocContext {
@@ -382,7 +390,7 @@ pub fn build(app: &adw::Application, initial_path: Option<PathBuf>) -> adw::Appl
     };
 
     wire_live_preview(&buffer, &preview_pane, &stats_view, &code_view, &frontmatter, &current_path, &saved_text);
-    wire_scroll_sync(&editor_scroller, &buffer, &preview_pane);
+    wire_scroll_sync(&editor_scroller, &view, &buffer, &preview_pane);
     wire_status_bar(&buffer, &status_bar);
     wire_new_action(&window, &buffer, &current_path, &frontmatter, &title, &preview_pane, &saved_text);
     wire_open_action(&window, &doc_ctx);
@@ -395,7 +403,7 @@ pub fn build(app: &adw::Application, initial_path: Option<PathBuf>) -> adw::Appl
         list: recent_list,
     };
     wire_recent_files_button(&recent_files_widgets, &doc_ctx);
-    wire_properties_action(&window, &frontmatter, &term_caches, &current_path);
+    wire_properties_action(&window, &buffer, &frontmatter, &term_caches, &current_path);
     wire_settings_action(&window, &buffer, ai_menu_handles, &preview_pane, &browser_view);
     wire_about_action(&window);
     wire_publish_action(&window, &buffer, &current_path, &frontmatter, &preview_pane, &view_stack, &browser_view);
@@ -541,83 +549,118 @@ fn wire_status_bar(buffer: &sourceview5::Buffer, status_bar: &Rc<statusbar::Stat
 
 const SCROLL_SYNC_THROTTLE_MS: u64 = 60;
 
-/// Drives the preview's scroll position from the editor's: on every editor
-/// scroll, estimates the source line currently at the top of the editor's
-/// viewport and asks the preview (via `preview::render_html`'s embedded
-/// `scrollToLine`) to bring the block starting at or before that line to
-/// its own top.
+/// How long the editor->preview direction ignores the editor's own
+/// `vadjustment` after the *preview->editor* direction just moved it - long
+/// enough to absorb `scroll_to_iter`'s layout settling, short enough that a
+/// genuine user scroll starting right after is never mistaken for the echo
+/// of a sync that was already applied. See `wire_scroll_sync`'s doc comment
+/// for why each direction needs its own echo guard.
+const SCROLL_SYNC_ECHO_GUARD_MS: u64 = 250;
+
+/// Wires scroll-sync in both directions between the editor and the preview.
 ///
-/// The editor-side estimate is scroll-fraction-based (`adjustment position
-/// / scrollable range` times total line count) rather than pixel-based:
-/// `TextView::iter_at_location` at the buffer-coordinate left edge (`x=0`)
-/// turned out to unreliably return `None` once the line-number gutter is
-/// showing (verified with `examples/scroll_sync_debug.rs`), and nudging the
-/// x by a few pixels "worked" in one manual check but isn't a principled
-/// fix. A fraction-based estimate is fine *here* because editor lines are
-/// plain, uniformly-tall text (unlike the preview's rendered blocks, where
-/// an image can be many times taller than one source line) - that height
-/// mismatch is handled entirely on the preview side via `data-line`
-/// block-boundary snapping, so the editor side never needs pixel-perfect
-/// line detection to get the overall sync right.
+/// Editor -> preview: on every editor scroll, finds the source line
+/// currently at the top of the editor's viewport and asks the preview (via
+/// `preview::render_html`'s embedded `scrollToLine`) to bring the block
+/// starting at or before that line to its own top. The line lookup goes
+/// through the real widget (`TextView::visible_rect` + `line_at_y`) rather
+/// than a scroll-fraction-times-line-count estimate - the editor has word
+/// wrap enabled (`editor::build`'s `WrapMode::WordChar`), so a document
+/// mixing long wrapped paragraphs with short lines has no fixed
+/// pixels-per-line ratio a fraction-based estimate could rely on;
+/// `line_at_y` asks GTK's own layout directly, sidestepping that entirely.
+/// (An earlier attempt at pixel-based lookup via `TextView::iter_at_location`
+/// at `x=0` ran into that call unreliably returning `None` once the
+/// line-number gutter is showing - `line_at_y` takes no `x` at all, so that
+/// specific failure mode doesn't apply here.)
 ///
-/// This is throttled, not debounced: a debounce (cancel-and-reschedule on
-/// every event) only ever fires once scrolling has *stopped*, so the
-/// preview sits frozen for the whole scroll gesture and then snaps to the
-/// final position - exactly the "jumps instead of scrolling" symptom this
-/// was built to fix. A throttle instead fires at most once per interval
-/// *while* scrolling continues (leading edge immediately, a single
-/// trailing-edge call queued for whatever's left of the window so the
-/// final position is never dropped), so the preview visibly tracks the
-/// editor the whole time instead of only catching up afterward.
-fn wire_scroll_sync(scroller: &gtk4::ScrolledWindow, buffer: &sourceview5::Buffer, preview_pane: &Rc<preview::PreviewPane>) {
+/// Preview -> editor: the rendered page's own `scroll` listener (see
+/// `render_html`'s script) reports the source line nearest the top of the
+/// preview's viewport back through `PreviewPane::connect_scroll`, and this
+/// scrolls the editor to show that same line at its own top
+/// (`TextView::scroll_to_iter`).
+///
+/// Each direction's *own* programmatic scroll would otherwise immediately
+/// trigger the *other* direction's listener, which re-syncs back, which
+/// re-triggers the first again - an infinite echo. Both directions guard
+/// against this, but differently, matched to how each round-trip actually
+/// happens: the preview's own script sets `__suppressScrollEcho` around
+/// every scroll *it* performs (a same-document, synchronous-enough JS
+/// concern, so a short timeout-based flag inside the page itself is
+/// simplest); the editor side instead uses `ignore_editor_scroll_until`
+/// here, set right before `sync_preview_to_editor` moves the editor, since
+/// the trigger for the echo (`vadjustment`'s `value-changed`) fires on the
+/// Rust side, not inside the WebView.
+///
+/// Both directions are throttled (not debounced): a debounce only fires
+/// once scrolling has *stopped*, so the other side sits frozen for the
+/// whole gesture and then snaps to the final position - exactly the "jumps
+/// instead of scrolling" symptom this was built to avoid. A throttle
+/// instead fires at most once per interval *while* scrolling continues
+/// (leading edge immediately, a single trailing-edge call queued for
+/// whatever's left of the window so the final position is never dropped),
+/// so each side visibly tracks the other the whole time. The preview's own
+/// debounce for its outgoing messages lives in its script (`render_html`);
+/// only the editor->preview leg needs a matching one here in Rust.
+fn wire_scroll_sync(scroller: &gtk4::ScrolledWindow, view: &sourceview5::View, buffer: &sourceview5::Buffer, preview_pane: &Rc<preview::PreviewPane>) {
     let throttle_interval = Duration::from_millis(SCROLL_SYNC_THROTTLE_MS);
     let last_synced: Rc<Cell<Instant>> = Rc::new(Cell::new(Instant::now() - throttle_interval));
     let trailing: Rc<RefCell<Option<glib::SourceId>>> = Rc::new(RefCell::new(None));
+    let ignore_editor_scroll_until: Rc<Cell<Instant>> = Rc::new(Cell::new(Instant::now()));
+    let view = view.clone();
     let buffer = buffer.clone();
     let preview_pane = preview_pane.clone();
 
-    scroller.vadjustment().connect_value_changed(move |adjustment| {
-        let elapsed = last_synced.get().elapsed();
-        if elapsed >= throttle_interval {
-            if let Some(id) = trailing.borrow_mut().take() {
-                id.remove();
-            }
-            sync_scroll(&buffer, &preview_pane, adjustment);
-            last_synced.set(Instant::now());
-            return;
-        }
-        if trailing.borrow().is_some() {
-            return;
-        }
-        let adjustment = adjustment.clone();
-        let buffer = buffer.clone();
+    {
+        let view = view.clone();
         let preview_pane = preview_pane.clone();
-        let last_synced = last_synced.clone();
-        let trailing_inner = trailing.clone();
-        let id = glib::timeout_add_local(throttle_interval - elapsed, move || {
-            sync_scroll(&buffer, &preview_pane, &adjustment);
-            last_synced.set(Instant::now());
-            *trailing_inner.borrow_mut() = None;
-            glib::ControlFlow::Break
+        let ignore_editor_scroll_until = ignore_editor_scroll_until.clone();
+        scroller.vadjustment().connect_value_changed(move |_adjustment| {
+            if Instant::now() < ignore_editor_scroll_until.get() {
+                return;
+            }
+            let elapsed = last_synced.get().elapsed();
+            if elapsed >= throttle_interval {
+                if let Some(id) = trailing.borrow_mut().take() {
+                    id.remove();
+                }
+                sync_editor_to_preview(&view, &preview_pane);
+                last_synced.set(Instant::now());
+                return;
+            }
+            if trailing.borrow().is_some() {
+                return;
+            }
+            let view = view.clone();
+            let preview_pane = preview_pane.clone();
+            let last_synced = last_synced.clone();
+            let trailing_inner = trailing.clone();
+            let id = glib::timeout_add_local(throttle_interval - elapsed, move || {
+                sync_editor_to_preview(&view, &preview_pane);
+                last_synced.set(Instant::now());
+                *trailing_inner.borrow_mut() = None;
+                glib::ControlFlow::Break
+            });
+            *trailing.borrow_mut() = Some(id);
         });
-        *trailing.borrow_mut() = Some(id);
+    }
+
+    preview_pane.connect_scroll(move |line| {
+        ignore_editor_scroll_until.set(Instant::now() + Duration::from_millis(SCROLL_SYNC_ECHO_GUARD_MS));
+        sync_preview_to_editor(&view, &buffer, line);
     });
 }
 
-fn sync_scroll(buffer: &sourceview5::Buffer, preview_pane: &preview::PreviewPane, adjustment: &gtk4::Adjustment) {
-    let total_lines = buffer.end_iter().line() + 1;
-    let line = estimate_visible_line(adjustment.value(), adjustment.upper(), adjustment.page_size(), total_lines);
-    preview_pane.scroll_to_line(line);
+fn sync_editor_to_preview(view: &sourceview5::View, preview_pane: &preview::PreviewPane) {
+    let visible_rect = view.visible_rect();
+    let (iter, _line_top_y) = view.line_at_y(visible_rect.y());
+    preview_pane.scroll_to_line(iter.line() + 1);
 }
 
-/// Pure scroll-fraction-to-line estimate backing `wire_scroll_sync` - see
-/// that function's doc comment for why fraction-based is the right call
-/// here specifically (editor lines are uniform height, unlike the
-/// preview's rendered blocks).
-fn estimate_visible_line(value: f64, upper: f64, page_size: f64, total_lines: i32) -> i32 {
-    let scrollable_range = (upper - page_size).max(1.0);
-    let fraction = (value / scrollable_range).clamp(0.0, 1.0);
-    ((fraction * f64::from(total_lines)).round() as i32 + 1).clamp(1, total_lines.max(1))
+fn sync_preview_to_editor(view: &sourceview5::View, buffer: &sourceview5::Buffer, line: i32) {
+    let target_line = (line - 1).clamp(0, buffer.end_iter().line());
+    let Some(mut iter) = buffer.iter_at_line(target_line) else { return };
+    view.scroll_to_iter(&mut iter, 0.0, true, 0.0, 0.0);
 }
 
 fn wire_new_action(
@@ -891,11 +934,13 @@ fn wire_save_action(window: &adw::ApplicationWindow, ctx: &DocContext) {
 
 fn wire_properties_action(
     window: &adw::ApplicationWindow,
+    buffer: &sourceview5::Buffer,
     frontmatter: &Rc<RefCell<Frontmatter>>,
     term_caches: &termcache::TermCacheHandles,
     current_path: &Rc<RefCell<Option<PathBuf>>>,
 ) {
     let action = gio::SimpleAction::new("properties", None);
+    let buffer = buffer.clone();
     let frontmatter = frontmatter.clone();
     let term_caches = term_caches.clone();
     let current_path = current_path.clone();
@@ -903,7 +948,8 @@ fn wire_properties_action(
     action.connect_activate(move |_, _| {
         if let Some(window) = window_weak.upgrade() {
             let doc_dir = current_path.borrow().as_ref().and_then(|p| p.parent().map(Path::to_path_buf));
-            properties::open(&window, frontmatter.clone(), term_caches.clone(), doc_dir);
+            let body = buffer.text(&buffer.start_iter(), &buffer.end_iter(), false).to_string();
+            properties::open(&window, body, frontmatter.clone(), term_caches.clone(), doc_dir);
         }
     });
     window.add_action(&action);
@@ -1282,33 +1328,4 @@ fn wire_media_action(
         mediapanel::open(&window, body, frontmatter.clone(), doc_dir, preview_pane.clone());
     });
     window.add_action(&action);
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn estimate_visible_line_at_top_is_line_one() {
-        assert_eq!(estimate_visible_line(0.0, 4020.0, 261.0, 200), 1);
-    }
-
-    #[test]
-    fn estimate_visible_line_at_bottom_is_last_line() {
-        assert_eq!(estimate_visible_line(3759.0, 4020.0, 261.0, 200), 200);
-    }
-
-    #[test]
-    fn estimate_visible_line_partway_scales_proportionally() {
-        // Matches the manually-verified diagnostic run: value=300 out of a
-        // 3759 scrollable range in a 200-line buffer landed on line 15/16
-        // via pixel-based iter_at_location.
-        let line = estimate_visible_line(300.0, 4020.0, 261.0, 200);
-        assert!((14..=17).contains(&line), "expected line near 15-16, got {line}");
-    }
-
-    #[test]
-    fn estimate_visible_line_handles_short_document_without_dividing_by_zero() {
-        assert_eq!(estimate_visible_line(0.0, 0.0, 0.0, 1), 1);
-    }
 }

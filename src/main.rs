@@ -1,6 +1,7 @@
 mod about;
 mod adblock;
 mod aialt;
+mod aicaption;
 mod aimenu;
 mod aiprompts;
 mod appearance;
@@ -43,6 +44,7 @@ mod settings;
 mod shortcuts;
 mod stats;
 mod statusbar;
+mod tagsuggest;
 mod taxonomy;
 mod termcache;
 mod window;

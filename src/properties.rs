@@ -13,7 +13,7 @@ use gtk4::gio;
 
 use crate::document::{self, parse_list, Frontmatter, PostStatus};
 use crate::i18n::tr;
-use crate::{autocomplete, media, taxonomy, termcache, wpsite};
+use crate::{aialt, autocomplete, media, tagsuggest, taxonomy, termcache, wpsite};
 
 /// Shows/hides an alt-text-length warning icon and sets its tooltip from
 /// `media::alt_text_length_warning` - same non-blocking hint as
@@ -92,14 +92,14 @@ fn refresh_url_length_row(
     }
 }
 
-pub fn open(parent: &adw::ApplicationWindow, frontmatter: Rc<RefCell<Frontmatter>>, term_caches: termcache::TermCacheHandles, doc_dir: Option<PathBuf>) {
+pub fn open(parent: &adw::ApplicationWindow, body: String, frontmatter: Rc<RefCell<Frontmatter>>, term_caches: termcache::TermCacheHandles, doc_dir: Option<PathBuf>) {
     let termcache::TermCacheHandles { categories: category_terms, tags: tag_terms, category_slugs } = term_caches;
     let site = wpsite::load();
     let current = frontmatter.borrow().clone();
 
     let title_row = adw::EntryRow::builder().title(tr("Titel")).text(current.title.as_str()).build();
     let slug_row = adw::EntryRow::builder().title(tr("Slug")).text(current.slug.as_str()).build();
-    let slug_generate_button = gtk4::Button::from_icon_name("update-symbolic");
+    let slug_generate_button = gtk4::Button::from_icon_name("view-refresh-symbolic");
     slug_generate_button.set_tooltip_text(Some(&tr("Slug aus Titel generieren")));
     slug_generate_button.set_valign(gtk4::Align::Center);
     slug_generate_button.add_css_class("flat");
@@ -140,6 +140,13 @@ pub fn open(parent: &adw::ApplicationWindow, frontmatter: Rc<RefCell<Frontmatter
         .title(tr("Tags (Komma-getrennt)"))
         .text(current.tags.join(", ").as_str())
         .build();
+    // Analyzes title/body against the site's already-known tags
+    // (`tag_terms`) and proposes a handful to add - see `tagsuggest.rs`.
+    let tags_suggest_button = gtk4::Button::from_icon_name("chat-message-new-symbolic");
+    tags_suggest_button.set_tooltip_text(Some(&tr("KI-Tags vorschlagen…")));
+    tags_suggest_button.set_valign(gtk4::Align::Center);
+    tags_suggest_button.add_css_class("flat");
+    tags_row.add_suffix(&tags_suggest_button);
     let featured_image_row = adw::EntryRow::builder()
         .title(tr("Featured Image (Pfad)"))
         .text(current.featured_image.clone().unwrap_or_default().as_str())
@@ -159,6 +166,18 @@ pub fn open(parent: &adw::ApplicationWindow, frontmatter: Rc<RefCell<Frontmatter
         .title(tr("Alt-Text für Aufmacherbild"))
         .text(current.featured_image_alt.clone().unwrap_or_default().as_str())
         .build();
+    // Same "KI-Alternativtext generieren…" flow the editor/preview context
+    // menus already offer for a body image (`aialt::open`) - only useful
+    // once there's actually a local file to send to the vision model, so
+    // hidden whenever `featured_image` is unset (already uploaded, or
+    // never set), same condition `featured_image_picker_button`'s own
+    // upload-button sibling in `mediapanel.rs` uses.
+    let featured_image_ai_button = gtk4::Button::from_icon_name("chat-message-new-symbolic");
+    featured_image_ai_button.set_tooltip_text(Some(&tr("KI-Alternativtext generieren…")));
+    featured_image_ai_button.set_valign(gtk4::Align::Center);
+    featured_image_ai_button.add_css_class("flat");
+    featured_image_ai_button.set_visible(current.featured_image.is_some());
+    featured_image_alt_row.add_suffix(&featured_image_ai_button);
     // Non-blocking hint for an unusually long alt text (see
     // `media::alt_text_length_warning`) - a suffix icon with a tooltip,
     // matching the same warning on the per-image rows in
@@ -229,7 +248,7 @@ pub fn open(parent: &adw::ApplicationWindow, frontmatter: Rc<RefCell<Frontmatter
     group.add(&featured_image_alt_row);
 
     autocomplete::attach(&categories_row, category_terms);
-    autocomplete::attach(&tags_row, tag_terms);
+    autocomplete::attach(&tags_row, tag_terms.clone());
 
     // A separate group, not just more rows in "Artikel-Eigenschaften": these
     // three only matter on a site that actually has RankMath active (see
@@ -331,9 +350,34 @@ pub fn open(parent: &adw::ApplicationWindow, frontmatter: Rc<RefCell<Frontmatter
         });
     }
     {
+        let parent = parent.clone();
+        let body = body.clone();
+        let title_row = title_row.clone();
+        let tags_row = tags_row.clone();
+        let tag_terms = tag_terms.clone();
+        tags_suggest_button.connect_clicked(move |_| {
+            let article_title = title_row.text().to_string();
+            let current_tags = parse_list(&tags_row.text());
+            let existing_tags = tag_terms.borrow().clone();
+            let tags_row = tags_row.clone();
+            tagsuggest::open(parent.upcast_ref::<gtk4::Window>(), article_title, body.clone(), existing_tags, current_tags, move |accepted| {
+                let mut tags = parse_list(&tags_row.text());
+                for tag in accepted {
+                    if !tags.iter().any(|existing| existing.eq_ignore_ascii_case(&tag)) {
+                        tags.push(tag);
+                    }
+                }
+                // Triggers the `connect_changed` handler above, which persists it.
+                tags_row.set_text(&tags.join(", "));
+            });
+        });
+    }
+    {
         let frontmatter = frontmatter.clone();
+        let featured_image_ai_button = featured_image_ai_button.clone();
         featured_image_row.connect_changed(move |row| {
             let text = row.text().to_string();
+            featured_image_ai_button.set_visible(!text.is_empty());
             frontmatter.borrow_mut().featured_image = (!text.is_empty()).then_some(text);
         });
     }
@@ -344,6 +388,23 @@ pub fn open(parent: &adw::ApplicationWindow, frontmatter: Rc<RefCell<Frontmatter
             let text = row.text().to_string();
             update_alt_length_warning(&featured_image_alt_length_warning_icon, &text);
             frontmatter.borrow_mut().featured_image_alt = (!text.is_empty()).then_some(text);
+        });
+    }
+    {
+        let parent = parent.clone();
+        let frontmatter = frontmatter.clone();
+        let doc_dir = doc_dir.clone();
+        let featured_image_alt_row = featured_image_alt_row.clone();
+        featured_image_ai_button.connect_clicked(move |_| {
+            let Some(source) = frontmatter.borrow().featured_image.clone() else { return };
+            let featured_image_alt_row = featured_image_alt_row.clone();
+            aialt::open(parent.upcast_ref::<gtk4::Window>(), tr("Aufmacherbild"), source, doc_dir.clone(), move |text| {
+                // Triggers the `connect_changed` handler above, which
+                // persists it and refreshes the length-warning icon - same
+                // "set text, let the existing handler do the rest" pattern
+                // `featured_image_picker_button`'s own callback uses.
+                featured_image_alt_row.set_text(&text);
+            });
         });
     }
     {

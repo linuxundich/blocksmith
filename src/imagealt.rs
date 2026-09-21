@@ -29,12 +29,12 @@ use std::rc::Rc;
 
 use adw::prelude::*;
 use gtk4::gio;
+use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
 
-use crate::aialt;
 use crate::document::{self, Frontmatter};
 use crate::i18n::tr;
 use crate::media::{self, AltText};
-use crate::preview;
+use crate::{aialt, aicaption, preview};
 
 /// Shows/hides an alt-text-length warning icon and sets its tooltip from
 /// `media::alt_text_length_warning` - shared by the initial state when a
@@ -59,6 +59,7 @@ fn rebuild_menu_for_line(menu: &gio::Menu, buffer: &sourceview5::Buffer, line: i
     menu.append(Some(&tr("Alternativtext festlegen…")), Some("imagealt.set"));
     if document::media_reference_kind(&source) == document::MediaReferenceKind::Image {
         menu.append(Some(&tr("KI-Alternativtext generieren…")), Some("imagealt.generate-ai"));
+        menu.append(Some(&tr("KI-Bildunterschrift generieren…")), Some("imagealt.generate-caption"));
     }
 }
 
@@ -116,6 +117,9 @@ pub fn install(
     let generate_ai_action = gio::SimpleAction::new("generate-ai", None);
     {
         let buffer = buffer.clone();
+        let frontmatter = frontmatter.clone();
+        let current_path = current_path.clone();
+        let preview_pane = preview_pane.clone();
         let view_weak = view.downgrade();
         generate_ai_action.connect_activate(move |_, _| {
             let Some(view) = view_weak.upgrade() else { return };
@@ -128,6 +132,25 @@ pub fn install(
         });
     }
     actions.add_action(&generate_ai_action);
+
+    let generate_caption_action = gio::SimpleAction::new("generate-caption", None);
+    {
+        let buffer = buffer.clone();
+        let frontmatter = frontmatter.clone();
+        let current_path = current_path.clone();
+        let preview_pane = preview_pane.clone();
+        let view_weak = view.downgrade();
+        generate_caption_action.connect_activate(move |_, _| {
+            let Some(view) = view_weak.upgrade() else { return };
+            let Some(window) = view.root().and_then(|root| root.downcast::<gtk4::Window>().ok()) else {
+                return;
+            };
+            let line = buffer.iter_at_mark(&buffer.get_insert()).line();
+            let doc_dir = current_path.borrow().as_ref().and_then(|p| p.parent().map(|d| d.to_path_buf()));
+            generate_caption_for_line(&window, &buffer, &frontmatter, line, doc_dir, &preview_pane);
+        });
+    }
+    actions.add_action(&generate_caption_action);
 
     view.insert_action_group("imagealt", Some(&actions));
 
@@ -169,8 +192,158 @@ fn generate_ai_for_line(
     let Some(index) = frontmatter.borrow().media.iter().position(|item| item.source == source) else {
         return;
     };
+    let title = frontmatter.borrow().media[index].filename.clone();
 
-    aialt::open(window, frontmatter.clone(), index, doc_dir, preview_pane.clone());
+    let frontmatter = frontmatter.clone();
+    let preview_pane = preview_pane.clone();
+    aialt::open(window, title, source, doc_dir, move |text| {
+        if let Some(item) = frontmatter.borrow_mut().media.get_mut(index) {
+            item.alt = if text.is_empty() { AltText::Empty } else { AltText::Text(text) };
+        }
+        preview_pane.refresh_media(&frontmatter.borrow().media);
+    });
+}
+
+/// Same image-on-line lookup + reconcile as `generate_ai_for_line`, but
+/// hands off to `aicaption::open` and writes the result into
+/// `MediaItem.caption` instead of `.alt` - also, unlike alt text, pulls
+/// `surrounding_context` from the body so the caption can be generated
+/// with editorial awareness of the article, not the image in isolation.
+fn generate_caption_for_line(
+    window: &gtk4::Window,
+    buffer: &sourceview5::Buffer,
+    frontmatter: &Rc<RefCell<Frontmatter>>,
+    line: i32,
+    doc_dir: Option<PathBuf>,
+    preview_pane: &Rc<preview::PreviewPane>,
+) {
+    let body = buffer.text(&buffer.start_iter(), &buffer.end_iter(), false).to_string();
+
+    let is_image = |source: &String| document::media_reference_kind(source) == document::MediaReferenceKind::Image;
+    let Some(source) = image_source_on_line(&body, line).filter(is_image) else {
+        let alert = adw::AlertDialog::builder()
+            .heading(tr("Keine Bildreferenz gefunden"))
+            .body(tr("Für die KI-Bildunterschrift bitte mit der rechten Maustaste auf eine Zeile mit einem Bild (![Beschreibung](bild.png)) klicken."))
+            .build();
+        alert.add_response("ok", &tr("OK"));
+        alert.present(Some(window));
+        return;
+    };
+
+    {
+        let mut fm = frontmatter.borrow_mut();
+        fm.media = media::reconcile(&fm.media, &body);
+    }
+    let Some(index) = frontmatter.borrow().media.iter().position(|item| item.source == source) else {
+        return;
+    };
+    let title = frontmatter.borrow().media[index].filename.clone();
+    let context = surrounding_context(&body, &source);
+
+    let frontmatter = frontmatter.clone();
+    let preview_pane = preview_pane.clone();
+    aicaption::open(window, title, source, context, doc_dir, move |text| {
+        if let Some(item) = frontmatter.borrow_mut().media.get_mut(index) {
+            item.caption = (!text.is_empty()).then_some(text);
+        }
+        preview_pane.refresh_media(&frontmatter.borrow().media);
+    });
+}
+
+/// Plain-text context for the AI caption prompt (`aicaption.rs`): the
+/// article text immediately surrounding the image whose reference is
+/// `source` - the top-level block before it and the one after it, in
+/// document order, joined by a blank line - not the whole article, so the
+/// prompt stays focused on what the photo is actually illustrating rather
+/// than drowning in unrelated sections. Formatting markup is dropped (only
+/// text/inline-code content is kept) since this feeds a text prompt, not
+/// another render. Empty if the reference can't be found, or there's no
+/// block on either side (e.g. an image right at the very start or end of
+/// the article) - `aicaption.rs` treats that as "no extra context", not an
+/// error.
+pub fn surrounding_context(markdown: &str, source: &str) -> String {
+    let options = Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TASKLISTS;
+    let events: Vec<(Event, std::ops::Range<usize>)> = Parser::new_ext(markdown, options).into_offset_iter().collect();
+
+    let mut blocks: Vec<(usize, usize, bool)> = Vec::new();
+    let mut i = 0;
+    while i < events.len() {
+        match &events[i].0 {
+            Event::Start(tag) => {
+                let end_marker = tag.to_end();
+                let end = find_matching_end(&events, i, &end_marker);
+                let has_image = events[i..=end]
+                    .iter()
+                    .any(|(event, _)| matches!(event, Event::Start(Tag::Image { dest_url, .. }) if dest_url.as_ref() == source));
+                blocks.push((i, end, has_image));
+                i = end + 1;
+            }
+            Event::Rule => {
+                blocks.push((i, i, false));
+                i += 1;
+            }
+            _ => i += 1,
+        }
+    }
+
+    let Some(target) = blocks.iter().position(|(_, _, has_image)| *has_image) else {
+        return String::new();
+    };
+
+    let mut parts = Vec::new();
+    if target > 0 {
+        let (start, end, _) = blocks[target - 1];
+        let text = block_plain_text(&events[start..=end]);
+        if !text.is_empty() {
+            parts.push(text);
+        }
+    }
+    if target + 1 < blocks.len() {
+        let (start, end, _) = blocks[target + 1];
+        let text = block_plain_text(&events[start..=end]);
+        if !text.is_empty() {
+            parts.push(text);
+        }
+    }
+    parts.join("\n\n")
+}
+
+/// Concatenates the visible text of a slice of events, dropping all markup -
+/// `Event::Text`/`Event::Code` content only, with soft/hard breaks folded to
+/// a single space, so multi-line source wraps into one flowing sentence.
+fn block_plain_text(events: &[(Event, std::ops::Range<usize>)]) -> String {
+    let mut out = String::new();
+    for (event, _) in events {
+        match event {
+            Event::Text(text) | Event::Code(text) => out.push_str(text),
+            Event::SoftBreak | Event::HardBreak => out.push(' '),
+            _ => {}
+        }
+    }
+    out.trim().to_string()
+}
+
+/// Same `Tag::to_end()` depth-counting trick `preview.rs`/`crates/gutenberg`
+/// both already use - duplicated rather than shared, matching how those two
+/// already keep their own private copies (see `preview.rs::find_matching_end`'s
+/// doc comment).
+fn find_matching_end(events: &[(Event, std::ops::Range<usize>)], start: usize, end_marker: &TagEnd) -> usize {
+    let mut depth = 0usize;
+    let mut j = start;
+    while j < events.len() {
+        match &events[j].0 {
+            Event::Start(t) if &t.to_end() == end_marker => depth += 1,
+            Event::End(e) if e == end_marker => {
+                depth -= 1;
+                if depth == 0 {
+                    return j;
+                }
+            }
+            _ => {}
+        }
+        j += 1;
+    }
+    events.len().saturating_sub(1)
 }
 
 /// Finds the `![alt](source)` reference starting on `line` (0-indexed,
@@ -334,5 +507,35 @@ mod tests {
         let markdown = "Intro.\n\n![a cat](cat.png)\n\nOutro.\n";
         assert_eq!(image_source_on_line(markdown, 0), None);
         assert_eq!(image_source_on_line(markdown, 4), None);
+    }
+
+    #[test]
+    fn surrounding_context_returns_the_paragraphs_before_and_after() {
+        let markdown = "Intro text before the photo.\n\n![a cat](cat.png)\n\nOutro text after the photo.\n";
+        assert_eq!(surrounding_context(markdown, "cat.png"), "Intro text before the photo.\n\nOutro text after the photo.");
+    }
+
+    #[test]
+    fn surrounding_context_handles_an_image_with_no_block_before_it() {
+        let markdown = "![a cat](cat.png)\n\nOutro text after the photo.\n";
+        assert_eq!(surrounding_context(markdown, "cat.png"), "Outro text after the photo.");
+    }
+
+    #[test]
+    fn surrounding_context_handles_an_image_with_no_block_after_it() {
+        let markdown = "Intro text before the photo.\n\n![a cat](cat.png)\n";
+        assert_eq!(surrounding_context(markdown, "cat.png"), "Intro text before the photo.");
+    }
+
+    #[test]
+    fn surrounding_context_is_empty_when_the_source_is_not_found() {
+        let markdown = "Intro.\n\n![a cat](cat.png)\n\nOutro.\n";
+        assert_eq!(surrounding_context(markdown, "dog.png"), "");
+    }
+
+    #[test]
+    fn surrounding_context_uses_a_heading_neighbor_as_context_too() {
+        let markdown = "## Der Ausflug\n\n![a cat](cat.png)\n\nOutro text.\n";
+        assert_eq!(surrounding_context(markdown, "cat.png"), "Der Ausflug\n\nOutro text.");
     }
 }

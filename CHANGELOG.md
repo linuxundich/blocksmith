@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.50.0] - 2026-09-21
+
+### Added
+
+- YouTube/Vimeo (and other recognized oEmbed providers) links on their own
+  line now show a placeholder card in the Vorschau pane instead of plain
+  link text - sized to a real 16:9 box, so scroll-sync accounts for its
+  height the same way it already does for a large image.
+- Scroll-sync between editor and preview now works in both directions
+  (scrolling the preview moves the editor too, not just the other way
+  around), and the editor-side line estimate now reads the real cursor
+  position from the widget instead of a line-count proportion - fixed a
+  drift that showed up once word wrap was involved.
+- Artikel-Eigenschaften: the featured image can now get an AI-generated
+  alt text too, via the same dialog body images already use.
+- Artikel-Eigenschaften: a "KI-Tags vorschlagen…" button next to the Tags
+  field analyzes the article and suggests tags, preferring the site's own
+  existing tags over inventing near-duplicates.
+- A new "KI-Bildunterschrift generieren…" action (editor context menu and
+  the preview's image right-click menu) drafts an image caption from the
+  surrounding article text, targeting 20-25 words.
+- Clicking a link in the Vorschau pane now opens it in the Browser tab
+  instead of navigating the preview itself away from the article; the
+  Browser tab also gained a button to copy its current address.
+
+### Fixed
+
+- The article slug's "generate automatically" button had lost its icon
+  (it referenced an icon name that doesn't exist in the current theme).
+
 ## [0.49.0] - 2026-09-16
 
 ### Added
