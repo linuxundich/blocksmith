@@ -263,18 +263,17 @@ context-sensitive menus) surfaced a couple of these directly.
   organizes them that way (e.g. this project's own linuxundich.de, per
   its "Netz-/Politik" category) can't have a new sub-category created
   from inside the app at all.
-- **No way to set the post author.** Neither `Frontmatter` nor
-  `wpclient.rs` has any concept of a post's `author` - every post is
-  always attributed to whichever user the configured Application
-  Password belongs to. Only matters on a multi-author site, but there's
-  currently no way around it even there.
-- **No way to reuse an image already in the WordPress media library.**
-  Every image reference has to be a local file - `wpclient.rs` has
-  `upload_media` but nothing like `list_media`, so a graphic already
-  uploaded once (a shared header image, a recurring banner) can only be
-  referenced by re-uploading the local file again, creating a duplicate
-  attachment, rather than picking the existing one by browsing the
-  library.
+- ~~**No way to set the post author.**~~ Done (see CHANGELOG.md) - a new
+  "Autor" dropdown in Artikel-Eigenschaften, populated from the site's
+  real WordPress users, defaulting to "Nicht ändern" so an unset author
+  never overrides whatever the post already has; round-trips through
+  import/export.
+- ~~**No way to reuse an image already in the WordPress media library.**~~
+  Done (see CHANGELOG.md) - a "Aus Mediathek wählen…" picker
+  (`wpclient::list_media`, `medialibrary.rs`), reachable from the editor
+  toolbar and the Aufmacherbild row in Medienverwaltung, lets an
+  already-uploaded image be referenced directly instead of re-uploaded as
+  a duplicate attachment.
 - **No control over comment status.** `Frontmatter` has no
   `comment_status` field - there's no way to publish a post with
   comments closed (or reopen them) from inside the app; wp-admin is the
