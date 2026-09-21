@@ -205,95 +205,101 @@ fn scan_images(markdown: &str) -> Vec<(String, String, String)> {
     out
 }
 
-/// The Markdown title (`![alt](src "title")`) currently written for the
-/// first image reference matching `source` - `None` if no such reference
-/// exists, or it has no title. Used to seed the Bildunterschrift field in
-/// the Alternativtext dialog with the live Markdown value instead of a
-/// possibly-stale cached `MediaItem.caption`, now that editing that field
-/// writes back into this same slot (`title_edits_for`) - unlike alt text,
-/// which stays dialog-only and never round-trips through the Markdown
-/// bracket text at all.
-pub fn markdown_title_for(markdown: &str, source: &str) -> Option<String> {
-    scan_images(markdown).into_iter().find(|(s, _, _)| s == source).map(|(_, _, title)| title).filter(|title| !title.is_empty())
+/// The Bildunterschrift/Alternativtext currently written for the first
+/// image reference matching `source`, under the syntax convention this
+/// app asks users to write directly in the editor:
+/// `![Bildunterschrift](bild.png "Alternativtext")` - CommonMark's
+/// bracket/title slots, deliberately paired the *opposite* of their usual
+/// "bracket=alt, title=caption" roles, so the caption (what an article
+/// almost always needs) is the visible, always-present part, and the alt
+/// text (needed less often) is the optional, tucked-away one. `(None,
+/// None)` if there's no such reference; either slot independently `None`
+/// if it's empty. Used to seed the Alternativtext dialog with the live
+/// Markdown values instead of a possibly-stale cached `MediaItem`, now
+/// that editing either field writes back into these same slots
+/// (`image_text_edits_for`).
+pub fn markdown_image_text_for(markdown: &str, source: &str) -> (Option<String>, Option<String>) {
+    let Some((_, bracket, title)) = scan_images(markdown).into_iter().find(|(s, _, _)| s == source) else {
+        return (None, None);
+    };
+    ((!bracket.is_empty()).then_some(bracket), (!title.is_empty()).then_some(title))
 }
 
-/// The byte-range edits needed to set/update/remove the title portion of
-/// every image reference matching `source` in `markdown` - `caption` of
-/// `None` or empty removes the title, leaving a bare `![alt](source)`.
-/// Every occurrence of `source` is covered (matching how `reconcile`
-/// already collapses them to one `MediaItem`), and the list is empty if
-/// nothing actually needs to change (the title already matches).
+/// The byte-range edits needed to set the bracket text (Bildunterschrift)
+/// and title (Alternativtext) of every image reference matching `source` -
+/// see `markdown_image_text_for` for the convention. `caption`/`alt` of
+/// `None` or empty clears that slot; both empty leaves a bare
+/// `![](source)`. Every occurrence of `source` is covered (matching how
+/// `reconcile` already collapses them to one `MediaItem`), and the list is
+/// empty if nothing actually needs to change (both slots already match).
 ///
-/// Deliberately a plain substring search for `"]("` rather than a second
-/// full Markdown parse of the parenthetical - CommonMark requires no
-/// whitespace between an image's `]` and its `(`, so this is safe, and
-/// simpler than teaching a parser about syntax pulldown-cmark itself only
-/// exposes as already-resolved `dest_url`/`title` strings, never the
-/// source ranges of each piece.
-///
-/// Shared by `set_markdown_title` (returns a new `String`, used by tests)
-/// and `imagealt.rs`'s live caption-sync, which applies each edit directly
-/// to the editor's `sourceview5::Buffer` - back-to-front by position, so
-/// applying an earlier edit never shifts a later one's still-to-be-applied
-/// byte range.
-pub fn title_edits_for(markdown: &str, source: &str, caption: Option<&str>) -> Vec<(std::ops::Range<usize>, String)> {
-    let desired = caption.map(str::trim).filter(|c| !c.is_empty());
+/// Unlike a plain title-only edit, this replaces the *whole* `![...](...)`
+/// construct - `range` (from pulldown-cmark's own offset iterator) already
+/// covers exactly that span, so there's no need to locate the bracket/
+/// parenthesis boundaries by hand the way a title-only edit would.
+pub fn image_text_edits_for(markdown: &str, source: &str, caption: Option<&str>, alt: Option<&str>) -> Vec<(std::ops::Range<usize>, String)> {
+    let desired_caption = caption.map(str::trim).filter(|c| !c.is_empty()).unwrap_or("");
+    let desired_alt = alt.map(str::trim).filter(|a| !a.is_empty());
+
+    let events: Vec<(Event, std::ops::Range<usize>)> = Parser::new(markdown).into_offset_iter().collect();
     let mut edits = Vec::new();
-    for (event, range) in Parser::new(markdown).into_offset_iter() {
-        let Event::Start(Tag::Image { dest_url, .. }) = event else { continue };
+    let mut i = 0;
+    while i < events.len() {
+        let Event::Start(Tag::Image { dest_url, title, .. }) = &events[i].0 else {
+            i += 1;
+            continue;
+        };
         if dest_url.as_ref() != source {
+            i += 1;
             continue;
         }
-        let image_text = &markdown[range.clone()];
-        let Some(paren_rel) = image_text.find("](") else { continue };
-        let start_paren = range.start + paren_rel + 1;
-        let end_paren = range.end - 1;
-        if end_paren <= start_paren || markdown.as_bytes().get(end_paren) != Some(&b')') {
+        let range = events[i].1.clone();
+        let mut current_bracket = String::new();
+        let mut j = i + 1;
+        while j < events.len() {
+            match &events[j].0 {
+                Event::Text(text) | Event::Code(text) => current_bracket.push_str(text),
+                Event::End(TagEnd::Image) => break,
+                _ => {}
+            }
+            j += 1;
+        }
+        let current_alt = (!title.is_empty()).then(|| title.to_string());
+        if current_bracket == desired_caption && current_alt.as_deref() == desired_alt {
+            i = j + 1;
             continue;
         }
-        let inner = &markdown[start_paren + 1..end_paren];
-        let existing_title = inner.find(char::is_whitespace).map(|idx| unescape_title(inner[idx..].trim()));
-        if existing_title.as_deref() == desired {
-            continue;
-        }
-        let url_part = match inner.find(char::is_whitespace) {
-            Some(idx) => &inner[..idx],
-            None => inner,
+        let new_paren = match desired_alt {
+            Some(a) => format!("{dest_url} \"{}\"", escape_title(a)),
+            None => dest_url.to_string(),
         };
-        let new_inner = match desired {
-            Some(cap) => format!("{url_part} \"{}\"", escape_title(cap)),
-            None => url_part.to_string(),
-        };
-        edits.push((start_paren..end_paren + 1, format!("({new_inner})")));
+        edits.push((range, format!("![{}]({new_paren})", escape_bracket(desired_caption))));
+        i = j + 1;
     }
     edits
 }
 
-/// Escapes a caption for use as a Markdown title's quoted content -
-/// backslashes first, then double quotes, matching CommonMark's own
-/// backslash-escaping rule (reversed by `unescape_title`).
+/// Escapes text for use inside a Markdown link/image's bracket portion -
+/// backslashes first, then the characters that would otherwise end the
+/// bracket early or start a nested one.
+fn escape_bracket(text: &str) -> String {
+    text.replace('\\', "\\\\").replace('[', "\\[").replace(']', "\\]")
+}
+
+/// Escapes text for use as a Markdown title's quoted content - backslashes
+/// first, then double quotes, matching CommonMark's own backslash-escaping
+/// rule.
 fn escape_title(text: &str) -> String {
     text.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
-/// Reverses `escape_title` - also tolerates a title that isn't actually
-/// `"..."`-quoted (single-quote/parenthesis title delimiters are valid
-/// CommonMark too, just never written by this app) by leaving it as-is
-/// rather than mangling it.
-fn unescape_title(text: &str) -> String {
-    let Some(inner) = text.strip_prefix('"').and_then(|t| t.strip_suffix('"')) else {
-        return text.to_string();
-    };
-    inner.replace("\\\"", "\"").replace("\\\\", "\\")
-}
-
-/// Applies `title_edits_for` and returns the rewritten Markdown - a test
-/// helper only; `imagealt.rs`'s live caption-sync applies the same edits
+/// Applies `image_text_edits_for` and returns the rewritten Markdown - a
+/// test helper only; `imagealt.rs`'s live sync applies the same edits
 /// directly to the `sourceview5::Buffer` instead, so a keystroke in the
 /// dialog doesn't round-trip through a full string rebuild.
 #[cfg(test)]
-fn set_markdown_title(markdown: &str, source: &str, caption: Option<&str>) -> String {
-    let edits = title_edits_for(markdown, source, caption);
+fn set_markdown_image_text(markdown: &str, source: &str, caption: Option<&str>, alt: Option<&str>) -> String {
+    let edits = image_text_edits_for(markdown, source, caption, alt);
     if edits.is_empty() {
         return markdown.to_string();
     }
@@ -340,26 +346,19 @@ pub fn reconcile(existing: &[MediaItem], markdown: &str) -> Vec<MediaItem> {
     scan_images(markdown)
         .into_iter()
         .filter(|(source, _, _)| seen_sources.insert(source.clone()))
-        .map(|(source, markdown_alt, markdown_title)| {
+        .map(|(source, markdown_bracket, markdown_title)| {
             if let Some(found) = existing.iter().find(|item| item.source == source) {
                 found.clone()
             } else {
                 let filename = source.rsplit(['/', '\\']).next().unwrap_or(&source).to_string();
-                // The caption prefers the explicit `"title"` when present,
-                // matching CommonMark's own naming for that slot; but many
-                // images are written as the plain `![text](src)` form with
-                // no title at all, and the user still thinks of that
-                // bracket text as the caption (it's the only descriptive
-                // text they ever typed) - so it's the fallback rather than
-                // being left blank.
-                let caption = if !markdown_title.is_empty() {
-                    Some(markdown_title)
-                } else if !markdown_alt.is_empty() {
-                    Some(markdown_alt.clone())
-                } else {
-                    None
-                };
-                let alt = if markdown_alt.is_empty() { AltText::Undefined } else { AltText::Text(markdown_alt) };
+                // This app's own convention - the opposite of CommonMark's
+                // usual bracket=alt/title=caption pairing, see
+                // `markdown_image_text_for`'s doc comment for why: the
+                // bracket text (what's actually visible when just typing
+                // `![]()`) becomes the caption, and the title (the part
+                // most people never bother with) becomes the alt text.
+                let caption = (!markdown_bracket.is_empty()).then_some(markdown_bracket);
+                let alt = if markdown_title.is_empty() { AltText::Undefined } else { AltText::Text(markdown_title) };
                 let id = format!("media-{next_serial:03}");
                 next_serial += 1;
                 MediaItem { id, filename, source, alt, caption, wordpress: None }
@@ -549,69 +548,92 @@ mod tests {
     }
 
     #[test]
-    fn markdown_title_for_returns_the_existing_title() {
-        let markdown = "![a cat](cat.png \"Our cat sleeping\")\n";
-        assert_eq!(markdown_title_for(markdown, "cat.png"), Some("Our cat sleeping".to_string()));
+    fn markdown_image_text_for_reads_bracket_as_caption_and_title_as_alt() {
+        let markdown = "![Unsere Katze schläft](cat.png \"Eine graue Katze auf einem Sofa\")\n";
+        assert_eq!(
+            markdown_image_text_for(markdown, "cat.png"),
+            (Some("Unsere Katze schläft".to_string()), Some("Eine graue Katze auf einem Sofa".to_string()))
+        );
     }
 
     #[test]
-    fn markdown_title_for_is_none_without_a_title() {
+    fn markdown_image_text_for_leaves_alt_none_without_a_title() {
+        let markdown = "![Unsere Katze schläft](cat.png)\n";
+        assert_eq!(markdown_image_text_for(markdown, "cat.png"), (Some("Unsere Katze schläft".to_string()), None));
+    }
+
+    #[test]
+    fn markdown_image_text_for_is_none_none_when_the_source_is_not_referenced() {
+        let markdown = "![Unsere Katze schläft](cat.png)\n";
+        assert_eq!(markdown_image_text_for(markdown, "dog.png"), (None, None));
+    }
+
+    #[test]
+    fn set_markdown_image_text_sets_bracket_and_title_where_there_were_none() {
+        let markdown = "Intro.\n\n![](cat.png)\n\nOutro.\n";
+        let out = set_markdown_image_text(markdown, "cat.png", Some("Unsere Katze"), Some("Eine graue Katze auf einem Sofa"));
+        assert_eq!(out, "Intro.\n\n![Unsere Katze](cat.png \"Eine graue Katze auf einem Sofa\")\n\nOutro.\n");
+    }
+
+    #[test]
+    fn set_markdown_image_text_replaces_existing_bracket_and_title() {
+        let markdown = "![old caption](cat.png \"old alt\")\n";
+        let out = set_markdown_image_text(markdown, "cat.png", Some("new caption"), Some("new alt"));
+        assert_eq!(out, "![new caption](cat.png \"new alt\")\n");
+    }
+
+    #[test]
+    fn set_markdown_image_text_can_set_caption_without_an_alt_text() {
+        let markdown = "![](cat.png)\n";
+        let out = set_markdown_image_text(markdown, "cat.png", Some("Unsere Katze"), None);
+        assert_eq!(out, "![Unsere Katze](cat.png)\n");
+    }
+
+    #[test]
+    fn set_markdown_image_text_removes_the_title_for_no_alt_text() {
+        let markdown = "![Unsere Katze](cat.png \"old alt\")\n";
+        let out = set_markdown_image_text(markdown, "cat.png", Some("Unsere Katze"), None);
+        assert_eq!(out, "![Unsere Katze](cat.png)\n");
+    }
+
+    #[test]
+    fn set_markdown_image_text_is_a_no_op_when_both_already_match() {
+        let markdown = "![Unsere Katze](cat.png \"Eine Katze\")\n";
+        assert_eq!(set_markdown_image_text(markdown, "cat.png", Some("Unsere Katze"), Some("Eine Katze")), markdown);
+    }
+
+    #[test]
+    fn set_markdown_image_text_is_unchanged_when_the_source_is_not_referenced() {
         let markdown = "![a cat](cat.png)\n";
-        assert_eq!(markdown_title_for(markdown, "cat.png"), None);
+        assert_eq!(set_markdown_image_text(markdown, "dog.png", Some("x"), None), markdown);
     }
 
     #[test]
-    fn set_markdown_title_adds_a_title_where_there_was_none() {
-        let markdown = "Intro.\n\n![a cat](cat.png)\n\nOutro.\n";
-        let out = set_markdown_title(markdown, "cat.png", Some("Our cat sleeping"));
-        assert_eq!(out, "Intro.\n\n![a cat](cat.png \"Our cat sleeping\")\n\nOutro.\n");
-    }
-
-    #[test]
-    fn set_markdown_title_replaces_an_existing_title() {
-        let markdown = "![a cat](cat.png \"old caption\")\n";
-        let out = set_markdown_title(markdown, "cat.png", Some("new caption"));
-        assert_eq!(out, "![a cat](cat.png \"new caption\")\n");
-    }
-
-    #[test]
-    fn set_markdown_title_removes_the_title_for_an_empty_caption() {
-        let markdown = "![a cat](cat.png \"old caption\")\n";
-        let out = set_markdown_title(markdown, "cat.png", None);
-        assert_eq!(out, "![a cat](cat.png)\n");
-    }
-
-    #[test]
-    fn set_markdown_title_is_a_no_op_when_the_title_already_matches() {
-        let markdown = "![a cat](cat.png \"same\")\n";
-        assert_eq!(set_markdown_title(markdown, "cat.png", Some("same")), markdown);
-    }
-
-    #[test]
-    fn set_markdown_title_is_unchanged_when_the_source_is_not_referenced() {
-        let markdown = "![a cat](cat.png)\n";
-        assert_eq!(set_markdown_title(markdown, "dog.png", Some("x")), markdown);
-    }
-
-    #[test]
-    fn set_markdown_title_updates_every_occurrence_of_the_same_source() {
+    fn set_markdown_image_text_updates_every_occurrence_of_the_same_source() {
         let markdown = "![a](cat.png)\n\n![b](cat.png \"old\")\n";
-        let out = set_markdown_title(markdown, "cat.png", Some("new"));
-        assert_eq!(out, "![a](cat.png \"new\")\n\n![b](cat.png \"new\")\n");
+        let out = set_markdown_image_text(markdown, "cat.png", Some("new"), Some("alt"));
+        assert_eq!(out, "![new](cat.png \"alt\")\n\n![new](cat.png \"alt\")\n");
     }
 
     #[test]
-    fn set_markdown_title_escapes_double_quotes_in_the_caption() {
-        let markdown = "![a cat](cat.png)\n";
-        let out = set_markdown_title(markdown, "cat.png", Some("a \"good\" cat"));
-        assert_eq!(out, "![a cat](cat.png \"a \\\"good\\\" cat\")\n");
+    fn set_markdown_image_text_escapes_double_quotes_in_the_alt_text() {
+        let markdown = "![](cat.png)\n";
+        let out = set_markdown_image_text(markdown, "cat.png", None, Some("a \"good\" cat"));
+        assert_eq!(out, "![](cat.png \"a \\\"good\\\" cat\")\n");
     }
 
     #[test]
-    fn title_edits_for_round_trips_through_set_markdown_title_and_markdown_title_for() {
-        let markdown = "![a cat](cat.png)\n";
-        let out = set_markdown_title(markdown, "cat.png", Some("a \"good\" cat"));
-        assert_eq!(markdown_title_for(&out, "cat.png"), Some("a \"good\" cat".to_string()));
+    fn set_markdown_image_text_escapes_brackets_in_the_caption() {
+        let markdown = "![](cat.png)\n";
+        let out = set_markdown_image_text(markdown, "cat.png", Some("a [good] cat"), None);
+        assert_eq!(out, "![a \\[good\\] cat](cat.png)\n");
+    }
+
+    #[test]
+    fn image_text_edits_for_round_trips_through_set_markdown_image_text_and_markdown_image_text_for() {
+        let markdown = "![](cat.png)\n";
+        let out = set_markdown_image_text(markdown, "cat.png", Some("a \"good\" cat"), Some("alt \"text\""));
+        assert_eq!(markdown_image_text_for(&out, "cat.png"), (Some("a \"good\" cat".to_string()), Some("alt \"text\"".to_string())));
     }
 
     #[test]
@@ -654,7 +676,7 @@ mod tests {
     }
 
     #[test]
-    fn reconcile_creates_new_items_with_undefined_alt_for_blank_markdown_alt() {
+    fn reconcile_creates_new_items_with_undefined_alt_for_a_bare_image_reference() {
         let items = reconcile(&[], "![](photo.jpg)\n");
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].alt, AltText::Undefined);
@@ -664,28 +686,28 @@ mod tests {
     }
 
     #[test]
-    fn reconcile_seeds_text_alt_from_existing_markdown_alt() {
+    fn reconcile_seeds_the_caption_from_the_bracket_text() {
         let items = reconcile(&[], "![a red barn](barn.jpg)\n");
-        assert_eq!(items[0].alt, AltText::Text("a red barn".to_string()));
+        assert_eq!(items[0].caption, Some("a red barn".to_string()));
     }
 
     #[test]
-    fn reconcile_seeds_caption_from_markdown_title() {
+    fn reconcile_seeds_text_alt_from_the_markdown_title() {
         let items = reconcile(&[], "![a red barn](barn.jpg \"A red barn at dusk\")\n");
-        assert_eq!(items[0].caption, Some("A red barn at dusk".to_string()));
+        assert_eq!(items[0].alt, AltText::Text("A red barn at dusk".to_string()));
     }
 
     #[test]
-    fn reconcile_falls_back_to_bracket_text_for_caption_when_no_title_is_present() {
+    fn reconcile_leaves_alt_undefined_without_a_title_even_with_bracket_text() {
         let items = reconcile(&[], "![a red barn](barn.jpg)\n");
-        assert_eq!(items[0].caption, Some("a red barn".to_string()), "the bracket text is the only description many images ever get - it should seed the caption too, not just alt text");
+        assert_eq!(items[0].alt, AltText::Undefined, "bracket text seeds the caption now, not alt - alt only comes from an explicit title");
     }
 
     #[test]
-    fn reconcile_prefers_the_title_over_bracket_text_for_caption_when_both_are_present() {
+    fn reconcile_seeds_caption_and_alt_independently_when_both_are_present() {
         let items = reconcile(&[], "![a red barn](barn.jpg \"A red barn at dusk\")\n");
-        assert_eq!(items[0].caption, Some("A red barn at dusk".to_string()));
-        assert_eq!(items[0].alt, AltText::Text("a red barn".to_string()), "alt still comes from the bracket text regardless of a title being present");
+        assert_eq!(items[0].caption, Some("a red barn".to_string()));
+        assert_eq!(items[0].alt, AltText::Text("A red barn at dusk".to_string()));
     }
 
     #[test]

@@ -1,4 +1,4 @@
-//! Adds an "Alternativtext festlegen…" item to the editor's right-click
+//! Adds a "Bildbeschriftung bearbeiten…" item to the editor's right-click
 //! context menu - alt text (and caption) already exist as a full feature
 //! via Medienverwaltung/the export dialog's "Medien" tab, but reaching
 //! them meant leaving the editor entirely. This lets a right-click on the
@@ -56,7 +56,7 @@ fn rebuild_menu_for_line(menu: &gio::Menu, buffer: &sourceview5::Buffer, line: i
     menu.remove_all();
     let body = buffer.text(&buffer.start_iter(), &buffer.end_iter(), false).to_string();
     let Some(source) = image_source_on_line(&body, line) else { return };
-    menu.append(Some(&tr("Alternativtext festlegen…")), Some("imagealt.set"));
+    menu.append(Some(&tr("Bildbeschriftung bearbeiten…")), Some("imagealt.set"));
     if document::media_reference_kind(&source) == document::MediaReferenceKind::Image {
         menu.append(Some(&tr("KI-Alternativtext generieren…")), Some("imagealt.generate-ai"));
         menu.append(Some(&tr("KI-Bildunterschrift generieren…")), Some("imagealt.generate-caption"));
@@ -359,7 +359,7 @@ fn open_for_line(window: &gtk4::Window, buffer: &sourceview5::Buffer, frontmatte
     let Some(source) = image_source_on_line(&body, line) else {
         let alert = adw::AlertDialog::builder()
             .heading(tr("Keine Bildreferenz gefunden"))
-            .body(tr("Für den Alternativtext bitte mit der rechten Maustaste auf eine Zeile mit einem Bild (![Beschreibung](bild.png)) klicken."))
+            .body(tr("Für die Bildbeschriftung bitte mit der rechten Maustaste auf eine Zeile mit einem Bild (![Beschreibung](bild.png)) klicken."))
             .build();
         alert.add_response("ok", &tr("OK"));
         alert.present(Some(window));
@@ -379,23 +379,22 @@ fn open_for_line(window: &gtk4::Window, buffer: &sourceview5::Buffer, frontmatte
 /// Opens the manual alt-text/caption dialog for one already-known
 /// `MediaItem` index - shared by `open_for_line` above (the editor
 /// context-menu path, which first has to look up the index from a clicked
-/// line) and the preview pane's own "Alternativtext bearbeiten…" context
+/// line) and the preview pane's own "Bildbeschriftung bearbeiten…" context
 /// menu item (`preview.rs`, which already knows the index from the
 /// clicked image). Same fields and wiring as `mediapanel.rs`'s row, minus
 /// the upload button, which isn't part of what a quick shortcut needs.
 ///
-/// Alternativtext and Bildunterschrift are treated very differently here,
-/// by explicit request: alt text is dialog-only - it's never read from or
-/// written back to the Markdown bracket text, so typing in the editor can
-/// never silently change what a screen reader announces. Bildunterschrift
-/// is the opposite: it's kept in sync *with* the Markdown, in both
-/// directions - `open_dialog_for_index` seeds the field from the live
-/// title slot (`![alt](src "title")`, via `media::markdown_title_for`)
-/// rather than the possibly-stale cached `MediaItem.caption`, and closing
-/// the dialog writes the final text back into that same slot
-/// (`apply_caption_to_buffer`) - deferred to close, not applied on every
-/// keystroke, so typing in the field doesn't churn the editor's undo stack
-/// or re-trigger its live-preview debounce on every character.
+/// Both fields are kept in sync with the Markdown, by explicit request,
+/// using this app's own convention for where each one lives in the image
+/// syntax - `![Bildunterschrift](bild.png "Alternativtext")`, the
+/// *opposite* of CommonMark's usual bracket=alt/title=caption pairing (see
+/// `media::markdown_image_text_for`'s own doc comment for why). Opening
+/// the dialog seeds both fields from the live Markdown rather than a
+/// possibly-stale cached `MediaItem`; closing it writes the final text of
+/// both back into the Markdown (`apply_image_text_to_buffer`) - deferred
+/// to close, not applied on every keystroke, so typing in either field
+/// doesn't churn the editor's undo stack or re-trigger its live-preview
+/// debounce on every character.
 ///
 /// `doc_dir` is only used to show a thumbnail - for a local image that
 /// still resolves to a real file; a remote source (already uploaded, or
@@ -406,7 +405,7 @@ pub fn open_dialog_for_index(window: &gtk4::Window, frontmatter: &Rc<RefCell<Fro
         return;
     };
     let markdown = buffer.text(&buffer.start_iter(), &buffer.end_iter(), false).to_string();
-    let markdown_title = media::markdown_title_for(&markdown, &item.source);
+    let (markdown_caption, markdown_alt) = media::markdown_image_text_for(&markdown, &item.source);
 
     let content = gtk4::Box::builder().orientation(gtk4::Orientation::Vertical).spacing(18).margin_top(18).margin_bottom(18).margin_start(18).margin_end(18).build();
 
@@ -425,16 +424,28 @@ pub fn open_dialog_for_index(window: &gtk4::Window, frontmatter: &Rc<RefCell<Fro
     filename_label.add_css_class("caption");
     content.append(&filename_label);
 
+    // Prefers the live Markdown title slot when one exists, not the cached
+    // `MediaItem.alt` - see this function's own doc comment for why both
+    // fields are meant to track the Markdown, not drift from it. Falls
+    // back to the cached three-way `AltText` state (Text/Empty/Undefined)
+    // when there's no title yet - a plain "absent" title can't distinguish
+    // "deliberately blank" from "never set", so that distinction only
+    // survives via the cache until the Markdown actually gets one.
+    let (initial_alt_active, initial_alt_text) = match &markdown_alt {
+        Some(text) => (true, text.clone()),
+        None => match &item.alt {
+            AltText::Text(text) => (true, text.clone()),
+            AltText::Empty => (true, String::new()),
+            AltText::Undefined => (false, String::new()),
+        },
+    };
     let alt_switch_row = adw::SwitchRow::builder()
         .title(tr("Alternativtext definieren"))
         .subtitle(tr("Aus lassen für rein dekorative Bilder - das ist kein Fehler"))
-        .active(!item.alt.is_undefined())
+        .active(initial_alt_active)
         .build();
 
-    let alt_entry_row = adw::EntryRow::builder().title(tr("Alternativtext")).build();
-    if let AltText::Text(text) = &item.alt {
-        alt_entry_row.set_text(text);
-    }
+    let alt_entry_row = adw::EntryRow::builder().title(tr("Alternativtext")).text(initial_alt_text.as_str()).build();
     alt_entry_row.set_visible(alt_switch_row.is_active());
 
     // Non-blocking hint for an unusually long alt text (see
@@ -492,11 +503,7 @@ pub fn open_dialog_for_index(window: &gtk4::Window, frontmatter: &Rc<RefCell<Fro
     alt_group.add(&alt_switch_row);
     alt_group.add(&alt_entry_row);
 
-    // Seeded from the live Markdown title slot when one exists, not the
-    // cached `MediaItem.caption` - see this function's own doc comment for
-    // why Bildunterschrift (unlike Alternativtext) is meant to track the
-    // Markdown, not drift from it.
-    let initial_caption = markdown_title.unwrap_or_else(|| item.caption.clone().unwrap_or_default());
+    let initial_caption = markdown_caption.unwrap_or_else(|| item.caption.clone().unwrap_or_default());
     let caption_row = adw::EntryRow::builder().title(tr("Bildunterschrift")).text(initial_caption.as_str()).build();
     {
         let frontmatter = frontmatter.clone();
@@ -526,29 +533,32 @@ pub fn open_dialog_for_index(window: &gtk4::Window, frontmatter: &Rc<RefCell<Fro
     toolbar_view.add_top_bar(&adw::HeaderBar::new());
     toolbar_view.set_content(Some(&scroller));
 
-    let dialog = adw::Dialog::builder().title(tr("Alternativtext")).content_width(440).content_height(560).child(&toolbar_view).build();
+    let dialog = adw::Dialog::builder().title(tr("Bildbeschriftung")).content_width(440).content_height(560).child(&toolbar_view).build();
 
     {
         let buffer = buffer.clone();
         let source = item.source.clone();
+        let alt_switch_row = alt_switch_row.clone();
+        let alt_entry_row = alt_entry_row.clone();
         let caption_row = caption_row.clone();
         dialog.connect_closed(move |_| {
-            let text = caption_row.text().to_string();
-            let caption = (!text.trim().is_empty()).then_some(text);
-            apply_caption_to_buffer(&buffer, &source, caption.as_deref());
+            let caption_text = caption_row.text().to_string();
+            let caption = (!caption_text.trim().is_empty()).then_some(caption_text);
+            let alt = alt_switch_row.is_active().then(|| alt_entry_row.text().to_string()).filter(|text| !text.trim().is_empty());
+            apply_image_text_to_buffer(&buffer, &source, caption.as_deref(), alt.as_deref());
         });
     }
 
     dialog.present(Some(window));
 }
 
-/// Writes `caption` into the Markdown title slot for every reference to
-/// `source` in `buffer` (see `media::title_edits_for`) - edits are applied
-/// back-to-front by position so an earlier edit's byte range is never
-/// shifted by a later one still waiting to be applied.
-fn apply_caption_to_buffer(buffer: &sourceview5::Buffer, source: &str, caption: Option<&str>) {
+/// Writes `caption`/`alt` into the Markdown bracket/title slots for every
+/// reference to `source` in `buffer` (see `media::image_text_edits_for`) -
+/// edits are applied back-to-front by position so an earlier edit's byte
+/// range is never shifted by a later one still waiting to be applied.
+fn apply_image_text_to_buffer(buffer: &sourceview5::Buffer, source: &str, caption: Option<&str>, alt: Option<&str>) {
     let markdown = buffer.text(&buffer.start_iter(), &buffer.end_iter(), false).to_string();
-    let mut edits = media::title_edits_for(&markdown, source, caption);
+    let mut edits = media::image_text_edits_for(&markdown, source, caption, alt);
     edits.sort_by_key(|edit| std::cmp::Reverse(edit.0.start));
     for (byte_range, replacement) in edits {
         let start_chars = markdown[..byte_range.start].chars().count() as i32;

@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.50.5] - 2026-09-21
+
+### Fixed
+
+- The preview kept snapping back to the top while actively typing -
+  every debounced re-render on a body edit reset scroll to 0 regardless
+  of where the cursor-follow sync had just moved it to. Content updates
+  now preserve the current scroll position across the reload instead.
+
+### Changed
+
+- Reworked how Alternativtext and Bildunterschrift map onto Markdown
+  image syntax: `![Bildunterschrift](bild.png "Alternativtext")` - the
+  bracket text (what you actually see when typing `![]()`) is now the
+  caption, and the title is the alt text, the opposite of CommonMark's
+  usual pairing. Both fields are now kept in sync with the Markdown in
+  both directions, seeded from the live source when the dialog opens and
+  written back when it closes. Renamed the dialog and its context-menu
+  entry from "Alternativtext" to "Bildbeschriftung" to reflect that it
+  now manages both fields equally.
+
 ## [0.50.4] - 2026-09-21
 
 ### Added

@@ -478,7 +478,7 @@ fn wire_live_preview(
                 fm.media = media::reconcile(&fm.media, &text);
                 fm.media.clone()
             };
-            preview_pane.update(&text, &media_items);
+            preview_pane.update_preserving_scroll(&text, &media_items);
             stats_view.update(&text);
             code_view.update(&text, &media_items);
             // Piggybacks on this same debounce instead of running its own

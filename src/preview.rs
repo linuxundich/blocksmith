@@ -218,6 +218,29 @@ impl PreviewPane {
         self.rerender();
     }
 
+    /// Same as `update`, but keeps the current scroll position instead of
+    /// resetting to the top - for `window.rs`'s live-preview debounce on
+    /// every body edit. Without this, each debounced re-render (every body
+    /// keystroke, ~`DEBOUNCE_MS` after typing pauses) snapped the preview
+    /// back to the top regardless of where the editor's cursor-sync
+    /// (`window.rs::sync_cursor_to_preview`) had *just* scrolled it to -
+    /// harmless when that sync only reacted to actual scrolling (which
+    /// rarely lines up with a content reload happening on the very same
+    /// keystroke), but jarring once the preview started tracking the
+    /// cursor while typing too: every pause became a visible snap back to
+    /// line one before the next cursor-sync tick corrected it again one
+    /// frame later. Opening a *different* document still lands at the top
+    /// as expected - every document-loading call site already calls
+    /// `set_doc_dir` right after `buffer.set_text`, whose own plain
+    /// `rerender()` (always top, not preserved) runs synchronously before
+    /// this debounced update fires, so there's nothing meaningful left to
+    /// preserve by the time it reads the current scroll position.
+    pub fn update_preserving_scroll(&self, markdown: &str, media: &[MediaItem]) {
+        *self.last_markdown.borrow_mut() = markdown.to_string();
+        *self.last_media.borrow_mut() = media.to_vec();
+        self.rerender_preserving_scroll();
+    }
+
     /// Re-renders with a fresh media snapshot without touching the last
     /// rendered Markdown - for callers that mutate `Frontmatter.media`
     /// directly (Medienverwaltung's upload button, the manual/AI alt-text
@@ -243,7 +266,7 @@ impl PreviewPane {
         self.rerender();
     }
 
-    /// Adds "Alternativtext bearbeiten…" and "KI-Alternativtext
+    /// Adds "Bildbeschriftung bearbeiten…" and "KI-Alternativtext
     /// generieren…" items to the context menu when right-clicking directly
     /// on a rendered image - the preview-side entry points into
     /// `imagealt::open_dialog_for_index` (the plain manual editor) and
@@ -293,7 +316,7 @@ impl PreviewPane {
                     crate::imagealt::open_dialog_for_index(&window, &frontmatter, index, &buffer, doc_dir_value.clone(), &preview_pane);
                 });
             }
-            let edit_item = webkit6::ContextMenuItem::from_gaction(&edit_action, &tr("Alternativtext bearbeiten…"), None);
+            let edit_item = webkit6::ContextMenuItem::from_gaction(&edit_action, &tr("Bildbeschriftung bearbeiten…"), None);
             context_menu.append(&edit_item);
 
             let action = gio::SimpleAction::new("generate-ai-alt-text", None);
@@ -867,13 +890,15 @@ const BADGE_CSS: &str = ".img-wrap { position: relative; display: inline-block; 
 ///
 /// The caption comes from the matching `MediaItem.caption`, not from the
 /// freshly-parsed HTML's own `title` attribute (pulldown-cmark's default
-/// rendering of `![alt](src "title")`) - `MediaItem` is what Medienverwaltung
-/// and the editor's "Alternativtext festlegen…" dialog actually edit, and
-/// an edit made there never touches the Markdown body itself (see
-/// `export::apply_media_metadata`'s doc comment for the same gap on the
-/// export side), so reading the raw HTML attribute here would leave a
-/// caption edited in either dialog invisible in the preview until the next
-/// direct Markdown edit re-seeds it.
+/// rendering of `![Bildunterschrift](src "Alternativtext")`, this app's
+/// own bracket/title convention - see `media::markdown_image_text_for`'s
+/// doc comment) - `MediaItem` is what both Medienverwaltung and the
+/// editor's "Bildbeschriftung bearbeiten…" dialog write a caption edit
+/// into first, immediately, while the dialog's own write-back into the
+/// Markdown body itself only lands once its dialog closes (see
+/// `imagealt::apply_image_text_to_buffer`), so reading the raw HTML
+/// attribute here would leave a caption edited in either place invisible
+/// in the preview until well after the edit was actually made.
 fn wrap_images_with_badges(html: &str, media: &[MediaItem]) -> String {
     let mut out = String::with_capacity(html.len());
     let mut rest = html;
