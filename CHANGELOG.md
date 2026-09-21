@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.50.6] - 2026-09-21
+
+### Fixed
+
+- The Bildbeschriftung dialog's image thumbnail rendered as a blank white
+  box for a WebP source (this app's own default export format) on a
+  system without the `webp-pixbuf-loader` package - `Gtk.Picture` depends
+  on that separate, easy-to-miss gdk-pixbuf plugin, which this app never
+  otherwise needed. Renders through WebKit instead, which already decodes
+  WebP natively for the Vorschau pane and Browser tab regardless.
+- The dialog's fixed 560px height cropped the Bildunterschrift field on
+  anything but the shortest content. Raised the cap and let the content
+  area size to what's actually there instead of always clipping to it.
+
 ## [0.50.5] - 2026-09-21
 
 ### Fixed

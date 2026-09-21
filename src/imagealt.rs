@@ -30,6 +30,7 @@ use std::rc::Rc;
 use adw::prelude::*;
 use gtk4::gio;
 use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
+use webkit6::prelude::*;
 
 use crate::document::{self, Frontmatter};
 use crate::i18n::tr;
@@ -409,14 +410,31 @@ pub fn open_dialog_for_index(window: &gtk4::Window, frontmatter: &Rc<RefCell<Fro
 
     let content = gtk4::Box::builder().orientation(gtk4::Orientation::Vertical).spacing(18).margin_top(18).margin_bottom(18).margin_start(18).margin_end(18).build();
 
+    // Rendered through WebKit rather than `Gtk.Picture` - a plain
+    // `gdk_pixbuf`-backed widget depends on the system having a WebP
+    // gdk-pixbuf loader installed (a separate, easy-to-miss package this
+    // app doesn't otherwise need and doesn't declare as a dependency), and
+    // silently shows nothing at all without one - confirmed live: a blank
+    // white box for a `.webp` source, this app's own default export
+    // format for a compressed image. WebKit already decodes WebP natively
+    // for the Vorschau pane and Browser tab regardless of that package, so
+    // reusing it here needs no extra dependency and matches what already
+    // reliably works elsewhere in the app.
     if crate::imageedit::is_local(&item.source) {
         let path = crate::export::resolve_local_path(&item.source, doc_dir.as_deref());
         if path.exists() {
-            let picture = gtk4::Picture::for_filename(&path);
-            picture.set_content_fit(gtk4::ContentFit::Contain);
-            picture.set_height_request(160);
-            picture.add_css_class("card");
-            content.append(&picture);
+            let thumbnail = webkit6::WebView::new();
+            thumbnail.set_height_request(160);
+            thumbnail.add_css_class("card");
+            let file_uri = gio::File::for_path(&path).uri();
+            let html = format!(
+                "<!doctype html><html><head><meta charset=\"utf-8\"><style>\
+                 html, body {{ margin: 0; height: 100%; display: flex; align-items: center; justify-content: center; }}\
+                 img {{ max-width: 100%; max-height: 100%; object-fit: contain; }}\
+                 </style></head><body><img src=\"{file_uri}\"></body></html>"
+            );
+            thumbnail.load_html(&html, None);
+            content.append(&thumbnail);
         }
     }
     let filename_label = gtk4::Label::builder().label(&item.filename).xalign(0.0).wrap(true).build();
@@ -527,13 +545,18 @@ pub fn open_dialog_for_index(window: &gtk4::Window, frontmatter: &Rc<RefCell<Fro
     content.append(&caption_group);
 
     let clamp = adw::Clamp::builder().maximum_size(420).child(&content).build();
-    let scroller = gtk4::ScrolledWindow::builder().child(&clamp).vexpand(true).build();
+    // `propagate_natural_height` lets the scroller size to fit everything
+    // when it actually does fit (the normal case) rather than always
+    // reserving a scrollbar's worth of cropped content - `content_height`
+    // below is still a hard cap for the rare case that doesn't fit (a very
+    // long alt text wrapping to several lines), not the everyday size.
+    let scroller = gtk4::ScrolledWindow::builder().child(&clamp).vexpand(true).propagate_natural_height(true).build();
 
     let toolbar_view = adw::ToolbarView::new();
     toolbar_view.add_top_bar(&adw::HeaderBar::new());
     toolbar_view.set_content(Some(&scroller));
 
-    let dialog = adw::Dialog::builder().title(tr("Bildbeschriftung")).content_width(440).content_height(560).child(&toolbar_view).build();
+    let dialog = adw::Dialog::builder().title(tr("Bildbeschriftung")).content_width(440).content_height(720).child(&toolbar_view).build();
 
     {
         let buffer = buffer.clone();
