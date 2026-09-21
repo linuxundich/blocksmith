@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.50.3] - 2026-09-21
+
+### Added
+
+- A "aus dem Bildtext im Markdown übernehmen" button next to the
+  Alternativtext dialog's Alternativtext and Bildunterschrift fields -
+  `reconcile` deliberately leaves an already-edited alt text/caption alone
+  on every later article edit, so it can quietly drift from the Markdown
+  bracket text with no indication of that in the dialog; this gives an
+  explicit way back instead of a silent overwrite.
+
+### Changed
+
+- Redesigned the Alternativtext dialog: shows a thumbnail of the actual
+  image (for a local file that still resolves) plus the filename, and
+  splits Alternativtext and Bildunterschrift into two clearly labeled
+  groups explaining what each is for, instead of one plain list of rows
+  that made the two easy to confuse.
+
 ## [0.50.2] - 2026-09-21
 
 ### Changed

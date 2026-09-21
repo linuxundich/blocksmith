@@ -205,6 +205,22 @@ fn scan_images(markdown: &str) -> Vec<(String, String, String)> {
     out
 }
 
+/// The alt/bracket text currently written in the Markdown source for the
+/// first image reference matching `source` - `None` if no such reference
+/// exists any more (e.g. the item was uploaded and its body reference
+/// removed) or it has no bracket text at all. Exposed for the
+/// "aus Bildtext übernehmen" button in the Alternativtext dialog
+/// (`imagealt.rs`): once a `MediaItem`'s `alt`/`caption` has been edited
+/// once, `reconcile` deliberately leaves it alone on every later edit to
+/// the article (see that function's own doc comment) - which means it can
+/// quietly drift from what the bracket text actually says, with no
+/// indication of that in the dialog. This gives the user an explicit,
+/// deliberate way to pull the current bracket text back in, without
+/// `reconcile` doing it silently on every reconcile.
+pub fn markdown_alt_text_for(markdown: &str, source: &str) -> Option<String> {
+    scan_images(markdown).into_iter().find(|(s, _, _)| s == source).map(|(_, alt, _)| alt).filter(|alt| !alt.is_empty())
+}
+
 /// Rebuilds the media list from the document's current text, preserving
 /// every existing item's metadata (alt/caption/WordPress link) as long as
 /// its image is still referenced - matched by `source`, not position, so
@@ -443,6 +459,24 @@ mod tests {
                 ("b.png".to_string(), String::new(), String::new()),
             ]
         );
+    }
+
+    #[test]
+    fn markdown_alt_text_for_returns_the_bracket_text_for_a_matching_source() {
+        let markdown = "![a cat sleeping](cat.png)\n";
+        assert_eq!(markdown_alt_text_for(markdown, "cat.png"), Some("a cat sleeping".to_string()));
+    }
+
+    #[test]
+    fn markdown_alt_text_for_is_none_when_the_source_is_not_referenced() {
+        let markdown = "![a cat sleeping](cat.png)\n";
+        assert_eq!(markdown_alt_text_for(markdown, "dog.png"), None);
+    }
+
+    #[test]
+    fn markdown_alt_text_for_is_none_for_an_empty_bracket() {
+        let markdown = "![](cat.png)\n";
+        assert_eq!(markdown_alt_text_for(markdown, "cat.png"), None);
     }
 
     #[test]

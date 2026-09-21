@@ -101,6 +101,7 @@ pub fn install(
     {
         let buffer = buffer.clone();
         let frontmatter = frontmatter.clone();
+        let current_path = current_path.clone();
         let preview_pane = preview_pane.clone();
         let view_weak = view.downgrade();
         set_action.connect_activate(move |_, _| {
@@ -109,7 +110,8 @@ pub fn install(
                 return;
             };
             let line = buffer.iter_at_mark(&buffer.get_insert()).line();
-            open_for_line(&window, &buffer, &frontmatter, line, &preview_pane);
+            let doc_dir = current_path.borrow().as_ref().and_then(|p| p.parent().map(|d| d.to_path_buf()));
+            open_for_line(&window, &buffer, &frontmatter, line, doc_dir, &preview_pane);
         });
     }
     actions.add_action(&set_action);
@@ -351,7 +353,7 @@ fn find_matching_end(events: &[(Event, std::ops::Range<usize>)], start: usize, e
 /// against the current body so the reference is guaranteed to have a
 /// `MediaItem`, then delegates to `open_dialog_for_index` for that image's
 /// own alt text and caption.
-fn open_for_line(window: &gtk4::Window, buffer: &sourceview5::Buffer, frontmatter: &Rc<RefCell<Frontmatter>>, line: i32, preview_pane: &Rc<preview::PreviewPane>) {
+fn open_for_line(window: &gtk4::Window, buffer: &sourceview5::Buffer, frontmatter: &Rc<RefCell<Frontmatter>>, line: i32, doc_dir: Option<PathBuf>, preview_pane: &Rc<preview::PreviewPane>) {
     let body = buffer.text(&buffer.start_iter(), &buffer.end_iter(), false).to_string();
 
     let Some(source) = image_source_on_line(&body, line) else {
@@ -371,7 +373,7 @@ fn open_for_line(window: &gtk4::Window, buffer: &sourceview5::Buffer, frontmatte
     let Some(index) = frontmatter.borrow().media.iter().position(|item| item.source == source) else {
         return;
     };
-    open_dialog_for_index(window, frontmatter, index, preview_pane);
+    open_dialog_for_index(window, frontmatter, index, &body, doc_dir, preview_pane);
 }
 
 /// Opens the manual alt-text/caption dialog for one already-known
@@ -381,10 +383,38 @@ fn open_for_line(window: &gtk4::Window, buffer: &sourceview5::Buffer, frontmatte
 /// menu item (`preview.rs`, which already knows the index from the
 /// clicked image). Same fields and wiring as `mediapanel.rs`'s row, minus
 /// the upload button, which isn't part of what a quick shortcut needs.
-pub fn open_dialog_for_index(window: &gtk4::Window, frontmatter: &Rc<RefCell<Frontmatter>>, index: usize, preview_pane: &Rc<preview::PreviewPane>) {
+///
+/// `markdown`/`doc_dir` are only used to show a thumbnail (for a local
+/// image that still resolves to a real file - a remote source, e.g.
+/// already uploaded or opened from WordPress, has nothing to load without
+/// a network fetch this dialog deliberately never makes) and to offer
+/// "aus dem Bildtext übernehmen" buttons: once alt/caption have been
+/// edited once, `reconcile` leaves them alone on every later article edit
+/// (by design - see its own doc comment), so they can silently drift from
+/// what the Markdown bracket text actually says, with nothing in this
+/// dialog previously showing that or offering a way back.
+pub fn open_dialog_for_index(window: &gtk4::Window, frontmatter: &Rc<RefCell<Frontmatter>>, index: usize, markdown: &str, doc_dir: Option<PathBuf>, preview_pane: &Rc<preview::PreviewPane>) {
     let Some(item) = frontmatter.borrow().media.get(index).cloned() else {
         return;
     };
+    let markdown_text = media::markdown_alt_text_for(markdown, &item.source);
+
+    let content = gtk4::Box::builder().orientation(gtk4::Orientation::Vertical).spacing(18).margin_top(18).margin_bottom(18).margin_start(18).margin_end(18).build();
+
+    if crate::imageedit::is_local(&item.source) {
+        let path = crate::export::resolve_local_path(&item.source, doc_dir.as_deref());
+        if path.exists() {
+            let picture = gtk4::Picture::for_filename(&path);
+            picture.set_content_fit(gtk4::ContentFit::Contain);
+            picture.set_height_request(160);
+            picture.add_css_class("card");
+            content.append(&picture);
+        }
+    }
+    let filename_label = gtk4::Label::builder().label(&item.filename).xalign(0.0).wrap(true).build();
+    filename_label.add_css_class("dim-label");
+    filename_label.add_css_class("caption");
+    content.append(&filename_label);
 
     let alt_switch_row = adw::SwitchRow::builder()
         .title(tr("Alternativtext definieren"))
@@ -397,6 +427,18 @@ pub fn open_dialog_for_index(window: &gtk4::Window, frontmatter: &Rc<RefCell<Fro
         alt_entry_row.set_text(text);
     }
     alt_entry_row.set_visible(alt_switch_row.is_active());
+
+    if let Some(text) = markdown_text.clone() {
+        let sync_alt_button = gtk4::Button::from_icon_name("view-refresh-symbolic");
+        sync_alt_button.set_tooltip_text(Some(&tr("Aus dem Bildtext im Markdown übernehmen")));
+        sync_alt_button.set_valign(gtk4::Align::Center);
+        sync_alt_button.add_css_class("flat");
+        {
+            let alt_entry_row = alt_entry_row.clone();
+            sync_alt_button.connect_clicked(move |_| alt_entry_row.set_text(&text));
+        }
+        alt_entry_row.add_suffix(&sync_alt_button);
+    }
 
     // Non-blocking hint for an unusually long alt text (see
     // `media::alt_text_length_warning`) - only ever a suffix icon with a
@@ -446,7 +488,25 @@ pub fn open_dialog_for_index(window: &gtk4::Window, frontmatter: &Rc<RefCell<Fro
     }
     update_alt_length_warning(&alt_length_warning_icon, &alt_entry_row.text());
 
+    let alt_group = adw::PreferencesGroup::builder()
+        .title(tr("Alternativtext"))
+        .description(tr("Für Screenreader - wird im Artikel selbst nicht sichtbar angezeigt."))
+        .build();
+    alt_group.add(&alt_switch_row);
+    alt_group.add(&alt_entry_row);
+
     let caption_row = adw::EntryRow::builder().title(tr("Bildunterschrift")).text(item.caption.as_deref().unwrap_or("")).build();
+    if let Some(text) = markdown_text {
+        let sync_caption_button = gtk4::Button::from_icon_name("view-refresh-symbolic");
+        sync_caption_button.set_tooltip_text(Some(&tr("Aus dem Bildtext im Markdown übernehmen")));
+        sync_caption_button.set_valign(gtk4::Align::Center);
+        sync_caption_button.add_css_class("flat");
+        {
+            let caption_row = caption_row.clone();
+            sync_caption_button.connect_clicked(move |_| caption_row.set_text(&text));
+        }
+        caption_row.add_suffix(&sync_caption_button);
+    }
     {
         let frontmatter = frontmatter.clone();
         let preview_pane = preview_pane.clone();
@@ -459,20 +519,23 @@ pub fn open_dialog_for_index(window: &gtk4::Window, frontmatter: &Rc<RefCell<Fro
         });
     }
 
-    let group = adw::PreferencesGroup::builder().title(&item.filename).build();
-    group.add(&alt_switch_row);
-    group.add(&alt_entry_row);
-    group.add(&caption_row);
+    let caption_group = adw::PreferencesGroup::builder()
+        .title(tr("Bildunterschrift"))
+        .description(tr("Sichtbarer Text, der im Artikel unter dem Bild angezeigt wird."))
+        .build();
+    caption_group.add(&caption_row);
 
-    let clamp = adw::Clamp::builder().maximum_size(420).child(&group).build();
-    let content = gtk4::Box::builder().orientation(gtk4::Orientation::Vertical).build();
-    content.append(&clamp);
+    content.append(&alt_group);
+    content.append(&caption_group);
+
+    let clamp = adw::Clamp::builder().maximum_size(420).child(&content).build();
+    let scroller = gtk4::ScrolledWindow::builder().child(&clamp).vexpand(true).build();
 
     let toolbar_view = adw::ToolbarView::new();
     toolbar_view.add_top_bar(&adw::HeaderBar::new());
-    toolbar_view.set_content(Some(&content));
+    toolbar_view.set_content(Some(&scroller));
 
-    let dialog = adw::Dialog::builder().title(tr("Alternativtext")).content_width(420).content_height(340).child(&toolbar_view).build();
+    let dialog = adw::Dialog::builder().title(tr("Alternativtext")).content_width(440).content_height(560).child(&toolbar_view).build();
     dialog.present(Some(window));
 }
 

@@ -286,9 +286,11 @@ impl PreviewPane {
             {
                 let frontmatter = frontmatter.clone();
                 let window = window.clone();
+                let doc_dir_value = doc_dir_value.clone();
+                let last_markdown = last_markdown.clone();
                 let preview_pane = preview_pane.clone();
                 edit_action.connect_activate(move |_, _| {
-                    crate::imagealt::open_dialog_for_index(&window, &frontmatter, index, &preview_pane);
+                    crate::imagealt::open_dialog_for_index(&window, &frontmatter, index, &last_markdown.borrow(), doc_dir_value.clone(), &preview_pane);
                 });
             }
             let edit_item = webkit6::ContextMenuItem::from_gaction(&edit_action, &tr("Alternativtext bearbeiten…"), None);
