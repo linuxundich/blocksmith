@@ -314,6 +314,24 @@ pub fn open(
         });
     }
 
+    // Sent unconditionally on export as the "Worthy" WordPress plugin's own
+    // `wp-worthy-pixel.ignored` REST field (see `export.rs`) - harmless on
+    // a site without that plugin. Active (the default) means "tracked as
+    // normal"; see the Statistik tab for how close the article already is
+    // to Worthy's own minimum length before a counting pixel is even
+    // eligible to report at all.
+    let vgwort_row = adw::SwitchRow::builder()
+        .title(tr("VG-Wort-Zählmarke"))
+        .subtitle(tr("Aus lassen, um diesen Artikel bewusst von der VG-Wort-Zählung auszuschließen."))
+        .active(!current.vgwort_ignored)
+        .build();
+    {
+        let frontmatter = frontmatter.clone();
+        vgwort_row.connect_active_notify(move |row| {
+            frontmatter.borrow_mut().vgwort_ignored = !row.is_active();
+        });
+    }
+
     let refresh_button = gtk4::Button::from_icon_name("view-refresh-symbolic");
     refresh_button.set_tooltip_text(Some(&tr("Kategorien & Tags von WordPress aktualisieren")));
     refresh_button.add_css_class("flat");
@@ -353,6 +371,7 @@ pub fn open(
     group.add(&status_row);
     group.add(&scheduled_row);
     group.add(&author_row);
+    group.add(&vgwort_row);
     group.add(&categories_row);
     group.add(&tags_row);
     group.add(&featured_image_row);

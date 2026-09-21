@@ -330,6 +330,7 @@ fn fetch_and_convert(site: &wpsite::SiteConfig, password: &str, post_id: u64) ->
         featured_media_id: (detail.featured_media != 0).then_some(detail.featured_media),
         author_id: (detail.author != 0).then_some(detail.author),
         author_name,
+        vgwort_ignored: detail.vgwort_ignored,
         media: crate::media::reconcile(&[], &body),
     };
 

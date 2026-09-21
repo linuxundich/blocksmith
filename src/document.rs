@@ -150,6 +150,20 @@ pub struct Frontmatter {
     /// the saved document) without waiting on a fresh `list_users()` fetch
     /// every time the dialog opens - not itself sent to WordPress.
     pub author_name: Option<String>,
+    /// Excludes the post from VG Wort's counting-pixel tracking (the
+    /// German collecting society compensating authors for online text
+    /// use) - `false` (the default) means "tracked as normal", matching
+    /// how a post behaves before this is ever touched. Sent unconditionally
+    /// on every export as the "Worthy" WordPress plugin's own
+    /// `wp-worthy-pixel.ignored` REST field (see `export.rs`) - harmless on
+    /// a site without that plugin installed, since WordPress silently
+    /// drops an unregistered field from the request body the same way it
+    /// drops an unregistered `meta` key. See `stats.rs` for the length
+    /// hint (VG Wort/Worthy's own minimum length before a pixel counts at
+    /// all) that this toggle sits next to conceptually, even though it
+    /// lives in "Artikel-Eigenschaften" as a publish-affecting setting,
+    /// not in the Statistik tab.
+    pub vgwort_ignored: bool,
     /// Per-image alt text/caption/WordPress-upload metadata (`media.rs`) -
     /// rebuilt from the current body on every properties/media-panel open
     /// via `media::reconcile`, so this only needs to persist what a plain
@@ -245,6 +259,7 @@ pub fn parse(input: &str) -> Document {
             "author_name" => {
                 frontmatter.author_name = (!value.is_empty()).then(|| unquote(value));
             }
+            "vgwort_ignored" => frontmatter.vgwort_ignored = value.trim() == "true",
             "media_json" => frontmatter.media = crate::media::from_json_str(value),
             _ => {}
         }
@@ -309,6 +324,9 @@ pub fn serialize(doc: &Document) -> String {
     }
     if let Some(name) = &fm.author_name {
         out.push_str(&format!("author_name: \"{}\"\n", escape(name)));
+    }
+    if fm.vgwort_ignored {
+        out.push_str("vgwort_ignored: true\n");
     }
     if !fm.media.is_empty() {
         out.push_str(&format!("media_json: {}\n", crate::media::to_json_string(&fm.media)));
@@ -641,6 +659,7 @@ mod tests {
                      wp_content_hash: \"abc123\"\n\
                      author_id: 3\n\
                      author_name: \"Jane Editor\"\n\
+                     vgwort_ignored: true\n\
                      ---\n\
                      \n\
                      Body text here.\n";
@@ -661,6 +680,7 @@ mod tests {
         assert_eq!(doc.frontmatter.wp_content_hash.as_deref(), Some("abc123"));
         assert_eq!(doc.frontmatter.author_id, Some(3));
         assert_eq!(doc.frontmatter.author_name.as_deref(), Some("Jane Editor"));
+        assert!(doc.frontmatter.vgwort_ignored);
         assert_eq!(doc.body, "Body text here.\n");
     }
 
@@ -694,6 +714,7 @@ mod tests {
                 featured_media_id: Some(99),
                 author_id: Some(3),
                 author_name: Some("Jane Editor".to_string()),
+                vgwort_ignored: true,
                 media: vec![MediaItem {
                     id: "media-001".to_string(),
                     filename: "cat.png".to_string(),

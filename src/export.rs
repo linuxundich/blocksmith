@@ -752,6 +752,14 @@ fn run_export(
     if let Some(author_id) = frontmatter.author_id {
         payload["author"] = serde_json::json!(author_id);
     }
+    // Unlike `author`/`status` above, sent unconditionally rather than only
+    // when explicitly touched - `false` (not ignored/tracked as normal) is
+    // a safe default that matches how a post behaves before this is ever
+    // touched at all, so there's no "unset" state worth distinguishing.
+    // Silently dropped by WordPress if the "Worthy" plugin (or any plugin
+    // registering this field) isn't installed on the target site, the same
+    // way an unrecognized `meta` key is - see `Frontmatter::vgwort_ignored`.
+    payload["wp-worthy-pixel"] = serde_json::json!({ "ignored": frontmatter.vgwort_ignored });
 
     let result = match frontmatter.wp_post_id {
         Some(id) => client.update_post(id, &payload),
@@ -1112,6 +1120,7 @@ mod tests {
             featured_media_id: None,
             author_id: None,
             author_name: None,
+            vgwort_ignored: false,
             media: Vec::new(),
         };
 
@@ -1161,6 +1170,7 @@ mod tests {
             featured_media_id: None,
             author_id: None,
             author_name: None,
+            vgwort_ignored: false,
             media: Vec::new(),
         };
 
@@ -1171,6 +1181,55 @@ mod tests {
         let updated = run_export(&site, &password, &mut frontmatter, None, body, None).expect("status-less update failed");
         assert_eq!(updated.id, created.id, "updating content must reuse the same post, not create a new one");
         assert_eq!(client.get_post(updated.id).expect("get_post failed").status, "draft", "a status-less update must not change the post's status");
+
+        client.delete_post(created.id).expect("cleanup delete_post failed");
+    }
+
+    /// Confirms `vgwort_ignored` actually reaches the real site and reads
+    /// back correctly - both directions (setting it true, then flipping it
+    /// back to false on the same post) - against the "Worthy" WordPress
+    /// plugin's real `wp-worthy-pixel.ignored` REST field, not just that
+    /// the local payload construction looks right.
+    #[test]
+    #[ignore]
+    fn run_export_round_trips_vgwort_ignored() {
+        let site = wpsite::load();
+        assert!(!site.url.is_empty(), "no WordPress site configured (run the connection dialog first)");
+        let password = futures_lite::future::block_on(secrets::load_app_password(&site.url, &site.username))
+            .expect("keyring lookup failed")
+            .expect("no application password stored for this site/user");
+        let client = wpclient::Client::new(&site.url, &site.username, &password);
+
+        let body = "Ein Testartikel für den VG-Wort-Toggle.\n";
+        let mut frontmatter = Frontmatter {
+            title: "Blocksmith vgwort_ignored round-trip test".to_string(),
+            slug: String::new(),
+            status: crate::document::PostStatus::Draft,
+            scheduled_at: None,
+            categories: Vec::new(),
+            tags: Vec::new(),
+            excerpt: None,
+            rank_math_title: None,
+            rank_math_description: None,
+            rank_math_focus_keyword: None,
+            featured_image: None,
+            featured_image_alt: None,
+            wp_post_id: None,
+            wp_content_hash: None,
+            featured_media_id: None,
+            author_id: None,
+            author_name: None,
+            vgwort_ignored: true,
+            media: Vec::new(),
+        };
+
+        let created = run_export(&site, &password, &mut frontmatter, Some(crate::document::PostStatus::Draft), body, None).expect("draft export failed");
+        assert!(client.get_post(created.id).expect("get_post failed").vgwort_ignored, "expected the post to come back marked as VG-Wort-ignored");
+
+        frontmatter.wp_post_id = Some(created.id);
+        frontmatter.vgwort_ignored = false;
+        run_export(&site, &password, &mut frontmatter, None, body, None).expect("update failed");
+        assert!(!client.get_post(created.id).expect("get_post failed").vgwort_ignored, "expected the post to come back no longer VG-Wort-ignored");
 
         client.delete_post(created.id).expect("cleanup delete_post failed");
     }
@@ -1211,6 +1270,7 @@ mod tests {
             featured_media_id: None,
             author_id: None,
             author_name: None,
+            vgwort_ignored: false,
             media: Vec::new(),
         };
 
@@ -1266,6 +1326,7 @@ mod tests {
             featured_media_id: None,
             author_id: None,
             author_name: None,
+            vgwort_ignored: false,
             media: Vec::new(),
         };
 

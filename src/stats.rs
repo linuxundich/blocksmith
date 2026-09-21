@@ -5,6 +5,24 @@ use adw::prelude::*;
 
 use crate::i18n::tr;
 
+/// VG Wort (the German collecting society compensating authors for online
+/// text use) only counts an article toward compensation once its plain-
+/// text length clears a minimum - this project's own site uses the
+/// "Worthy" WordPress plugin (wordpress.org/plugins/wp-worthy/) for the
+/// actual counting-pixel/Zählmarke, whose thresholds this mirrors exactly
+/// (verified 2026-09-21 against its published source - `MIN_LENGTH`/
+/// `WARN_LIMIT` in `wp-worthy.php` - not a number invented for this hint).
+/// Compared against `chars_with_spaces` above, which is close enough to
+/// Worthy's own count (it strips rendered HTML and collapses whitespace;
+/// this instead counts the raw Markdown source, so syntax characters like
+/// `#`/`**`/`[]()` inflate the estimate slightly) for a rough "not there
+/// yet"/"cleared" signal - the same "rough heuristic, not a precise
+/// measurement" spirit as the readability score above.
+pub const VGWORT_MIN_LENGTH: usize = 1800;
+/// An early warning threshold below the real minimum, while still
+/// writing - Worthy's own `WARN_LIMIT`.
+pub const VGWORT_WARN_LENGTH: usize = 1600;
+
 #[derive(Clone, Copy)]
 pub struct Stats {
     pub words: usize,
@@ -148,6 +166,21 @@ fn format_decimal_de(value: f64) -> String {
     format!("{value:.1}").replace('.', ",")
 }
 
+/// The VG-Wort row's subtitle - not just a bare number, since "1523" means
+/// nothing without the threshold it's being measured against. A separate
+/// "bald erreicht" wording once past `VGWORT_WARN_LENGTH` (Worthy's own
+/// early-warning point) gives a heads-up while still writing, distinct
+/// from "you're not even close yet" further below it.
+fn vgwort_status_text(chars_with_spaces: usize) -> String {
+    if chars_with_spaces >= VGWORT_MIN_LENGTH {
+        tr("{chars} Zeichen - Mindestlänge erreicht.").replace("{chars}", &chars_with_spaces.to_string())
+    } else if chars_with_spaces >= VGWORT_WARN_LENGTH {
+        tr("{chars} von {min} Zeichen - bald erreicht.").replace("{chars}", &chars_with_spaces.to_string()).replace("{min}", &VGWORT_MIN_LENGTH.to_string())
+    } else {
+        tr("{chars} von {min} Zeichen.").replace("{chars}", &chars_with_spaces.to_string()).replace("{min}", &VGWORT_MIN_LENGTH.to_string())
+    }
+}
+
 pub struct StatsView {
     pub widget: gtk4::Widget,
     words: gtk4::Label,
@@ -155,6 +188,8 @@ pub struct StatsView {
     chars_without_spaces: gtk4::Label,
     paragraphs: gtk4::Label,
     reading_minutes: gtk4::Label,
+    vgwort_row: adw::ActionRow,
+    vgwort_icon: gtk4::Image,
     readability_row: adw::ExpanderRow,
     sentence_length_value: gtk4::Label,
     syllables_value: gtk4::Label,
@@ -168,6 +203,16 @@ impl StatsView {
         let chars_without_spaces = value_label();
         let paragraphs = value_label();
         let reading_minutes = value_label();
+
+        // VG Wort's minimum-length gate (see `VGWORT_MIN_LENGTH`'s doc
+        // comment) - a plain `Adw.ActionRow` with a status icon, the same
+        // pass/fail shape `properties.rs`'s own "URL-Länge (SEO)" row
+        // already uses, not a value row like the ones above (there's no
+        // single "value" here, just a threshold check).
+        let vgwort_row = adw::ActionRow::builder().title(tr("VG-Wort-Länge")).build();
+        let vgwort_icon = gtk4::Image::new();
+        vgwort_icon.set_valign(gtk4::Align::Center);
+        vgwort_row.add_suffix(&vgwort_icon);
 
         // An `Adw.ExpanderRow`, not just another plain value row - the
         // score alone doesn't say anything about *why* it came out that
@@ -200,6 +245,7 @@ impl StatsView {
         list.append(&value_row(&tr("Zeichen (ohne Leerzeichen)"), &chars_without_spaces));
         list.append(&value_row(&tr("Absätze"), &paragraphs));
         list.append(&value_row(&tr("Geschätzte Lesezeit"), &reading_minutes));
+        list.append(&vgwort_row);
         list.append(&readability_row);
 
         let clamp = adw::Clamp::builder().maximum_size(420).child(&list).build();
@@ -219,6 +265,8 @@ impl StatsView {
             chars_without_spaces,
             paragraphs,
             reading_minutes,
+            vgwort_row,
+            vgwort_icon,
             readability_row,
             sentence_length_value,
             syllables_value,
@@ -233,6 +281,16 @@ impl StatsView {
         self.chars_without_spaces.set_label(&stats.chars_without_spaces.to_string());
         self.paragraphs.set_label(&stats.paragraphs.to_string());
         self.reading_minutes.set_label(&tr("{n} min").replace("{n}", &stats.reading_minutes.to_string()));
+        self.vgwort_row.set_subtitle(&vgwort_status_text(stats.chars_with_spaces));
+        if stats.chars_with_spaces >= VGWORT_MIN_LENGTH {
+            self.vgwort_icon.set_icon_name(Some("object-select-symbolic"));
+            self.vgwort_icon.remove_css_class("warning");
+            self.vgwort_icon.add_css_class("success");
+        } else {
+            self.vgwort_icon.set_icon_name(Some("dialog-warning-symbolic"));
+            self.vgwort_icon.remove_css_class("success");
+            self.vgwort_icon.add_css_class("warning");
+        }
         self.readability_row.set_subtitle(&readability_display(stats.readability_score));
         match (stats.avg_sentence_length, stats.avg_syllables_per_word) {
             (Some(avg_sentence_length), Some(avg_syllables_per_word)) => {
@@ -326,6 +384,27 @@ mod tests {
     fn format_decimal_de_uses_a_comma_and_one_decimal_place() {
         assert_eq!(format_decimal_de(12.34), "12,3");
         assert_eq!(format_decimal_de(2.0), "2,0");
+    }
+
+    #[test]
+    fn vgwort_status_text_reports_the_minimum_reached() {
+        let text = vgwort_status_text(1800);
+        assert!(text.contains("1800"), "{text}");
+        assert!(text.contains("Mindestlänge erreicht"), "{text}");
+    }
+
+    #[test]
+    fn vgwort_status_text_warns_when_close_but_not_there_yet() {
+        let text = vgwort_status_text(1700);
+        assert!(text.contains("1700"), "{text}");
+        assert!(text.contains("bald erreicht"), "{text}");
+    }
+
+    #[test]
+    fn vgwort_status_text_is_plain_when_far_below_the_minimum() {
+        let text = vgwort_status_text(200);
+        assert!(text.contains("200"), "{text}");
+        assert!(!text.contains("erreicht"), "{text}");
     }
 
     #[test]

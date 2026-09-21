@@ -138,6 +138,14 @@ pub struct PostDetail {
     /// sentinel convention as `featured_media` above rather than an
     /// `Option`.
     pub author: u64,
+    /// Whether the post is excluded from VG Wort's counting-pixel tracking
+    /// (see `Frontmatter::vgwort_ignored`), read from the "Worthy"
+    /// WordPress plugin's own `wp-worthy-pixel.ignored` REST field -
+    /// `false` (its own default meaning too) when that field is absent
+    /// entirely, which is exactly what happens on a site without Worthy
+    /// installed, so this is a safe default rather than needing an
+    /// `Option` to represent "plugin not present".
+    pub vgwort_ignored: bool,
     /// Site-local `"YYYY-MM-DDTHH:MM:SS"` - the post's publish date, or for
     /// a `status == "future"` post, its scheduled publish date/time.
     pub date: String,
@@ -486,7 +494,7 @@ impl Client {
     /// Markdown.
     pub fn get_post(&self, id: u64) -> Result<PostDetail> {
         let url = format!(
-            "{}?context=edit&_fields=id,title,content,excerpt,status,slug,categories,tags,featured_media,author,date,meta,link",
+            "{}?context=edit&_fields=id,title,content,excerpt,status,slug,categories,tags,featured_media,author,wp-worthy-pixel,date,meta,link",
             self.endpoint(&format!("posts/{id}"))
         );
         let value = self.get_json(&url)?;
@@ -513,6 +521,7 @@ impl Client {
             tags: u64_array("tags"),
             featured_media: value.get("featured_media").and_then(Value::as_u64).unwrap_or(0),
             author: value.get("author").and_then(Value::as_u64).unwrap_or(0),
+            vgwort_ignored: value.get("wp-worthy-pixel").and_then(|p| p.get("ignored")).and_then(Value::as_bool).unwrap_or(false),
             date: value.get("date").and_then(Value::as_str).unwrap_or_default().to_string(),
             link: value.get("link").and_then(Value::as_str).unwrap_or_default().to_string(),
         })

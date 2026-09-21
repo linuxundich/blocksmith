@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.53.0] - 2026-09-21
+
+### Added
+
+- VG-Wort support, built against the real "Worthy" WordPress plugin's
+  published source (wordpress.org/plugins/wp-worthy/), not guessed
+  thresholds: the Statistik tab shows a "VG-Wort-Länge" hint against
+  Worthy's actual minimum (1800 characters) and early-warning (1600)
+  thresholds, and "Artikel-Eigenschaften" gets a "VG-Wort-Zählmarke"
+  toggle to explicitly exclude an article from tracking - sent on every
+  export as Worthy's own `wp-worthy-pixel.ignored` REST field, harmless
+  on a site without that plugin, and read back on import.
+
 ## [0.52.0] - 2026-09-21
 
 ### Added
