@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.50.2] - 2026-09-21
+
+### Changed
+
+- Scroll-sync now glides smoothly to its target instead of snapping there
+  instantly - noticeable when a source line maps to a preview position far
+  down the page (e.g. scrolling past a large image or the YouTube/Vimeo
+  embed placeholder). The echo-guard that stops this from bouncing back
+  and forth between editor and preview now waits for the scroll animation
+  to actually finish (`scrollend`) rather than a fixed timeout, so a
+  longer glide doesn't get interrupted mid-animation.
+
 ## [0.50.1] - 2026-09-21
 
 ### Fixed

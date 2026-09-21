@@ -655,6 +655,23 @@ th, td {{ border: 1px solid #ccc; padding: .4rem .6rem; }}
 // it's set. Without this, every editor-driven preview scroll would
 // immediately echo back and nudge the editor again.
 window.__suppressScrollEcho = false;
+window.__scrollEchoReleaseTimer = null;
+// Arms the release of `__suppressScrollEcho` for a smooth-scroll call that
+// just started - `scrollend` fires once the animation genuinely settles
+// (its duration scales with distance, so a fixed short delay would let the
+// reverse-sync listener see mid-animation positions and jitter the editor
+// while the preview is still gliding); the timeout alongside it is only a
+// safety net in case `scrollend` never fires for some reason.
+window.__armScrollEchoRelease = function() {{
+  window.__suppressScrollEcho = true;
+  if (window.__scrollEchoReleaseTimer) {{ clearTimeout(window.__scrollEchoReleaseTimer); }}
+  const release = function() {{
+    window.__suppressScrollEcho = false;
+    window.__scrollEchoReleaseTimer = null;
+  }};
+  window.addEventListener('scrollend', release, {{once: true}});
+  window.__scrollEchoReleaseTimer = setTimeout(release, 1000);
+}};
 window.scrollToLine = function(line) {{
   const blocks = document.querySelectorAll('[data-line]');
   let target = null;
@@ -662,18 +679,16 @@ window.scrollToLine = function(line) {{
     if (parseInt(b.getAttribute('data-line'), 10) <= line) {{ target = b; }} else {{ break; }}
   }}
   if (target) {{
-    window.__suppressScrollEcho = true;
-    target.scrollIntoView({{block: 'start', behavior: 'auto'}});
-    setTimeout(function() {{ window.__suppressScrollEcho = false; }}, 200);
+    window.__armScrollEchoRelease();
+    target.scrollIntoView({{block: 'start', behavior: 'smooth'}});
   }}
 }};
 // Snaps to the page's true top/bottom rather than a block boundary - see
 // `PreviewPane::scroll_to_edge`'s doc comment for why `scrollToLine` alone
 // can't reliably reach either end.
 window.scrollToEdge = function(edge) {{
-  window.__suppressScrollEcho = true;
-  window.scrollTo(0, edge === 'bottom' ? document.body.scrollHeight : 0);
-  setTimeout(function() {{ window.__suppressScrollEcho = false; }}, 200);
+  window.__armScrollEchoRelease();
+  window.scrollTo({{top: edge === 'bottom' ? document.body.scrollHeight : 0, behavior: 'smooth'}});
 }};
 // The reverse of `scrollToLine`'s search: which block is at (or just above)
 // the current scroll position, i.e. what the user is looking at right now.
@@ -1095,6 +1110,13 @@ mod tests {
         assert!(html.contains("window.scrollToEdge = function(edge)"), "{html}");
         assert!(html.contains("document.body.scrollHeight"), "{html}");
         assert!(html.contains("atBottom ? -2"), "{html}");
+    }
+
+    #[test]
+    fn scroll_to_line_and_scroll_to_edge_both_glide_smoothly() {
+        let html = render_html("Hello", PreviewStyle::Modern, false, &[], 0.0);
+        assert!(html.contains("behavior: 'smooth'"), "{html}");
+        assert!(html.contains("scrollend"), "{html}");
     }
 
     fn media_item(source: &str, filename: &str, alt: crate::media::AltText, uploaded: bool) -> MediaItem {
