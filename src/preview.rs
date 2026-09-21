@@ -39,6 +39,7 @@ use crate::document::{self, Frontmatter};
 use crate::fontutil;
 use crate::i18n::tr;
 use crate::media::{self, MediaItem};
+use crate::wpsite;
 
 /// Name registered on the `WebView`'s `UserContentManager` for the reverse
 /// (preview -> editor) leg of scroll-sync - see `PreviewPane::connect_scroll`.
@@ -123,6 +124,26 @@ fn reset_preview_font_override() {
     let _ = std::fs::remove_file(preview_font_path());
 }
 
+fn article_header_enabled_path() -> PathBuf {
+    let mut path = config_dir();
+    path.push("article_header_enabled.txt");
+    path
+}
+
+/// Whether the magazine-style article header (see `render_header`) shows
+/// above the rendered body - same "1"/"0" flag-file shape as
+/// `adblock::is_enabled`. Defaults to on: it surfaces exactly the fields
+/// "Artikel-Eigenschaften" already collects, so showing it out of the box
+/// is more useful than a silent opt-in nobody would think to look for.
+fn load_show_header() -> bool {
+    std::fs::read_to_string(article_header_enabled_path()).ok().map(|s| s.trim() != "0").unwrap_or(true)
+}
+
+fn save_show_header(enabled: bool) {
+    let _ = std::fs::create_dir_all(config_dir());
+    let _ = std::fs::write(article_header_enabled_path(), if enabled { "1" } else { "0" });
+}
+
 /// The "Vorschau" tab: a style picker above a `WebKit` view. Remembers the
 /// last rendered Markdown so it can re-render immediately when the style
 /// changes (picked in Einstellungen, see `appearance::build_page`) or the
@@ -147,6 +168,15 @@ pub struct PreviewPane {
     /// technically correct but the preview simply can't load it - a
     /// `WebView` has no other way to know which folder "here" means.
     doc_dir: Rc<RefCell<Option<PathBuf>>>,
+    /// A snapshot of the article's metadata, for the magazine-style header
+    /// (`render_header`) - set explicitly via `set_article_header` whenever
+    /// a caller has fresh `Frontmatter` in hand (document load/new/import,
+    /// "Artikel-Eigenschaften" closing), not tied to `update`/
+    /// `update_preserving_scroll`'s own body-edit debounce, since none of
+    /// the fields the header shows (title, excerpt, categories, tags,
+    /// slug, featured image) are ever derived from the body text itself.
+    last_frontmatter: Rc<RefCell<Frontmatter>>,
+    show_header: Rc<Cell<bool>>,
 }
 
 impl PreviewPane {
@@ -186,6 +216,8 @@ impl PreviewPane {
         let last_markdown: Rc<RefCell<String>> = Rc::new(RefCell::new(String::new()));
         let last_media: Rc<RefCell<Vec<MediaItem>>> = Rc::new(RefCell::new(Vec::new()));
         let doc_dir: Rc<RefCell<Option<PathBuf>>> = Rc::new(RefCell::new(None));
+        let last_frontmatter: Rc<RefCell<Frontmatter>> = Rc::new(RefCell::new(Frontmatter::default()));
+        let show_header = Rc::new(Cell::new(load_show_header()));
 
         {
             let web_view = web_view.clone();
@@ -193,8 +225,18 @@ impl PreviewPane {
             let last_markdown = last_markdown.clone();
             let last_media = last_media.clone();
             let doc_dir = doc_dir.clone();
+            let last_frontmatter = last_frontmatter.clone();
+            let show_header = show_header.clone();
             adw::StyleManager::default().connect_dark_notify(move |style_manager| {
-                let html = render_html(&last_markdown.borrow(), style.get(), style_manager.is_dark(), &last_media.borrow(), 0.0);
+                let html = render_html(
+                    &last_markdown.borrow(),
+                    style.get(),
+                    style_manager.is_dark(),
+                    &last_media.borrow(),
+                    0.0,
+                    &last_frontmatter.borrow(),
+                    show_header.get(),
+                );
                 web_view.load_html(&html, base_uri(doc_dir.borrow().as_deref()).as_deref());
             });
         }
@@ -206,6 +248,8 @@ impl PreviewPane {
             last_markdown,
             last_media,
             doc_dir,
+            last_frontmatter,
+            show_header,
         }
     }
 
@@ -474,9 +518,42 @@ impl PreviewPane {
         self.rerender();
     }
 
+    /// Snapshots `frontmatter` for the magazine-style header (`render_header`)
+    /// and re-renders right away, preserving scroll - called from every
+    /// place that loads/replaces the document (open/new/import/startup
+    /// recovery) and from "Artikel-Eigenschaften" closing, *not* from the
+    /// body-edit debounce (`update`/`update_preserving_scroll`), since none
+    /// of the fields shown here ever change by editing the body text - see
+    /// `last_frontmatter`'s own doc comment on the struct.
+    pub fn set_article_header(&self, frontmatter: &Frontmatter) {
+        *self.last_frontmatter.borrow_mut() = frontmatter.clone();
+        self.rerender_preserving_scroll();
+    }
+
+    pub fn show_article_header(&self) -> bool {
+        self.show_header.get()
+    }
+
+    /// Called from the Vorschau tab's own header-toggle button
+    /// (`window.rs`) - persists the choice and re-renders immediately, the
+    /// same way `set_style` does for the typography picker.
+    pub fn set_show_article_header(&self, enabled: bool) {
+        self.show_header.set(enabled);
+        save_show_header(enabled);
+        self.rerender();
+    }
+
     fn rerender(&self) {
         let dark = adw::StyleManager::default().is_dark();
-        let html = render_html(&self.last_markdown.borrow(), self.style.get(), dark, &self.last_media.borrow(), 0.0);
+        let html = render_html(
+            &self.last_markdown.borrow(),
+            self.style.get(),
+            dark,
+            &self.last_media.borrow(),
+            0.0,
+            &self.last_frontmatter.borrow(),
+            self.show_header.get(),
+        );
         self.web_view.load_html(&html, base_uri(self.doc_dir.borrow().as_deref()).as_deref());
     }
 
@@ -493,11 +570,13 @@ impl PreviewPane {
         let last_markdown = self.last_markdown.clone();
         let last_media = self.last_media.clone();
         let doc_dir = self.doc_dir.borrow().clone();
+        let last_frontmatter = self.last_frontmatter.clone();
+        let show_header = self.show_header.get();
         let web_view = self.web_view.clone();
         self.web_view.evaluate_javascript("window.scrollY", None, None, gio::Cancellable::NONE, move |result| {
             let scroll_y = result.map(|value| value.to_double()).unwrap_or(0.0);
             let dark = adw::StyleManager::default().is_dark();
-            let html = render_html(&last_markdown.borrow(), style, dark, &last_media.borrow(), scroll_y);
+            let html = render_html(&last_markdown.borrow(), style, dark, &last_media.borrow(), scroll_y, &last_frontmatter.borrow(), show_header);
             web_view.load_html(&html, base_uri(doc_dir.as_deref()).as_deref());
         });
     }
@@ -595,8 +674,10 @@ fn style_css(style: PreviewStyle, dark: bool) -> &'static str {
     }
 }
 
-pub fn render_html(markdown: &str, style: PreviewStyle, dark: bool, media: &[MediaItem], scroll_y: f64) -> String {
+#[allow(clippy::too_many_arguments)]
+pub fn render_html(markdown: &str, style: PreviewStyle, dark: bool, media: &[MediaItem], scroll_y: f64, frontmatter: &Frontmatter, show_header: bool) -> String {
     let body = render_body_with_line_anchors(markdown, media);
+    let header = if show_header { render_header(frontmatter) } else { String::new() };
     let css = style_css(style, dark);
     // A user-picked font (if any) overrides just the two font properties,
     // applied after the style's own block so the cascade lets it win
@@ -616,7 +697,8 @@ table {{ border-collapse: collapse; }}
 th, td {{ border: 1px solid #ccc; padding: .4rem .6rem; }}
 {BADGE_CSS}
 {EMBED_CSS}
-</style></head><body>{body}<script>
+{HEADER_CSS}
+</style></head><body>{header}{body}<script>
 // `__suppressScrollEcho` distinguishes a scroll *this script* performs
 // (restoring position after a reload, or `scrollToLine` driven by the
 // editor) from one the user just did by hand with the mouse/trackpad - the
@@ -826,6 +908,100 @@ const BADGE_CSS: &str = ".img-wrap { position: relative; display: inline-block; 
 .img-badges { position: absolute; right: 6px; bottom: 6px; display: flex; gap: 4px; }
 .img-badge { background: rgba(0, 0, 0, 0.65); color: #fff; font: 11px/1.4 -apple-system, Cantarell, sans-serif; font-weight: 600; letter-spacing: .02em; padding: 2px 6px; border-radius: 4px; }
 .img-caption { display: block; text-align: center; font-size: .85em; opacity: .7; margin-top: .35em; }";
+
+/// Style-agnostic (see `BADGE_CSS`/`EMBED_CSS` above for the same
+/// reasoning) - no color or font-family of its own, so it inherits
+/// whichever `PreviewStyle` is active; `rgba(127, 127, 127, α)` neutrals
+/// and `opacity` for secondary text work the same way across all three
+/// styles' light/dark variants. `text-align`/`text-indent` are reset
+/// explicitly on the title/excerpt since Classic's `body { text-align:
+/// justify }` / `p { text-indent: 1.5em }` would otherwise bleed into them.
+const HEADER_CSS: &str = ".article-header { margin: 0 0 2.5rem 0; padding-bottom: 1.75rem; border-bottom: 1px solid rgba(127, 127, 127, 0.25); }
+.article-header-image { display: block; width: 100%; max-height: 22rem; object-fit: cover; border-radius: 8px; margin: 0 0 1.25rem 0; }
+.article-header-title { font-size: 2rem; line-height: 1.2; margin: 0 0 .5rem 0; text-align: left; text-indent: 0; }
+.article-header-excerpt { font-size: 1.1em; opacity: .75; margin: 0 0 .9rem 0; text-align: left; text-indent: 0; }
+.article-header-meta { font-size: .82em; opacity: .6; margin: 0 0 .6rem 0; }
+.article-header-meta a { opacity: 1; }
+.article-header-chips { margin: 0 0 .4rem 0; }
+.article-header-chip { display: inline-block; background: rgba(127, 127, 127, 0.18); border-radius: 999px; padding: .15rem .7rem; margin: 0 .35rem .35rem 0; font-size: .8em; }
+.article-header-tag { background: transparent; padding: 0 .35rem 0 0; }";
+
+/// The magazine-style header shown above the article body (see
+/// `render_html`'s `show_header`) - the same fields "Artikel-Eigenschaften"
+/// (`properties.rs`) collects, so this doubles as a live "how would this
+/// look as a teaser" summary of that dialog. Empty for a document with no
+/// title yet (a brand new, still-untitled article) rather than an
+/// empty-looking box with nothing but a status chip in it.
+fn render_header(frontmatter: &Frontmatter) -> String {
+    if frontmatter.title.trim().is_empty() {
+        return String::new();
+    }
+
+    let mut html = String::from("<header class=\"article-header\">");
+
+    if let Some(image) = frontmatter.featured_image.as_deref().filter(|s| !s.is_empty()) {
+        html.push_str(&format!(
+            "<img class=\"article-header-image\" src=\"{}\" alt=\"{}\">",
+            glib::markup_escape_text(image),
+            glib::markup_escape_text(frontmatter.featured_image_alt.as_deref().unwrap_or_default())
+        ));
+    }
+
+    html.push_str(&format!("<h1 class=\"article-header-title\">{}</h1>", glib::markup_escape_text(&frontmatter.title)));
+
+    if let Some(excerpt) = frontmatter.excerpt.as_deref().filter(|s| !s.trim().is_empty()) {
+        html.push_str(&format!("<p class=\"article-header-excerpt\">{}</p>", glib::markup_escape_text(excerpt)));
+    }
+
+    let mut meta_parts = vec![format!("<span>{}</span>", glib::markup_escape_text(&frontmatter.status.label()))];
+    if let Some(url) = article_url_preview(frontmatter) {
+        meta_parts.push(format!("<a href=\"{}\">{}</a>", glib::markup_escape_text(&url), glib::markup_escape_text(&url)));
+    }
+    html.push_str(&format!("<div class=\"article-header-meta\">{}</div>", meta_parts.join(" · ")));
+
+    if !frontmatter.categories.is_empty() {
+        let chips: String = frontmatter.categories.iter().map(|name| format!("<span class=\"article-header-chip\">{}</span>", glib::markup_escape_text(name))).collect();
+        html.push_str(&format!("<div class=\"article-header-chips\">{chips}</div>"));
+    }
+    if !frontmatter.tags.is_empty() {
+        let chips: String = frontmatter
+            .tags
+            .iter()
+            .map(|name| format!("<span class=\"article-header-chip article-header-tag\">#{}</span>", glib::markup_escape_text(name)))
+            .collect();
+        html.push_str(&format!("<div class=\"article-header-chips\">{chips}</div>"));
+    }
+
+    html.push_str("</header>");
+    html
+}
+
+/// A best-effort article URL from the configured WordPress site's domain
+/// plus the article's own slug - deliberately simpler than
+/// `properties.rs`'s own `seo_url_preview` (no category-slug prefix, which
+/// would need that dialog's term cache plumbed all the way into the
+/// preview pane just for this), so it's a rough preview rather than the
+/// guaranteed-exact permalink. `None` when there's nothing to build one
+/// from (no WordPress connection configured yet, or no slug set) rather
+/// than showing a broken-looking partial URL. A real link - clicking it
+/// goes through the same `connect_link_clicked` interception every other
+/// preview link already does, opening it in the Browser tab instead of
+/// navigating the preview itself away from the article.
+fn article_url_preview(frontmatter: &Frontmatter) -> Option<String> {
+    build_article_url_preview(&wpsite::load().url, &frontmatter.slug)
+}
+
+/// The pure part of `article_url_preview`, split out so it's testable
+/// without depending on this machine's own `$XDG_CONFIG_HOME/blocksmith/
+/// wordpress.conf` - `wpsite::load()` reads real on-disk state, which
+/// would make a test asserting "no site configured" fail on any machine
+/// (this one included) that actually has one set up.
+fn build_article_url_preview(domain: &str, slug: &str) -> Option<String> {
+    if domain.is_empty() || slug.is_empty() {
+        return None;
+    }
+    Some(format!("{}/{}/", domain.trim_end_matches('/'), slug))
+}
 
 /// Wraps every `<img ...>` tag in `html` with a `.img-wrap` container and,
 /// when the image matches a tracked `MediaItem`, a bottom-right badge
@@ -1072,7 +1248,7 @@ mod tests {
 
     #[test]
     fn full_html_embeds_the_reverse_scroll_sync_script() {
-        let html = render_html("Hello", PreviewStyle::Modern, false, &[], 0.0);
+        let html = render_html("Hello", PreviewStyle::Modern, false, &[], 0.0, &Frontmatter::default(), false);
         assert!(html.contains("window.currentTopLine = function()"));
         assert!(html.contains("messageHandlers.scrollSync"));
         assert!(html.contains("__suppressScrollEcho"));
@@ -1080,7 +1256,7 @@ mod tests {
 
     #[test]
     fn full_html_embeds_the_scroll_to_edge_script_and_its_sentinels() {
-        let html = render_html("Hello", PreviewStyle::Modern, false, &[], 0.0);
+        let html = render_html("Hello", PreviewStyle::Modern, false, &[], 0.0, &Frontmatter::default(), false);
         assert!(html.contains("window.scrollToEdge = function(edge)"), "{html}");
         assert!(html.contains("document.body.scrollHeight"), "{html}");
         assert!(html.contains("atBottom ? -2"), "{html}");
@@ -1088,7 +1264,7 @@ mod tests {
 
     #[test]
     fn scroll_to_line_and_scroll_to_edge_both_glide_smoothly() {
-        let html = render_html("Hello", PreviewStyle::Modern, false, &[], 0.0);
+        let html = render_html("Hello", PreviewStyle::Modern, false, &[], 0.0, &Frontmatter::default(), false);
         assert!(html.contains("behavior: 'smooth'"), "{html}");
         assert!(html.contains("scrollend"), "{html}");
     }
@@ -1228,20 +1404,20 @@ mod tests {
 
     #[test]
     fn full_html_embeds_the_scroll_to_line_script() {
-        let html = render_html("Hello", PreviewStyle::Modern, false, &[], 0.0);
+        let html = render_html("Hello", PreviewStyle::Modern, false, &[], 0.0, &Frontmatter::default(), false);
         assert!(html.contains("window.scrollToLine = function(line)"));
         assert!(html.contains("data-line=\"1\""));
     }
 
     #[test]
     fn full_html_restores_a_positive_scroll_position() {
-        let html = render_html("Hello", PreviewStyle::Modern, false, &[], 240.0);
+        let html = render_html("Hello", PreviewStyle::Modern, false, &[], 240.0, &Frontmatter::default(), false);
         assert!(html.contains("window.scrollTo(0, 240)"), "{html}");
     }
 
     #[test]
     fn full_html_guards_the_scroll_restore_for_zero() {
-        let html = render_html("Hello", PreviewStyle::Modern, false, &[], 0.0);
+        let html = render_html("Hello", PreviewStyle::Modern, false, &[], 0.0, &Frontmatter::default(), false);
         assert!(html.contains("if (0 > 0) { window.__suppressScrollEcho = true; window.scrollTo(0, 0);"), "{html}");
     }
 
@@ -1295,5 +1471,98 @@ mod tests {
             assert!(!style_css(style, true).is_empty());
             assert_ne!(style_css(style, false), style_css(style, true));
         }
+    }
+
+    #[test]
+    fn render_header_is_empty_for_a_document_with_no_title() {
+        assert_eq!(render_header(&Frontmatter::default()), "");
+        let untitled = Frontmatter { title: "   ".to_string(), ..Frontmatter::default() };
+        assert_eq!(render_header(&untitled), "", "a whitespace-only title is still untitled");
+    }
+
+    #[test]
+    fn render_header_includes_the_title_excerpt_categories_and_tags() {
+        let frontmatter = Frontmatter {
+            title: "Ein Testartikel".to_string(),
+            excerpt: Some("Ein kurzer Auszug.".to_string()),
+            categories: vec!["GNU/Linux".to_string()],
+            tags: vec!["gnome".to_string(), "rust".to_string()],
+            ..Frontmatter::default()
+        };
+        let html = render_header(&frontmatter);
+        assert!(html.contains("<h1 class=\"article-header-title\">Ein Testartikel</h1>"), "{html}");
+        assert!(html.contains("Ein kurzer Auszug."), "{html}");
+        assert!(html.contains(">GNU/Linux<"), "{html}");
+        assert!(html.contains(">#gnome<"), "{html}");
+        assert!(html.contains(">#rust<"), "{html}");
+    }
+
+    #[test]
+    fn render_header_escapes_html_in_every_field() {
+        let frontmatter = Frontmatter {
+            title: "<script>alert(1)</script>".to_string(),
+            excerpt: Some("<b>fett</b>".to_string()),
+            categories: vec!["<i>Kategorie</i>".to_string()],
+            ..Frontmatter::default()
+        };
+        let html = render_header(&frontmatter);
+        assert!(!html.contains("<script>"), "{html}");
+        assert!(!html.contains("<b>fett</b>"), "{html}");
+        assert!(!html.contains("<i>Kategorie</i>"), "{html}");
+    }
+
+    #[test]
+    fn render_header_omits_the_featured_image_when_none_is_set() {
+        let frontmatter = Frontmatter { title: "Ein Testartikel".to_string(), ..Frontmatter::default() };
+        assert!(!render_header(&frontmatter).contains("article-header-image"));
+    }
+
+    #[test]
+    fn render_header_includes_the_featured_image_when_set() {
+        let frontmatter = Frontmatter {
+            title: "Ein Testartikel".to_string(),
+            featured_image: Some("aufmacher.webp".to_string()),
+            featured_image_alt: Some("Ein Aufmacherbild".to_string()),
+            ..Frontmatter::default()
+        };
+        let html = render_header(&frontmatter);
+        assert!(html.contains("class=\"article-header-image\" src=\"aufmacher.webp\""), "{html}");
+        assert!(html.contains("alt=\"Ein Aufmacherbild\""), "{html}");
+    }
+
+    #[test]
+    fn render_header_shows_the_status_label() {
+        let frontmatter = Frontmatter { title: "Ein Testartikel".to_string(), status: document::PostStatus::Draft, ..Frontmatter::default() };
+        assert!(render_header(&frontmatter).contains(&document::PostStatus::Draft.label()));
+    }
+
+    #[test]
+    fn build_article_url_preview_joins_the_domain_and_slug() {
+        assert_eq!(build_article_url_preview("https://linuxundich.de", "mein-artikel"), Some("https://linuxundich.de/mein-artikel/".to_string()));
+    }
+
+    #[test]
+    fn build_article_url_preview_strips_a_trailing_slash_from_the_domain() {
+        assert_eq!(build_article_url_preview("https://linuxundich.de/", "mein-artikel"), Some("https://linuxundich.de/mein-artikel/".to_string()));
+    }
+
+    #[test]
+    fn build_article_url_preview_is_none_without_a_domain_or_slug() {
+        assert_eq!(build_article_url_preview("", "mein-artikel"), None);
+        assert_eq!(build_article_url_preview("https://linuxundich.de", ""), None);
+    }
+
+    #[test]
+    fn show_header_false_omits_the_header_markup_from_the_full_page() {
+        // Both renders include `HEADER_CSS` (the `.article-header-title`
+        // selector) in their `<style>` block regardless of `show_header` -
+        // only the `<header>` tag itself is conditional - so the assertion
+        // below checks for the actual rendered element, not the class name
+        // alone, which would find a false positive in the CSS either way.
+        let frontmatter = Frontmatter { title: "Ein Testartikel".to_string(), ..Frontmatter::default() };
+        let shown = render_html("Hello", PreviewStyle::Modern, false, &[], 0.0, &frontmatter, true);
+        let hidden = render_html("Hello", PreviewStyle::Modern, false, &[], 0.0, &frontmatter, false);
+        assert!(shown.contains("<h1 class=\"article-header-title\">"), "{shown}");
+        assert!(!hidden.contains("<h1 class=\"article-header-title\">"), "{hidden}");
     }
 }

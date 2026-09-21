@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.51.0] - 2026-09-21
+
+### Added
+
+- A magazine-style article header can now show above the rendered body in
+  the Vorschau pane: featured image, title, excerpt, status, a best-effort
+  article URL, categories and tags - the same fields "Artikel-
+  Eigenschaften" collects. Toggle it via the new button in the Vorschau
+  tab's toolbar (shown only while that tab is active); the choice is
+  remembered, and it's on by default. Updates when a document is opened,
+  created, imported or recovered, and when "Artikel-Eigenschaften" closes.
+
 ## [0.50.9] - 2026-09-21
 
 ### Fixed

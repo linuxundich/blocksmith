@@ -23,6 +23,7 @@ use gtk4::{glib, pango};
 use sourceview5::prelude::*;
 use webkit6::prelude::*;
 
+use crate::document::Frontmatter;
 use crate::fontutil;
 use crate::i18n::tr;
 use crate::preview::{self, PreviewStyle};
@@ -553,7 +554,7 @@ fn build_preview_group(preview_pane: Rc<preview::PreviewPane>) -> adw::Preferenc
         Rc::new(move || {
             let dark = adw::StyleManager::default().is_dark();
             let sample_markdown = tr("# Beispielartikel\n\nDies ist ein **Beispieltext**, der zeigt, wie der gewählte *Stil* und die Schrift wirken.\n\n> Ein Zitat zur Veranschaulichung.\n");
-            sample_view.load_html(&preview::render_html(&sample_markdown, preview_pane.style(), dark, &[], 0.0), None);
+            sample_view.load_html(&preview::render_html(&sample_markdown, preview_pane.style(), dark, &[], 0.0, &Frontmatter::default(), false), None);
         })
     };
     refresh_sample();

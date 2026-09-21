@@ -13,7 +13,7 @@ use gtk4::gio;
 
 use crate::document::{self, parse_list, Frontmatter, PostStatus};
 use crate::i18n::tr;
-use crate::{aialt, autocomplete, media, tagsuggest, taxonomy, termcache, wpsite};
+use crate::{aialt, autocomplete, media, preview, tagsuggest, taxonomy, termcache, wpsite};
 
 /// Shows/hides an alt-text-length warning icon and sets its tooltip from
 /// `media::alt_text_length_warning` - same non-blocking hint as
@@ -92,7 +92,14 @@ fn refresh_url_length_row(
     }
 }
 
-pub fn open(parent: &adw::ApplicationWindow, body: String, frontmatter: Rc<RefCell<Frontmatter>>, term_caches: termcache::TermCacheHandles, doc_dir: Option<PathBuf>) {
+pub fn open(
+    parent: &adw::ApplicationWindow,
+    body: String,
+    frontmatter: Rc<RefCell<Frontmatter>>,
+    term_caches: termcache::TermCacheHandles,
+    doc_dir: Option<PathBuf>,
+    preview_pane: Rc<preview::PreviewPane>,
+) {
     let termcache::TermCacheHandles { categories: category_terms, tags: tag_terms, category_slugs } = term_caches;
     let site = wpsite::load();
     let current = frontmatter.borrow().clone();
@@ -454,6 +461,15 @@ pub fn open(parent: &adw::ApplicationWindow, body: String, frontmatter: Rc<RefCe
     }
 
     refresh_url_length_row(&url_length_row, &url_length_icon, &site.url, &frontmatter, &category_slugs);
+
+    // The preview's magazine-style header shows exactly these fields, but
+    // isn't refreshed live on every keystroke here (unlike this dialog's
+    // own rows, which all write straight into the shared `Frontmatter`) -
+    // deferred to close, matching `imagealt.rs`'s own "write back on
+    // `connect_closed`, not per keystroke" reasoning for its dialog.
+    dialog.connect_closed(move |_| {
+        preview_pane.set_article_header(&frontmatter.borrow());
+    });
 
     dialog.present(Some(parent));
 }

@@ -100,6 +100,30 @@ pub fn build(app: &adw::Application, initial_path: Option<PathBuf>) -> adw::Appl
         .build();
     switcher_bar.append(&view_switcher);
 
+    // Toggles the magazine-style article header (`preview::render_header`)
+    // above the rendered body - only relevant to the Vorschau tab, so only
+    // shown while it's the active one, same live-visibility trick the chat
+    // refresh above uses.
+    let header_toggle_button = gtk4::ToggleButton::builder()
+        .icon_name("document-properties-symbolic")
+        .tooltip_text(tr("Artikel-Kopf in der Vorschau ein-/ausblenden"))
+        .active(preview_pane.show_article_header())
+        .visible(view_stack.visible_child_name().as_deref() == Some("preview"))
+        .build();
+    {
+        let preview_pane = preview_pane.clone();
+        header_toggle_button.connect_toggled(move |button| {
+            preview_pane.set_show_article_header(button.is_active());
+        });
+    }
+    {
+        let header_toggle_button = header_toggle_button.clone();
+        view_stack.connect_visible_child_name_notify(move |stack| {
+            header_toggle_button.set_visible(stack.visible_child_name().as_deref() == Some("preview"));
+        });
+    }
+    switcher_bar.append(&header_toggle_button);
+
     let right_pane = gtk4::Box::builder().orientation(gtk4::Orientation::Vertical).build();
     right_pane.append(&switcher_bar);
     right_pane.append(&gtk4::Separator::new(gtk4::Orientation::Horizontal));
@@ -403,7 +427,7 @@ pub fn build(app: &adw::Application, initial_path: Option<PathBuf>) -> adw::Appl
         list: recent_list,
     };
     wire_recent_files_button(&recent_files_widgets, &doc_ctx);
-    wire_properties_action(&window, &buffer, &frontmatter, &term_caches, &current_path);
+    wire_properties_action(&window, &buffer, &frontmatter, &term_caches, &current_path, &preview_pane);
     wire_settings_action(&window, &buffer, ai_menu_handles, &preview_pane, &browser_view);
     wire_about_action(&window);
     wire_publish_action(&window, &buffer, &current_path, &frontmatter, &preview_pane, &view_stack, &browser_view);
@@ -787,6 +811,7 @@ fn wire_new_action(
         *frontmatter.borrow_mut() = Frontmatter::default();
         title.set_subtitle(&tr("Unbenannt"));
         preview_pane.set_doc_dir(None);
+        preview_pane.set_article_header(&frontmatter.borrow());
         *saved_text.borrow_mut() = String::new();
         autosave::clear();
     });
@@ -874,6 +899,7 @@ fn open_document_at_path(path: PathBuf, ctx: &DocContext) {
             register_recent_file(&path);
             *ctx.current_path.borrow_mut() = Some(path);
             ctx.preview_pane.set_doc_dir(doc_dir);
+            ctx.preview_pane.set_article_header(&ctx.frontmatter.borrow());
             autosave::clear();
         }
         Err(err) => show_toast(&ctx.toast_overlay, &tr("Öffnen fehlgeschlagen: {err}").replace("{err}", &err.to_string())),
@@ -978,6 +1004,7 @@ fn wire_open_from_wordpress_action(
             *frontmatter.borrow_mut() = imported.frontmatter;
             *current_path.borrow_mut() = None;
             preview_pane.set_doc_dir(None);
+            preview_pane.set_article_header(&frontmatter.borrow());
             autosave::clear();
         });
     });
@@ -1040,18 +1067,20 @@ fn wire_properties_action(
     frontmatter: &Rc<RefCell<Frontmatter>>,
     term_caches: &termcache::TermCacheHandles,
     current_path: &Rc<RefCell<Option<PathBuf>>>,
+    preview_pane: &Rc<preview::PreviewPane>,
 ) {
     let action = gio::SimpleAction::new("properties", None);
     let buffer = buffer.clone();
     let frontmatter = frontmatter.clone();
     let term_caches = term_caches.clone();
     let current_path = current_path.clone();
+    let preview_pane = preview_pane.clone();
     let window_weak = window.downgrade();
     action.connect_activate(move |_, _| {
         if let Some(window) = window_weak.upgrade() {
             let doc_dir = current_path.borrow().as_ref().and_then(|p| p.parent().map(Path::to_path_buf));
             let body = buffer.text(&buffer.start_iter(), &buffer.end_iter(), false).to_string();
-            properties::open(&window, body, frontmatter.clone(), term_caches.clone(), doc_dir);
+            properties::open(&window, body, frontmatter.clone(), term_caches.clone(), doc_dir, preview_pane.clone());
         }
     });
     window.add_action(&action);
@@ -1393,6 +1422,7 @@ fn wire_startup_recovery(
         *frontmatter.borrow_mut() = recovered.frontmatter.clone();
         *current_path.borrow_mut() = recovered.original_path.clone();
         preview_pane.set_doc_dir(doc_dir);
+        preview_pane.set_article_header(&frontmatter.borrow());
         // `saved_text` deliberately stays at its initial "" here: this
         // restored text is exactly the unsaved content the snapshot was
         // protecting, so it should read as dirty (and keep being
