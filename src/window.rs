@@ -367,7 +367,7 @@ pub fn build(app: &adw::Application, initial_path: Option<PathBuf>) -> adw::Appl
     termcache::spawn_refresh(&term_caches);
 
     let image_alt_menu = imagealt::install(&view, &buffer, frontmatter.clone(), current_path.clone(), preview_pane.clone());
-    preview::PreviewPane::install_alt_text_menu(&preview_pane, &window, frontmatter.clone());
+    preview::PreviewPane::install_alt_text_menu(&preview_pane, &window, frontmatter.clone(), buffer.clone());
     preview::PreviewPane::install_image_edit_menu(&preview_pane, &window, frontmatter.clone(), buffer.clone());
     {
         let browser_view = browser_view.clone();
@@ -648,10 +648,71 @@ fn wire_scroll_sync(scroller: &gtk4::ScrolledWindow, view: &sourceview5::View, b
         });
     }
 
+    // Same throttle shape as the scroll listener above, but its own
+    // `last_synced`/`trailing` pair (not shared) - typing or moving the
+    // cursor with the arrow keys never touches `vadjustment` unless it
+    // also happens to scroll the view, so without this the preview only
+    // ever followed where the editor *happened to be scrolled*, not where
+    // the user was actually working if that was already on-screen (e.g.
+    // typing in the middle of a tall visible paragraph). Cursor-driven and
+    // scroll-driven syncs targeting the same line in quick succession are
+    // harmless - the second call just re-confirms the first.
+    {
+        let buffer_for_cursor = buffer.clone();
+        let preview_pane_for_cursor = preview_pane.clone();
+        let ignore_editor_scroll_until = ignore_editor_scroll_until.clone();
+        let cursor_last_synced: Rc<Cell<Instant>> = Rc::new(Cell::new(Instant::now() - throttle_interval));
+        let cursor_trailing: Rc<RefCell<Option<glib::SourceId>>> = Rc::new(RefCell::new(None));
+        buffer.connect_cursor_position_notify(move |_buffer| {
+            if Instant::now() < ignore_editor_scroll_until.get() {
+                return;
+            }
+            let elapsed = cursor_last_synced.get().elapsed();
+            if elapsed >= throttle_interval {
+                if let Some(id) = cursor_trailing.borrow_mut().take() {
+                    id.remove();
+                }
+                sync_cursor_to_preview(&buffer_for_cursor, &preview_pane_for_cursor);
+                cursor_last_synced.set(Instant::now());
+                return;
+            }
+            if cursor_trailing.borrow().is_some() {
+                return;
+            }
+            let buffer_for_cursor = buffer_for_cursor.clone();
+            let preview_pane_for_cursor = preview_pane_for_cursor.clone();
+            let cursor_last_synced = cursor_last_synced.clone();
+            let cursor_trailing_inner = cursor_trailing.clone();
+            let id = glib::timeout_add_local(throttle_interval - elapsed, move || {
+                sync_cursor_to_preview(&buffer_for_cursor, &preview_pane_for_cursor);
+                cursor_last_synced.set(Instant::now());
+                *cursor_trailing_inner.borrow_mut() = None;
+                glib::ControlFlow::Break
+            });
+            *cursor_trailing.borrow_mut() = Some(id);
+        });
+    }
+
     preview_pane.connect_scroll(move |line| {
         ignore_editor_scroll_until.set(Instant::now() + Duration::from_millis(SCROLL_SYNC_ECHO_GUARD_MS));
         sync_preview_to_editor(&view, &buffer, line);
     });
+}
+
+/// Maps the cursor's current line onto the preview - the same top/bottom
+/// edge-snapping `sync_editor_to_preview` does, just keyed off where the
+/// cursor actually is rather than the top of the visible viewport (see
+/// `wire_scroll_sync`'s doc comment on why typing needs its own trigger).
+fn sync_cursor_to_preview(buffer: &sourceview5::Buffer, preview_pane: &preview::PreviewPane) {
+    let cursor_line = buffer.iter_at_mark(&buffer.get_insert()).line();
+    let last_line = buffer.end_iter().line();
+    if cursor_line >= last_line {
+        preview_pane.scroll_to_edge(true);
+    } else if cursor_line <= 0 {
+        preview_pane.scroll_to_edge(false);
+    } else {
+        preview_pane.scroll_to_line(cursor_line + 1);
+    }
 }
 
 /// Maps the editor's current scroll position onto the preview - `line_at_y`

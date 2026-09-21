@@ -258,7 +258,7 @@ impl PreviewPane {
     /// Takes `&Rc<Self>` rather than `&self` - both dialogs need to hold
     /// onto this same pane (as an owned `Rc`) to refresh its badges/caption
     /// once applied, and a plain `&self` has no `Rc` of itself to hand out.
-    pub fn install_alt_text_menu(preview_pane: &Rc<Self>, window: &impl IsA<gtk4::Window>, frontmatter: Rc<RefCell<Frontmatter>>) {
+    pub fn install_alt_text_menu(preview_pane: &Rc<Self>, window: &impl IsA<gtk4::Window>, frontmatter: Rc<RefCell<Frontmatter>>, buffer: sourceview5::Buffer) {
         let window: gtk4::Window = window.clone().upcast();
         let doc_dir = preview_pane.doc_dir.clone();
         let last_markdown = preview_pane.last_markdown.clone();
@@ -287,10 +287,10 @@ impl PreviewPane {
                 let frontmatter = frontmatter.clone();
                 let window = window.clone();
                 let doc_dir_value = doc_dir_value.clone();
-                let last_markdown = last_markdown.clone();
+                let buffer = buffer.clone();
                 let preview_pane = preview_pane.clone();
                 edit_action.connect_activate(move |_, _| {
-                    crate::imagealt::open_dialog_for_index(&window, &frontmatter, index, &last_markdown.borrow(), doc_dir_value.clone(), &preview_pane);
+                    crate::imagealt::open_dialog_for_index(&window, &frontmatter, index, &buffer, doc_dir_value.clone(), &preview_pane);
                 });
             }
             let edit_item = webkit6::ContextMenuItem::from_gaction(&edit_action, &tr("Alternativtext bearbeiten…"), None);

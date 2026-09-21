@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.50.4] - 2026-09-21
+
+### Added
+
+- Scroll-sync now also follows the cursor, not just scrolling - typing or
+  moving the cursor somewhere already visible in the editor now brings the
+  matching spot into view in the preview too, instead of only reacting
+  when the editor itself is scrolled.
+
+### Changed
+
+- Alternativtext and Bildunterschrift are now handled very differently in
+  the Alternativtext dialog: alt text is dialog-only and never reads from
+  or writes to the Markdown bracket text, so it can't be silently changed
+  by editing the article. Bildunterschrift is the opposite - it's kept in
+  sync with the Markdown's title slot (`![alt](bild.png "Bildunterschrift")`)
+  in both directions: the dialog now seeds the field from the live title
+  instead of a possibly-stale cached value, and writes the final text back
+  into that slot when the dialog closes.
+
 ## [0.50.3] - 2026-09-21
 
 ### Added

@@ -205,20 +205,107 @@ fn scan_images(markdown: &str) -> Vec<(String, String, String)> {
     out
 }
 
-/// The alt/bracket text currently written in the Markdown source for the
+/// The Markdown title (`![alt](src "title")`) currently written for the
 /// first image reference matching `source` - `None` if no such reference
-/// exists any more (e.g. the item was uploaded and its body reference
-/// removed) or it has no bracket text at all. Exposed for the
-/// "aus Bildtext übernehmen" button in the Alternativtext dialog
-/// (`imagealt.rs`): once a `MediaItem`'s `alt`/`caption` has been edited
-/// once, `reconcile` deliberately leaves it alone on every later edit to
-/// the article (see that function's own doc comment) - which means it can
-/// quietly drift from what the bracket text actually says, with no
-/// indication of that in the dialog. This gives the user an explicit,
-/// deliberate way to pull the current bracket text back in, without
-/// `reconcile` doing it silently on every reconcile.
-pub fn markdown_alt_text_for(markdown: &str, source: &str) -> Option<String> {
-    scan_images(markdown).into_iter().find(|(s, _, _)| s == source).map(|(_, alt, _)| alt).filter(|alt| !alt.is_empty())
+/// exists, or it has no title. Used to seed the Bildunterschrift field in
+/// the Alternativtext dialog with the live Markdown value instead of a
+/// possibly-stale cached `MediaItem.caption`, now that editing that field
+/// writes back into this same slot (`title_edits_for`) - unlike alt text,
+/// which stays dialog-only and never round-trips through the Markdown
+/// bracket text at all.
+pub fn markdown_title_for(markdown: &str, source: &str) -> Option<String> {
+    scan_images(markdown).into_iter().find(|(s, _, _)| s == source).map(|(_, _, title)| title).filter(|title| !title.is_empty())
+}
+
+/// The byte-range edits needed to set/update/remove the title portion of
+/// every image reference matching `source` in `markdown` - `caption` of
+/// `None` or empty removes the title, leaving a bare `![alt](source)`.
+/// Every occurrence of `source` is covered (matching how `reconcile`
+/// already collapses them to one `MediaItem`), and the list is empty if
+/// nothing actually needs to change (the title already matches).
+///
+/// Deliberately a plain substring search for `"]("` rather than a second
+/// full Markdown parse of the parenthetical - CommonMark requires no
+/// whitespace between an image's `]` and its `(`, so this is safe, and
+/// simpler than teaching a parser about syntax pulldown-cmark itself only
+/// exposes as already-resolved `dest_url`/`title` strings, never the
+/// source ranges of each piece.
+///
+/// Shared by `set_markdown_title` (returns a new `String`, used by tests)
+/// and `imagealt.rs`'s live caption-sync, which applies each edit directly
+/// to the editor's `sourceview5::Buffer` - back-to-front by position, so
+/// applying an earlier edit never shifts a later one's still-to-be-applied
+/// byte range.
+pub fn title_edits_for(markdown: &str, source: &str, caption: Option<&str>) -> Vec<(std::ops::Range<usize>, String)> {
+    let desired = caption.map(str::trim).filter(|c| !c.is_empty());
+    let mut edits = Vec::new();
+    for (event, range) in Parser::new(markdown).into_offset_iter() {
+        let Event::Start(Tag::Image { dest_url, .. }) = event else { continue };
+        if dest_url.as_ref() != source {
+            continue;
+        }
+        let image_text = &markdown[range.clone()];
+        let Some(paren_rel) = image_text.find("](") else { continue };
+        let start_paren = range.start + paren_rel + 1;
+        let end_paren = range.end - 1;
+        if end_paren <= start_paren || markdown.as_bytes().get(end_paren) != Some(&b')') {
+            continue;
+        }
+        let inner = &markdown[start_paren + 1..end_paren];
+        let existing_title = inner.find(char::is_whitespace).map(|idx| unescape_title(inner[idx..].trim()));
+        if existing_title.as_deref() == desired {
+            continue;
+        }
+        let url_part = match inner.find(char::is_whitespace) {
+            Some(idx) => &inner[..idx],
+            None => inner,
+        };
+        let new_inner = match desired {
+            Some(cap) => format!("{url_part} \"{}\"", escape_title(cap)),
+            None => url_part.to_string(),
+        };
+        edits.push((start_paren..end_paren + 1, format!("({new_inner})")));
+    }
+    edits
+}
+
+/// Escapes a caption for use as a Markdown title's quoted content -
+/// backslashes first, then double quotes, matching CommonMark's own
+/// backslash-escaping rule (reversed by `unescape_title`).
+fn escape_title(text: &str) -> String {
+    text.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+/// Reverses `escape_title` - also tolerates a title that isn't actually
+/// `"..."`-quoted (single-quote/parenthesis title delimiters are valid
+/// CommonMark too, just never written by this app) by leaving it as-is
+/// rather than mangling it.
+fn unescape_title(text: &str) -> String {
+    let Some(inner) = text.strip_prefix('"').and_then(|t| t.strip_suffix('"')) else {
+        return text.to_string();
+    };
+    inner.replace("\\\"", "\"").replace("\\\\", "\\")
+}
+
+/// Applies `title_edits_for` and returns the rewritten Markdown - a test
+/// helper only; `imagealt.rs`'s live caption-sync applies the same edits
+/// directly to the `sourceview5::Buffer` instead, so a keystroke in the
+/// dialog doesn't round-trip through a full string rebuild.
+#[cfg(test)]
+fn set_markdown_title(markdown: &str, source: &str, caption: Option<&str>) -> String {
+    let edits = title_edits_for(markdown, source, caption);
+    if edits.is_empty() {
+        return markdown.to_string();
+    }
+    let mut out = String::with_capacity(markdown.len());
+    let mut last_end = 0;
+    for (range, replacement) in edits {
+        out.push_str(&markdown[last_end..range.start]);
+        out.push_str(&replacement);
+        last_end = range.end;
+    }
+    out.push_str(&markdown[last_end..]);
+    out
 }
 
 /// Rebuilds the media list from the document's current text, preserving
@@ -462,21 +549,69 @@ mod tests {
     }
 
     #[test]
-    fn markdown_alt_text_for_returns_the_bracket_text_for_a_matching_source() {
-        let markdown = "![a cat sleeping](cat.png)\n";
-        assert_eq!(markdown_alt_text_for(markdown, "cat.png"), Some("a cat sleeping".to_string()));
+    fn markdown_title_for_returns_the_existing_title() {
+        let markdown = "![a cat](cat.png \"Our cat sleeping\")\n";
+        assert_eq!(markdown_title_for(markdown, "cat.png"), Some("Our cat sleeping".to_string()));
     }
 
     #[test]
-    fn markdown_alt_text_for_is_none_when_the_source_is_not_referenced() {
-        let markdown = "![a cat sleeping](cat.png)\n";
-        assert_eq!(markdown_alt_text_for(markdown, "dog.png"), None);
+    fn markdown_title_for_is_none_without_a_title() {
+        let markdown = "![a cat](cat.png)\n";
+        assert_eq!(markdown_title_for(markdown, "cat.png"), None);
     }
 
     #[test]
-    fn markdown_alt_text_for_is_none_for_an_empty_bracket() {
-        let markdown = "![](cat.png)\n";
-        assert_eq!(markdown_alt_text_for(markdown, "cat.png"), None);
+    fn set_markdown_title_adds_a_title_where_there_was_none() {
+        let markdown = "Intro.\n\n![a cat](cat.png)\n\nOutro.\n";
+        let out = set_markdown_title(markdown, "cat.png", Some("Our cat sleeping"));
+        assert_eq!(out, "Intro.\n\n![a cat](cat.png \"Our cat sleeping\")\n\nOutro.\n");
+    }
+
+    #[test]
+    fn set_markdown_title_replaces_an_existing_title() {
+        let markdown = "![a cat](cat.png \"old caption\")\n";
+        let out = set_markdown_title(markdown, "cat.png", Some("new caption"));
+        assert_eq!(out, "![a cat](cat.png \"new caption\")\n");
+    }
+
+    #[test]
+    fn set_markdown_title_removes_the_title_for_an_empty_caption() {
+        let markdown = "![a cat](cat.png \"old caption\")\n";
+        let out = set_markdown_title(markdown, "cat.png", None);
+        assert_eq!(out, "![a cat](cat.png)\n");
+    }
+
+    #[test]
+    fn set_markdown_title_is_a_no_op_when_the_title_already_matches() {
+        let markdown = "![a cat](cat.png \"same\")\n";
+        assert_eq!(set_markdown_title(markdown, "cat.png", Some("same")), markdown);
+    }
+
+    #[test]
+    fn set_markdown_title_is_unchanged_when_the_source_is_not_referenced() {
+        let markdown = "![a cat](cat.png)\n";
+        assert_eq!(set_markdown_title(markdown, "dog.png", Some("x")), markdown);
+    }
+
+    #[test]
+    fn set_markdown_title_updates_every_occurrence_of_the_same_source() {
+        let markdown = "![a](cat.png)\n\n![b](cat.png \"old\")\n";
+        let out = set_markdown_title(markdown, "cat.png", Some("new"));
+        assert_eq!(out, "![a](cat.png \"new\")\n\n![b](cat.png \"new\")\n");
+    }
+
+    #[test]
+    fn set_markdown_title_escapes_double_quotes_in_the_caption() {
+        let markdown = "![a cat](cat.png)\n";
+        let out = set_markdown_title(markdown, "cat.png", Some("a \"good\" cat"));
+        assert_eq!(out, "![a cat](cat.png \"a \\\"good\\\" cat\")\n");
+    }
+
+    #[test]
+    fn title_edits_for_round_trips_through_set_markdown_title_and_markdown_title_for() {
+        let markdown = "![a cat](cat.png)\n";
+        let out = set_markdown_title(markdown, "cat.png", Some("a \"good\" cat"));
+        assert_eq!(markdown_title_for(&out, "cat.png"), Some("a \"good\" cat".to_string()));
     }
 
     #[test]
