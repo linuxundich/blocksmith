@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.50.7] - 2026-09-21
+
+### Fixed
+
+- The Bildbeschriftung dialog's thumbnail was still blank after the
+  previous fix - `load_html` was called on the WebView immediately after
+  construction, before it had a real size or was even part of the
+  dialog's widget tree yet, and never repainted once it was actually
+  shown. Deferred loading to the widget's `map` signal instead.
+
 ## [0.50.6] - 2026-09-21
 
 ### Fixed

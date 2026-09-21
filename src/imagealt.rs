@@ -425,16 +425,34 @@ pub fn open_dialog_for_index(window: &gtk4::Window, frontmatter: &Rc<RefCell<Fro
         if path.exists() {
             let thumbnail = webkit6::WebView::new();
             thumbnail.set_height_request(160);
+            thumbnail.set_hexpand(true);
             thumbnail.add_css_class("card");
-            let file_uri = gio::File::for_path(&path).uri();
+            content.append(&thumbnail);
+
+            // A page loaded via `load_html` with no base URI has a null
+            // origin, and WebKit's cross-origin rules then silently refuse
+            // to load a `file://` image from it - passing the image's own
+            // directory as the base URI (`preview::base_uri`, the same
+            // helper the main Vorschau pane already relies on for its own
+            // local images) gives the page a matching `file://` origin, so
+            // a plain relative `src` resolves and loads normally. Loading
+            // is deferred to `connect_map` (fires once this specific
+            // WebView is actually realized/shown) rather than called right
+            // after construction - confirmed live: calling it immediately,
+            // before this widget had a real size or was part of the
+            // window's widget tree yet, left it permanently blank even
+            // with the base URI fix in place.
+            let filename = path.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
             let html = format!(
                 "<!doctype html><html><head><meta charset=\"utf-8\"><style>\
                  html, body {{ margin: 0; height: 100%; display: flex; align-items: center; justify-content: center; }}\
                  img {{ max-width: 100%; max-height: 100%; object-fit: contain; }}\
-                 </style></head><body><img src=\"{file_uri}\"></body></html>"
+                 </style></head><body><img src=\"{filename}\"></body></html>"
             );
-            thumbnail.load_html(&html, None);
-            content.append(&thumbnail);
+            let base_uri = preview::base_uri(path.parent());
+            thumbnail.connect_map(move |view| {
+                view.load_html(&html, base_uri.as_deref());
+            });
         }
     }
     let filename_label = gtk4::Label::builder().label(&item.filename).xalign(0.0).wrap(true).build();

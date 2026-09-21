@@ -560,7 +560,7 @@ impl PreviewPane {
 /// `gio::File` rather than a hand-formatted `format!("file://{}", ...)` so
 /// a directory path containing characters that need percent-encoding is
 /// still handled correctly.
-fn base_uri(dir: Option<&Path>) -> Option<String> {
+pub(crate) fn base_uri(dir: Option<&Path>) -> Option<String> {
     let dir = dir?;
     let uri = gio::File::for_path(dir).uri();
     Some(if uri.ends_with('/') { uri.to_string() } else { format!("{uri}/") })
