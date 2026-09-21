@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.50.9] - 2026-09-21
+
+### Fixed
+
+- The export dialog's "Aktualisieren" button (shown for an article already
+  sent to WordPress) unconditionally sent `status: "publish"`, silently
+  publishing a draft when the intent was only to update its content. It
+  now omits the `status` field entirely for an existing post, so
+  WordPress leaves whatever status it already has untouched - a draft
+  stays a draft. "Veröffentlichen"/"Als Entwurf hochladen"/"Terminieren"/
+  "Privat veröffentlichen" are unaffected, they still force their own
+  status as an explicit choice. The success notification also now names
+  what actually happened ("Aktualisiert" for a status-less update)
+  instead of always claiming "Veröffentlicht".
+
 ## [0.50.8] - 2026-09-21
 
 ### Changed

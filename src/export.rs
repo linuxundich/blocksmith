@@ -337,10 +337,21 @@ pub fn open(
     }
 
     let status = StatusWidgets { label: status_label.clone(), link: link_button.clone() };
-    wire_publish_button(&publish_button, &[&draft_button, &schedule_button, &private_button], PostStatus::Publish, &frontmatter, &body, &doc_dir, &status, &dialog);
-    wire_publish_button(&draft_button, &[&publish_button, &schedule_button, &private_button], PostStatus::Draft, &frontmatter, &body, &doc_dir, &status, &dialog);
-    wire_publish_button(&schedule_button, &[&publish_button, &draft_button, &private_button], PostStatus::Future, &frontmatter, &body, &doc_dir, &status, &dialog);
-    wire_publish_button(&private_button, &[&publish_button, &draft_button, &schedule_button], PostStatus::Private, &frontmatter, &body, &doc_dir, &status, &dialog);
+    // `None` here means "leave whatever status the post already has on
+    // WordPress alone" (the `status` field is omitted from the payload
+    // entirely - see `run_export`) - this button is only ever labelled
+    // "Aktualisieren" for a post that already exists, and clicking a
+    // button that says "update" must not silently republish an existing
+    // draft. For a post that doesn't exist yet, the button is labelled
+    // "Veröffentlichen" instead, and *does* force `Publish` - an explicit
+    // first-time publish. The other three buttons below are always an
+    // explicit choice of status, regardless of whether the post already
+    // exists, so they keep forcing their own `target_status` unconditionally.
+    let publish_target_status = if current_fm.wp_post_id.is_some() { None } else { Some(PostStatus::Publish) };
+    wire_publish_button(&publish_button, &[&draft_button, &schedule_button, &private_button], publish_target_status, &frontmatter, &body, &doc_dir, &status, &dialog);
+    wire_publish_button(&draft_button, &[&publish_button, &schedule_button, &private_button], Some(PostStatus::Draft), &frontmatter, &body, &doc_dir, &status, &dialog);
+    wire_publish_button(&schedule_button, &[&publish_button, &draft_button, &private_button], Some(PostStatus::Future), &frontmatter, &body, &doc_dir, &status, &dialog);
+    wire_publish_button(&private_button, &[&publish_button, &draft_button, &schedule_button], Some(PostStatus::Private), &frontmatter, &body, &doc_dir, &status, &dialog);
 
     dialog.present(Some(parent));
 }
@@ -380,12 +391,16 @@ fn has_conflicting_server_change(local_hash: Option<&str>, server_hash: &str) ->
     local_hash.is_some_and(|local| local != server_hash)
 }
 
-/// Wires one of the three publish-flow buttons ("Veröffentlichen" /
-/// "Als Entwurf hochladen" / "Terminieren") - `target_status` is sent
-/// regardless of whatever `Frontmatter.status` happens to currently hold
-/// (e.g. from the separate "Artikel-Eigenschaften" dialog), so clicking any
-/// one button is an unambiguous, deterministic choice rather than depending
-/// on a status set somewhere else first. `other_buttons` are disabled
+/// Wires one of the publish-flow buttons ("Veröffentlichen"/"Aktualisieren" /
+/// "Als Entwurf hochladen" / "Terminieren" / "Privat veröffentlichen") -
+/// `target_status` is sent regardless of whatever `Frontmatter.status`
+/// happens to currently hold (e.g. from the separate "Artikel-Eigenschaften"
+/// dialog), so clicking any one button is an unambiguous, deterministic
+/// choice rather than depending on a status set somewhere else first. The
+/// one exception is `None` (only ever passed for the "Aktualisieren" case -
+/// see `open`'s own comment above its `wire_publish_button` calls): the
+/// status field is omitted from the request entirely, so WordPress leaves
+/// whatever status the post already has untouched. `other_buttons` are disabled
 /// alongside `button` while a request is in flight, so none of them can
 /// race the same post/media at once; on success `Frontmatter.status` is
 /// updated to match, so "Artikel-Eigenschaften" reflects what was actually
@@ -406,7 +421,7 @@ fn has_conflicting_server_change(local_hash: Option<&str>, server_hash: &str) ->
 fn wire_publish_button(
     button: &gtk4::Button,
     other_buttons: &[&gtk4::Button],
-    target_status: PostStatus,
+    target_status: Option<PostStatus>,
     frontmatter: &Rc<RefCell<Frontmatter>>,
     body: &str,
     doc_dir: &Option<PathBuf>,
@@ -533,7 +548,7 @@ fn wire_publish_button(
 /// or from the confirmation dialog's "Überschreiben" response.
 #[allow(clippy::too_many_arguments)]
 fn start_export(
-    target_status: PostStatus,
+    target_status: Option<PostStatus>,
     frontmatter: &Rc<RefCell<Frontmatter>>,
     body: &str,
     doc_dir: &Option<PathBuf>,
@@ -551,7 +566,9 @@ fn start_export(
 
     let site = wpsite::load();
     let mut current_fm = frontmatter.borrow().clone();
-    current_fm.status = target_status;
+    if let Some(target_status) = target_status {
+        current_fm.status = target_status;
+    }
     let body = body.to_string();
     let doc_dir = doc_dir.clone();
 
@@ -562,7 +579,7 @@ fn start_export(
             .and_then(|maybe_password| {
                 maybe_password.ok_or_else(|| tr("Kein Application Password im Schlüsselbund gefunden."))
             })
-            .and_then(|password| run_export(&site, &password, &mut current_fm, &body, doc_dir.as_deref()))
+            .and_then(|password| run_export(&site, &password, &mut current_fm, target_status, &body, doc_dir.as_deref()))
             .map(|post| (post, current_fm.media, current_fm.wp_content_hash));
         let _ = tx.send(outcome);
     });
@@ -578,7 +595,9 @@ fn start_export(
                 let mut fm = frontmatter.borrow_mut();
                 fm.wp_post_id = Some(post.id);
                 fm.media = media;
-                fm.status = target_status;
+                if let Some(target_status) = target_status {
+                    fm.status = target_status;
+                }
                 fm.wp_content_hash = content_hash;
                 fm.title.clone()
             };
@@ -586,7 +605,13 @@ fn start_export(
             link_button.set_uri(&post.link);
             link_button.set_label(&post.link);
             link_button.set_visible(true);
-            notify::send("export", &tr("Veröffentlicht"), &tr("„{title}“ wurde erfolgreich gesendet.").replace("{title}", &title));
+            // Reflects what actually happened rather than always claiming
+            // "Veröffentlicht" - `target_status` being `None` means the
+            // status was deliberately left untouched (see `wire_publish_button`'s
+            // doc comment), so the toast says "Aktualisiert" instead of
+            // (incorrectly) implying a status change that didn't happen.
+            let action_label = target_status.map(|s| s.label()).unwrap_or_else(|| tr("Aktualisiert"));
+            notify::send("export", &action_label, &tr("„{title}“ wurde erfolgreich gesendet.").replace("{title}", &title));
             button.set_sensitive(true);
             for b in &other_buttons {
                 b.set_sensitive(true);
@@ -618,6 +643,7 @@ fn run_export(
     site: &wpsite::SiteConfig,
     password: &str,
     frontmatter: &mut Frontmatter,
+    target_status: Option<PostStatus>,
     body: &str,
     doc_dir: Option<&Path>,
 ) -> Result<wpclient::PostResult, String> {
@@ -626,7 +652,7 @@ fn run_export(
     // immediately instead of scheduling (see `PostStatus::Future`'s doc
     // comment), so this is checked up front rather than letting that
     // surprise happen after an otherwise-successful export.
-    if frontmatter.status == PostStatus::Future && frontmatter.scheduled_at.is_none() {
+    if target_status == Some(PostStatus::Future) && frontmatter.scheduled_at.is_none() {
         return Err(tr("Für den Status „Geplant“ muss ein gültiger Veröffentlichungstermin gesetzt sein."));
     }
 
@@ -652,10 +678,20 @@ fn run_export(
     let mut payload = serde_json::json!({
         "title": frontmatter.title,
         "content": content,
-        "status": frontmatter.status.as_str(),
         "categories": category_ids,
         "tags": tag_ids,
     });
+    // Omitted entirely (not just "left at whatever `frontmatter.status`
+    // says") when `target_status` is `None` - WordPress's REST API leaves
+    // an existing post's status untouched when the field is absent from
+    // the request, which is exactly the "Aktualisieren" button's contract
+    // (see `wire_publish_button`'s doc comment). Sending it unconditionally
+    // here, even with the locally-known status, would risk re-asserting a
+    // stale value if `Frontmatter.status` ever drifted from the post's real
+    // status on the server.
+    if let Some(target_status) = target_status {
+        payload["status"] = serde_json::Value::String(target_status.as_str().to_string());
+    }
     if !frontmatter.slug.is_empty() {
         payload["slug"] = serde_json::Value::String(frontmatter.slug.clone());
     }
@@ -681,7 +717,7 @@ fn run_export(
     if !meta.is_empty() {
         payload["meta"] = serde_json::Value::Object(meta);
     }
-    if frontmatter.status == PostStatus::Future {
+    if target_status == Some(PostStatus::Future) {
         if let Some(scheduled_at) = &frontmatter.scheduled_at {
             payload["date"] = serde_json::Value::String(scheduled_at.clone());
         }
@@ -1017,12 +1053,11 @@ mod tests {
     }
 
     /// Exercises the "Als Entwurf hochladen" vs "Veröffentlichen" choice
-    /// directly: `run_export` must send whatever `frontmatter.status` holds
-    /// at the time of the call (the two export-dialog buttons each force
-    /// this to a specific value before calling it - see
-    /// `wire_publish_button`), and a later call with a different status on
-    /// the same `wp_post_id` must update it in place, not create a second
-    /// post.
+    /// directly: `run_export` must send whatever `target_status` it's given
+    /// (the export-dialog buttons each force this to a specific value
+    /// before calling it - see `wire_publish_button`), and a later call
+    /// with a different status on the same `wp_post_id` must update it in
+    /// place, not create a second post.
     #[test]
     #[ignore]
     fn run_export_respects_the_requested_post_status() {
@@ -1053,14 +1088,60 @@ mod tests {
             media: Vec::new(),
         };
 
-        let created = run_export(&site, &password, &mut frontmatter, body, None).expect("draft export failed");
+        let created = run_export(&site, &password, &mut frontmatter, Some(crate::document::PostStatus::Draft), body, None).expect("draft export failed");
         assert_eq!(client.get_post(created.id).expect("get_post failed").status, "draft");
 
         frontmatter.wp_post_id = Some(created.id);
-        frontmatter.status = crate::document::PostStatus::Publish;
-        let updated = run_export(&site, &password, &mut frontmatter, body, None).expect("publish export failed");
+        let updated =
+            run_export(&site, &password, &mut frontmatter, Some(crate::document::PostStatus::Publish), body, None).expect("publish export failed");
         assert_eq!(updated.id, created.id, "updating status must reuse the same post, not create a new one");
         assert_eq!(client.get_post(updated.id).expect("get_post failed").status, "publish");
+
+        client.delete_post(created.id).expect("cleanup delete_post failed");
+    }
+
+    /// Regression test for the "Aktualisieren" button silently republishing
+    /// a draft: `target_status: None` must send a request with no `status`
+    /// field at all, so WordPress leaves the post's existing status
+    /// untouched - a draft updated this way must still be a draft
+    /// afterwards, not flip to published.
+    #[test]
+    #[ignore]
+    fn run_export_with_no_target_status_leaves_the_existing_status_untouched() {
+        let site = wpsite::load();
+        assert!(!site.url.is_empty(), "no WordPress site configured (run the connection dialog first)");
+        let password = futures_lite::future::block_on(secrets::load_app_password(&site.url, &site.username))
+            .expect("keyring lookup failed")
+            .expect("no application password stored for this site/user");
+        let client = wpclient::Client::new(&site.url, &site.username, &password);
+
+        let body = "Ein Testartikel für das Aktualisieren-ohne-Statuswechsel-Verhalten.\n";
+        let mut frontmatter = Frontmatter {
+            title: "Blocksmith update-without-status-change test".to_string(),
+            slug: String::new(),
+            status: crate::document::PostStatus::Draft,
+            scheduled_at: None,
+            categories: Vec::new(),
+            tags: Vec::new(),
+            excerpt: None,
+            rank_math_title: None,
+            rank_math_description: None,
+            rank_math_focus_keyword: None,
+            featured_image: None,
+            featured_image_alt: None,
+            wp_post_id: None,
+            wp_content_hash: None,
+            featured_media_id: None,
+            media: Vec::new(),
+        };
+
+        let created = run_export(&site, &password, &mut frontmatter, Some(crate::document::PostStatus::Draft), body, None).expect("draft export failed");
+        assert_eq!(client.get_post(created.id).expect("get_post failed").status, "draft");
+
+        frontmatter.wp_post_id = Some(created.id);
+        let updated = run_export(&site, &password, &mut frontmatter, None, body, None).expect("status-less update failed");
+        assert_eq!(updated.id, created.id, "updating content must reuse the same post, not create a new one");
+        assert_eq!(client.get_post(updated.id).expect("get_post failed").status, "draft", "a status-less update must not change the post's status");
 
         client.delete_post(created.id).expect("cleanup delete_post failed");
     }
@@ -1102,7 +1183,8 @@ mod tests {
             media: Vec::new(),
         };
 
-        let created = run_export(&site, &password, &mut frontmatter, body, Some(&doc_dir)).expect("run_export failed");
+        let created =
+            run_export(&site, &password, &mut frontmatter, Some(crate::document::PostStatus::Draft), body, Some(&doc_dir)).expect("run_export failed");
         assert!(created.id > 0);
 
         // `run_export` reconciles + uploads media as a side effect - confirm
@@ -1154,14 +1236,16 @@ mod tests {
             media: Vec::new(),
         };
 
-        let first = run_export(&site, &password, &mut frontmatter, body, Some(&doc_dir)).expect("first run_export failed");
+        let first =
+            run_export(&site, &password, &mut frontmatter, Some(crate::document::PostStatus::Draft), body, Some(&doc_dir)).expect("first run_export failed");
         let first_media_id = frontmatter.media[0].wordpress.clone().expect("expected an upload on the first export").media_id;
 
         // Re-export the identical body/frontmatter (as an update, since
         // `wp_post_id` now carries over) - the image content hasn't
         // changed, so this must NOT create a second media attachment.
         frontmatter.wp_post_id = Some(first.id);
-        let _second = run_export(&site, &password, &mut frontmatter, body, Some(&doc_dir)).expect("second run_export failed");
+        let _second = run_export(&site, &password, &mut frontmatter, Some(crate::document::PostStatus::Draft), body, Some(&doc_dir))
+            .expect("second run_export failed");
         let second_media_id = frontmatter.media[0].wordpress.clone().expect("expected the ref to survive re-export").media_id;
 
         assert_eq!(first_media_id, second_media_id, "re-exporting an unchanged local image must reuse the same WordPress media id");
