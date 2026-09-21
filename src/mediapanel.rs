@@ -22,7 +22,7 @@ use gtk4::glib;
 use crate::document::Frontmatter;
 use crate::i18n::tr;
 use crate::media::{self, AltText, UploadStatus};
-use crate::{export, notify, preview, secrets, wpclient, wpsite};
+use crate::{export, medialibrary, notify, preview, secrets, wpclient, wpsite};
 
 pub fn open(
     parent: &adw::ApplicationWindow,
@@ -84,7 +84,7 @@ pub fn build_content(frontmatter: Rc<RefCell<Frontmatter>>, body: &str, doc_dir:
     // properties dialog, never scanned from the body like the images
     // below) but shown as the list's first row anyway so there's one place
     // to check and trigger every WordPress image upload for the article.
-    let featured_handles = build_featured_image_row(frontmatter.clone(), doc_dir.clone());
+    let featured_handles = build_featured_image_row(frontmatter.clone(), doc_dir.clone(), preview_pane.clone());
     list_box.append(&featured_handles.row);
     let mut row_handles = Vec::with_capacity(item_count);
     for index in 0..item_count {
@@ -414,11 +414,12 @@ struct FeaturedRowHandles {
 
 /// The featured image is a single `Frontmatter` field, not a `MediaItem`
 /// scanned from the body, so it can't reuse `build_row`'s per-item alt-
-/// text/caption editing - it only ever needs an upload button. Once
-/// uploaded, `featured_image` (the pending local path) is cleared in favor
-/// of `featured_media_id` (the resulting WordPress id), so `export.rs`'s
-/// own automatic upload-on-publish never re-uploads it a second time.
-fn build_featured_image_row(frontmatter: Rc<RefCell<Frontmatter>>, doc_dir: Option<PathBuf>) -> FeaturedRowHandles {
+/// text/caption editing - it only ever needs an upload button (plus, now,
+/// a library picker). Once uploaded (or picked from the library),
+/// `featured_image` (the pending local path) is cleared in favor of
+/// `featured_media_id` (the resulting WordPress id), so `export.rs`'s own
+/// automatic upload-on-publish never re-uploads it a second time.
+fn build_featured_image_row(frontmatter: Rc<RefCell<Frontmatter>>, doc_dir: Option<PathBuf>, preview_pane: Rc<preview::PreviewPane>) -> FeaturedRowHandles {
     let row = adw::ActionRow::builder().title(tr("Aufmacherbild")).use_markup(false).build();
     row.set_subtitle(&featured_image_status_text(&frontmatter.borrow()));
 
@@ -427,7 +428,50 @@ fn build_featured_image_row(frontmatter: Rc<RefCell<Frontmatter>>, doc_dir: Opti
     upload_button.set_visible(frontmatter.borrow().featured_image.is_some());
     row.add_suffix(&upload_button);
 
+    // Always visible (unlike `upload_button` above, which only makes sense
+    // once a local file is actually pending) - picking straight from the
+    // library is a valid way to set the featured image from scratch, not
+    // just an alternative to uploading a pending local one. Added after
+    // `upload_button` in the box (see `add_suffix`'s append order) but
+    // built first for `row.add_suffix` to still read naturally left-to-
+    // right; the click handler below just needs `upload_button` already
+    // in scope to hide it once a library pick supersedes a pending upload.
+    let library_button = gtk4::Button::from_icon_name("folder-remote-symbolic");
+    library_button.set_tooltip_text(Some(&tr("Aus Mediathek wählen…")));
+    library_button.set_valign(gtk4::Align::Center);
+    library_button.add_css_class("flat");
+    row.add_suffix(&library_button);
     {
+        let frontmatter = frontmatter.clone();
+        let row = row.clone();
+        let preview_pane = preview_pane.clone();
+        let upload_button = upload_button.clone();
+        library_button.connect_clicked(move |button| {
+            let Some(window) = button.root().and_then(|root| root.downcast::<gtk4::Window>().ok()) else {
+                return;
+            };
+            let frontmatter = frontmatter.clone();
+            let row = row.clone();
+            let preview_pane = preview_pane.clone();
+            let upload_button = upload_button.clone();
+            medialibrary::open(&window, move |item| {
+                {
+                    let mut fm = frontmatter.borrow_mut();
+                    fm.featured_image = None;
+                    fm.featured_media_id = Some(item.id);
+                    if !item.alt_text.trim().is_empty() {
+                        fm.featured_image_alt = Some(item.alt_text.clone());
+                    }
+                }
+                row.set_subtitle(&featured_image_status_text(&frontmatter.borrow()));
+                upload_button.set_visible(false);
+                preview_pane.set_article_header(&frontmatter.borrow());
+            });
+        });
+    }
+
+    {
+        let preview_pane = preview_pane.clone();
         let frontmatter = frontmatter.clone();
         let row = row.clone();
         let upload_button_for_click = upload_button.clone();
@@ -464,6 +508,7 @@ fn build_featured_image_row(frontmatter: Rc<RefCell<Frontmatter>>, doc_dir: Opti
             let frontmatter = frontmatter.clone();
             let row = row.clone();
             let upload_button = upload_button_for_click.clone();
+            let preview_pane = preview_pane.clone();
             glib::timeout_add_local(Duration::from_millis(150), move || match rx.try_recv() {
                 Ok(Ok(media_result)) => {
                     {
@@ -473,6 +518,7 @@ fn build_featured_image_row(frontmatter: Rc<RefCell<Frontmatter>>, doc_dir: Opti
                     }
                     row.set_subtitle(&featured_image_status_text(&frontmatter.borrow()));
                     upload_button.set_visible(false);
+                    preview_pane.set_article_header(&frontmatter.borrow());
                     notify::send("media-upload", &tr("Aufmacherbild hochgeladen"), &tr("Das Aufmacherbild wurde erfolgreich hochgeladen."));
                     glib::ControlFlow::Break
                 }

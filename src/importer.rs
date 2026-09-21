@@ -299,6 +299,11 @@ fn fetch_and_convert(site: &wpsite::SiteConfig, password: &str, post_id: u64) ->
     for id in &detail.tags {
         tags.push(client.get_term_name("tags", *id).map_err(|err| err.to_string())?);
     }
+    // Best-effort only - a deleted/inaccessible author id shouldn't block
+    // opening the rest of an otherwise perfectly importable post, so a
+    // lookup failure just leaves the name blank (the id itself is still
+    // kept below) rather than surfacing as an import error.
+    let author_name = (detail.author != 0).then(|| client.get_user_name(detail.author).ok()).flatten();
 
     let body = gutenberg::gutenberg_to_markdown(&detail.content);
     let is_future = detail.status == "future";
@@ -323,6 +328,8 @@ fn fetch_and_convert(site: &wpsite::SiteConfig, password: &str, post_id: u64) ->
         // after the first local publish.
         wp_content_hash: Some(document::content_hash(&detail.content)),
         featured_media_id: (detail.featured_media != 0).then_some(detail.featured_media),
+        author_id: (detail.author != 0).then_some(detail.author),
+        author_name,
         media: crate::media::reconcile(&[], &body),
     };
 

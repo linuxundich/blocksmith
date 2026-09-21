@@ -3,17 +3,19 @@
 //! synced live into the shared `Frontmatter` cell as the user types, mirroring
 //! how GNOME preferences dialogs apply immediately without an OK button.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::sync::mpsc;
+use std::time::Duration;
 
 use adw::prelude::*;
-use gtk4::gio;
+use gtk4::{gio, glib};
 
 use crate::document::{self, parse_list, Frontmatter, PostStatus};
 use crate::i18n::tr;
-use crate::{aialt, autocomplete, media, preview, tagsuggest, taxonomy, termcache, wpsite};
+use crate::{aialt, autocomplete, media, preview, secrets, tagsuggest, taxonomy, termcache, wpclient, wpsite};
 
 /// Shows/hides an alt-text-length warning icon and sets its tooltip from
 /// `media::alt_text_length_warning` - same non-blocking hint as
@@ -211,6 +213,107 @@ pub fn open(
         .build();
     scheduled_row.set_visible(current.status == PostStatus::Future);
 
+    // "Nicht ändern" (index 0) leaves `author_id` unset, so the post keeps
+    // whichever author it already has on export (see `export.rs`'s own
+    // comment on why an unset `author_id` is never sent at all) - the
+    // options after it are populated once `list_users()` resolves, below.
+    // Starts insensitive with just the cached name (if any) or a loading
+    // placeholder, since the real list isn't known yet; `author_populating`
+    // guards `connect_selected_notify` from firing (and clobbering
+    // `frontmatter.author_id`) while this initial, not-yet-real model is
+    // still showing.
+    let author_options: Rc<RefCell<Vec<wpclient::WpUser>>> = Rc::new(RefCell::new(Vec::new()));
+    let author_populating = Rc::new(Cell::new(true));
+    let initial_author_label = current.author_name.clone().unwrap_or_else(|| tr("Wird geladen …"));
+    let author_row = adw::ComboRow::builder()
+        .title(tr("Autor"))
+        .model(&gtk4::StringList::new(&[tr("Nicht ändern").as_str(), initial_author_label.as_str()]))
+        .selected(if current.author_id.is_some() { 1 } else { 0 })
+        .sensitive(false)
+        .build();
+
+    {
+        let site = site.clone();
+        let author_row = author_row.clone();
+        let author_options = author_options.clone();
+        let author_populating = author_populating.clone();
+        let current_author_id = current.author_id;
+        let current_author_name = current.author_name.clone();
+        let (tx, rx) = mpsc::channel::<Result<Vec<wpclient::WpUser>, String>>();
+        std::thread::spawn(move || {
+            let outcome = if site.url.is_empty() {
+                Err(tr("Keine WordPress-Verbindung eingerichtet."))
+            } else {
+                futures_lite::future::block_on(secrets::load_app_password(&site.url, &site.username))
+                    .map_err(|err| err.to_string())
+                    .and_then(|maybe_password| maybe_password.ok_or_else(|| tr("Kein Application Password im Schlüsselbund gefunden.")))
+                    .and_then(|password| wpclient::Client::new(&site.url, &site.username, &password).list_users().map_err(|err| err.to_string()))
+            };
+            let _ = tx.send(outcome);
+        });
+        glib::timeout_add_local(Duration::from_millis(150), move || match rx.try_recv() {
+            Ok(Ok(mut users)) => {
+                // The currently-set author might not be among `users` (a
+                // deleted account, or one the API's `context=edit` still
+                // can't see for permission reasons) - appended as a
+                // synthetic extra entry from the cached name rather than
+                // silently dropped, so the picker never shows a name-less
+                // "Autor" for a document that had one.
+                let known = current_author_id.is_some_and(|id| users.iter().any(|u| u.id == id));
+                if let (false, Some(id)) = (known, current_author_id) {
+                    users.push(wpclient::WpUser { id, name: current_author_name.clone().unwrap_or_else(|| id.to_string()) });
+                }
+                let mut labels = vec![tr("Nicht ändern")];
+                labels.extend(users.iter().map(|u| u.name.clone()));
+                let label_refs: Vec<&str> = labels.iter().map(String::as_str).collect();
+                let selected = current_author_id
+                    .and_then(|id| users.iter().position(|u| u.id == id))
+                    .map(|pos| pos as u32 + 1)
+                    .unwrap_or(0);
+                *author_options.borrow_mut() = users;
+                author_row.set_model(Some(&gtk4::StringList::new(&label_refs)));
+                author_row.set_selected(selected);
+                author_row.set_sensitive(true);
+                author_populating.set(false);
+                glib::ControlFlow::Break
+            }
+            Ok(Err(err)) => {
+                author_row.set_model(Some(&gtk4::StringList::new(&[&tr("Nicht ändern"), &tr("Fehler beim Laden: {err}").replace("{err}", &err)])));
+                author_row.set_selected(0);
+                author_populating.set(false);
+                glib::ControlFlow::Break
+            }
+            Err(mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
+            Err(mpsc::TryRecvError::Disconnected) => {
+                author_row.set_model(Some(&gtk4::StringList::new(&[&tr("Nicht ändern"), &tr("Interner Fehler: kein Ergebnis vom Ladevorgang.")])));
+                author_row.set_selected(0);
+                author_populating.set(false);
+                glib::ControlFlow::Break
+            }
+        });
+    }
+    {
+        let frontmatter = frontmatter.clone();
+        let author_options = author_options.clone();
+        let author_populating = author_populating.clone();
+        author_row.connect_selected_notify(move |row| {
+            if author_populating.get() {
+                return;
+            }
+            let mut fm = frontmatter.borrow_mut();
+            match row.selected().checked_sub(1).and_then(|index| author_options.borrow().get(index as usize).cloned()) {
+                Some(user) => {
+                    fm.author_id = Some(user.id);
+                    fm.author_name = Some(user.name);
+                }
+                None => {
+                    fm.author_id = None;
+                    fm.author_name = None;
+                }
+            }
+        });
+    }
+
     let refresh_button = gtk4::Button::from_icon_name("view-refresh-symbolic");
     refresh_button.set_tooltip_text(Some(&tr("Kategorien & Tags von WordPress aktualisieren")));
     refresh_button.add_css_class("flat");
@@ -249,6 +352,7 @@ pub fn open(
     group.add(&excerpt_row);
     group.add(&status_row);
     group.add(&scheduled_row);
+    group.add(&author_row);
     group.add(&categories_row);
     group.add(&tags_row);
     group.add(&featured_image_row);

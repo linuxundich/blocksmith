@@ -77,6 +77,7 @@ pub fn build(view: &sourceview5::View, buffer: &sourceview5::Buffer) -> gtk4::Bo
         action_button("document-open-recent-symbolic", &tr("Bestehenden Artikel verlinken…"), "win.insert-post-link"),
         action_button("insert-image-symbolic", &tr("Bild einfügen…"), "win.insert-image"),
         action_button("video-x-generic-symbolic", &tr("Video/Audio einfügen…"), "win.insert-media"),
+        action_button("folder-remote-symbolic", &tr("Aus WordPress-Mediathek einfügen…"), "win.insert-media-library"),
     ]));
 
     toolbar.append(&group(&[label_button("⋯", &tr("„Weiterlesen“-Marker einfügen"), buffer, insert_more_marker)]));

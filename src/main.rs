@@ -31,6 +31,7 @@ mod linkpicker;
 mod llm;
 mod mdpango;
 mod media;
+mod medialibrary;
 mod mediapanel;
 mod notify;
 mod preview;

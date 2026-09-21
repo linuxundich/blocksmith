@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.52.0] - 2026-09-21
+
+### Added
+
+- A post author can now be set: "Artikel-Eigenschaften" has a new
+  "Autor"-Dropdown listing the site's real WordPress users (loaded
+  live when the dialog opens), defaulting to "Nicht ändern" so an
+  unset author never overrides whatever the post already has.
+  Round-trips through import and is sent as the post's `author` field
+  on export, only when explicitly set.
+- An existing WordPress media library image can now be reused instead
+  of always uploading a local file again: a new "Aus Mediathek
+  wählen…" button in the editor toolbar inserts a picked image
+  directly into the article body, and a matching button on the
+  Aufmacherbild row in Medienverwaltung sets it as the featured image.
+  Both open a searchable picker over the site's actual media library.
+
+### Fixed
+
+- Medienverwaltung's "Erneut hochladen" button failed with a
+  "nicht lesbar" error for an already-remote image (one picked from
+  the media library, or from an article opened via "Von WordPress
+  öffnen") - it always tried to read the source as a local file. It
+  now fetches a remote `http(s)://` source over HTTP instead, the
+  same way `aialt.rs`'s vision-model requests already do.
+
 ## [0.51.2] - 2026-09-21
 
 ### Changed

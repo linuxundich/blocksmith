@@ -741,6 +741,17 @@ fn run_export(
         // keep it rather than silently clearing it on re-export.
         payload["featured_media"] = serde_json::json!(id);
     }
+    // Only sent when explicitly set (same "only when set" reasoning as the
+    // RankMath meta fields above) - an unset `author_id` leaves the post's
+    // existing author untouched rather than resetting it to whichever user
+    // the Application Password belongs to. Setting it to a *different*
+    // user requires that Application Password's own user to have
+    // WordPress's `edit_others_posts` capability; a lower-privileged user
+    // gets a normal, readable `rest_cannot_edit_others`-style error back
+    // through the existing error path below, not a silent no-op.
+    if let Some(author_id) = frontmatter.author_id {
+        payload["author"] = serde_json::json!(author_id);
+    }
 
     let result = match frontmatter.wp_post_id {
         Some(id) => client.update_post(id, &payload),
@@ -892,18 +903,32 @@ pub(crate) fn read_image_bytes(source: &str, base_dir: Option<&Path>) -> Result<
     }
 }
 
+/// Uploads (or, for the mediapanel "Erneut hochladen" case, re-uploads) the
+/// image behind `path_str` - a local path/reference, resolved against
+/// `base_dir` the usual way, *or* an already-remote `http(s)://` source
+/// (e.g. one picked from the WordPress media library via
+/// `medialibrary.rs`, or an image opened from an already-imported
+/// article) - fetched over plain HTTP instead of read from disk, via
+/// `read_image_bytes`, the same helper `aialt.rs` already relies on for
+/// this exact local-vs-remote distinction. Re-uploading an already-remote
+/// image is an unusual but valid thing to click "Erneut hochladen" for
+/// (forces a fresh attachment), so this fixes it rather than needing the
+/// mediapanel UI to hide/disable the button for a remote source instead.
 pub(crate) fn upload_image_file(client: &wpclient::Client, path_str: &str, base_dir: Option<&Path>) -> wpclient::Result<wpclient::MediaResult> {
-    let resolved = resolve_local_path(path_str, base_dir);
-    let bytes = std::fs::read(&resolved).map_err(|err| wpclient::ApiError {
-        status: 0,
-        message: tr("Bild {path} nicht lesbar: {err}").replace("{path}", &resolved.display().to_string()).replace("{err}", &err.to_string()),
-    })?;
-    let filename = resolved
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_else(|| "image".to_string());
+    let bytes = read_image_bytes(path_str, base_dir).map_err(|message| wpclient::ApiError { status: 0, message })?;
+    let filename = image_filename(path_str);
     let compressed = crate::imagecompress::maybe_compress(&bytes, &filename);
     client.upload_media(&compressed.bytes, &compressed.filename, compressed.mime_type)
+}
+
+/// The display filename for a `MediaItem.source`/Markdown image
+/// destination - the last path segment for a local path, or a remote
+/// URL's last path segment with any `?query` stripped first (a cache-
+/// busting `?ver=`-style parameter shouldn't end up baked into the
+/// re-uploaded attachment's filename).
+fn image_filename(source: &str) -> String {
+    let without_query = source.split('?').next().unwrap_or(source);
+    without_query.rsplit(['/', '\\']).next().filter(|s| !s.is_empty()).unwrap_or("image").to_string()
 }
 
 pub(crate) fn mime_from_extension(filename: &str) -> &'static str {
@@ -1085,6 +1110,8 @@ mod tests {
             wp_post_id: None,
             wp_content_hash: None,
             featured_media_id: None,
+            author_id: None,
+            author_name: None,
             media: Vec::new(),
         };
 
@@ -1132,6 +1159,8 @@ mod tests {
             wp_post_id: None,
             wp_content_hash: None,
             featured_media_id: None,
+            author_id: None,
+            author_name: None,
             media: Vec::new(),
         };
 
@@ -1180,6 +1209,8 @@ mod tests {
             wp_post_id: None,
             wp_content_hash: None,
             featured_media_id: None,
+            author_id: None,
+            author_name: None,
             media: Vec::new(),
         };
 
@@ -1233,6 +1264,8 @@ mod tests {
             wp_post_id: None,
             wp_content_hash: None,
             featured_media_id: None,
+            author_id: None,
+            author_name: None,
             media: Vec::new(),
         };
 
@@ -1272,5 +1305,17 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("blocksmith-read-image-bytes-missing-test-{}", std::process::id()));
         let err = read_image_bytes("nope.png", Some(&dir)).expect_err("expected a missing file to be an error");
         assert!(err.contains("nope.png"), "{err}");
+    }
+
+    #[test]
+    fn image_filename_takes_the_last_path_segment_of_a_local_path() {
+        assert_eq!(image_filename("cat.png"), "cat.png");
+        assert_eq!(image_filename("photos/2026/cat.png"), "cat.png");
+    }
+
+    #[test]
+    fn image_filename_takes_the_last_path_segment_of_a_remote_url_without_its_query() {
+        assert_eq!(image_filename("https://example.com/wp-content/uploads/2026/01/cat.png?ver=2"), "cat.png");
+        assert_eq!(image_filename("https://example.com/wp-content/uploads/2026/01/cat.png"), "cat.png");
     }
 }

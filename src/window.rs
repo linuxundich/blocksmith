@@ -9,8 +9,8 @@ use gtk4::{gdk, gio, glib};
 use crate::document::{Document, Frontmatter};
 use crate::i18n::tr;
 use crate::{
-    about, aimenu, autosave, browser, chat, codeview, document, editor, export, formatting, imagealt, importer, linkpicker, media, mediapanel, preview,
-    properties, recentfiles, richtext, searchbar, settings, shortcuts, stats, statusbar, termcache, windowstate,
+    about, aimenu, autosave, browser, chat, codeview, document, editor, export, formatting, imagealt, importer, linkpicker, media, medialibrary, mediapanel,
+    preview, properties, recentfiles, richtext, searchbar, settings, shortcuts, stats, statusbar, termcache, windowstate,
 };
 
 const DEBOUNCE_MS: u64 = 250;
@@ -434,6 +434,7 @@ pub fn build(app: &adw::Application, initial_path: Option<PathBuf>) -> adw::Appl
     wire_media_action(&window, &buffer, &current_path, &frontmatter, &preview_pane);
     wire_insert_image_action(&window, &buffer, &current_path);
     wire_insert_media_action(&window, &buffer, &current_path);
+    wire_insert_media_library_action(&window, &buffer, &frontmatter);
     wire_insert_post_link_action(&window, &buffer);
     wire_paste_shortcut(&view, &buffer, &current_path, &toast_overlay);
     wire_drop_target(&view, &buffer, &current_path);
@@ -1205,6 +1206,42 @@ fn wire_insert_media_action(window: &adw::ApplicationWindow, buffer: &sourceview
             let Some(path) = file.path() else { return };
             let reference = document::image_reference(&path, doc_dir.as_deref());
             formatting::insert_image(&buffer, &reference);
+        });
+    });
+    window.add_action(&action);
+}
+
+/// Opens the WordPress media-library picker (`medialibrary::open`) and
+/// inserts the picked image the same way "Bild einfügen" does - then
+/// immediately reconciles the body and patches the resulting `MediaItem`
+/// with the picked item's real WordPress id/URL/alt text. Without this
+/// patch, a plain `media::reconcile` pass would leave the new item's
+/// `wordpress` field `None` (it only knows the image's Markdown reference,
+/// not that it's already been uploaded), which would make Medienverwaltung's
+/// "Zu WordPress hochladen"/"Alle hochladen" try to upload it again as if
+/// it were a brand new local file.
+fn wire_insert_media_library_action(window: &adw::ApplicationWindow, buffer: &sourceview5::Buffer, frontmatter: &Rc<RefCell<Frontmatter>>) {
+    let action = gio::SimpleAction::new("insert-media-library", None);
+    let buffer = buffer.clone();
+    let frontmatter = frontmatter.clone();
+    let window_weak = window.downgrade();
+    action.connect_activate(move |_, _| {
+        let Some(window) = window_weak.upgrade() else {
+            return;
+        };
+        let buffer = buffer.clone();
+        let frontmatter = frontmatter.clone();
+        medialibrary::open(window.upcast_ref::<gtk4::Window>(), move |item| {
+            formatting::insert_image(&buffer, &item.source_url);
+            let text = buffer.text(&buffer.start_iter(), &buffer.end_iter(), false).to_string();
+            let mut fm = frontmatter.borrow_mut();
+            fm.media = media::reconcile(&fm.media, &text);
+            if let Some(media_item) = fm.media.iter_mut().find(|m| m.source == item.source_url) {
+                media_item.wordpress = Some(media::WordPressMediaRef { media_id: item.id, url: item.source_url.clone(), content_hash: String::new() });
+                if !item.alt_text.trim().is_empty() {
+                    media_item.alt = media::AltText::Text(item.alt_text.clone());
+                }
+            }
         });
     });
     window.add_action(&action);

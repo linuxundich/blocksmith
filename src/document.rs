@@ -135,6 +135,21 @@ pub struct Frontmatter {
     /// featured image; this carries the existing remote one through
     /// unchanged on re-export until the user actually sets `featured_image`.
     pub featured_media_id: Option<u64>,
+    /// The WordPress user id to attribute the post to on export - `None`
+    /// leaves it unsent, so the post keeps whichever author it already has
+    /// (a new post: whoever the Application Password belongs to; an
+    /// existing one: whatever it already had), the same "only sent when
+    /// set" reasoning as `rank_math_title` and friends. Setting this to
+    /// another user requires the authenticated Application Password's own
+    /// user to have WordPress's `edit_others_posts` capability (Editor/
+    /// Admin) - a lower-privileged user gets a normal, readable REST API
+    /// error back rather than a silent no-op.
+    pub author_id: Option<u64>,
+    /// The author's display name, cached alongside `author_id` purely so
+    /// "Artikel-Eigenschaften" can show the right name immediately (from
+    /// the saved document) without waiting on a fresh `list_users()` fetch
+    /// every time the dialog opens - not itself sent to WordPress.
+    pub author_name: Option<String>,
     /// Per-image alt text/caption/WordPress-upload metadata (`media.rs`) -
     /// rebuilt from the current body on every properties/media-panel open
     /// via `media::reconcile`, so this only needs to persist what a plain
@@ -226,6 +241,10 @@ pub fn parse(input: &str) -> Document {
                 frontmatter.wp_content_hash = (!value.is_empty()).then(|| unquote(value));
             }
             "wp_featured_media_id" => frontmatter.featured_media_id = value.parse::<u64>().ok(),
+            "author_id" => frontmatter.author_id = value.parse::<u64>().ok(),
+            "author_name" => {
+                frontmatter.author_name = (!value.is_empty()).then(|| unquote(value));
+            }
             "media_json" => frontmatter.media = crate::media::from_json_str(value),
             _ => {}
         }
@@ -284,6 +303,12 @@ pub fn serialize(doc: &Document) -> String {
     }
     if let Some(id) = fm.featured_media_id {
         out.push_str(&format!("wp_featured_media_id: {id}\n"));
+    }
+    if let Some(id) = fm.author_id {
+        out.push_str(&format!("author_id: {id}\n"));
+    }
+    if let Some(name) = &fm.author_name {
+        out.push_str(&format!("author_name: \"{}\"\n", escape(name)));
     }
     if !fm.media.is_empty() {
         out.push_str(&format!("media_json: {}\n", crate::media::to_json_string(&fm.media)));
@@ -614,6 +639,8 @@ mod tests {
                      wp_post_id: 42\n\
                      wp_featured_media_id: 7\n\
                      wp_content_hash: \"abc123\"\n\
+                     author_id: 3\n\
+                     author_name: \"Jane Editor\"\n\
                      ---\n\
                      \n\
                      Body text here.\n";
@@ -632,6 +659,8 @@ mod tests {
         assert_eq!(doc.frontmatter.wp_post_id, Some(42));
         assert_eq!(doc.frontmatter.featured_media_id, Some(7));
         assert_eq!(doc.frontmatter.wp_content_hash.as_deref(), Some("abc123"));
+        assert_eq!(doc.frontmatter.author_id, Some(3));
+        assert_eq!(doc.frontmatter.author_name.as_deref(), Some("Jane Editor"));
         assert_eq!(doc.body, "Body text here.\n");
     }
 
@@ -663,6 +692,8 @@ mod tests {
                 wp_post_id: Some(7),
                 wp_content_hash: Some("deadbeef".to_string()),
                 featured_media_id: Some(99),
+                author_id: Some(3),
+                author_name: Some("Jane Editor".to_string()),
                 media: vec![MediaItem {
                     id: "media-001".to_string(),
                     filename: "cat.png".to_string(),

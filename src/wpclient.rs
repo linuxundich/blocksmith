@@ -84,6 +84,29 @@ pub struct PostSummary {
     pub link: String,
 }
 
+/// A WordPress user, for the "Autor" picker in `properties.rs` -
+/// `/wp-json/wp/v2/users` only returns users who have published a post
+/// unless the request is authenticated with `context=edit` (which
+/// `list_users` always sends, via the same Application Password auth every
+/// other request here already uses).
+#[derive(Debug, Clone)]
+pub struct WpUser {
+    pub id: u64,
+    pub name: String,
+}
+
+/// An existing WordPress media library item, for the "Aus Mediathek
+/// wählen…" picker (`medialibrary.rs`) - deliberately not the full
+/// `MediaDetail` shape (no caption): the picker only needs enough to show
+/// and identify each item, not edit it.
+#[derive(Debug, Clone)]
+pub struct WpMediaItem {
+    pub id: u64,
+    pub source_url: String,
+    pub title: String,
+    pub alt_text: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct PostDetail {
     pub id: u64,
@@ -110,6 +133,11 @@ pub struct PostDetail {
     pub rank_math_focus_keyword: String,
     /// `0` means no featured image is set.
     pub featured_media: u64,
+    /// The post's author user id - `0` is a real, if unlikely, WordPress
+    /// user id (`0` conventionally means "no author"/deleted user), same
+    /// sentinel convention as `featured_media` above rather than an
+    /// `Option`.
+    pub author: u64,
     /// Site-local `"YYYY-MM-DDTHH:MM:SS"` - the post's publish date, or for
     /// a `status == "future"` post, its scheduled publish date/time.
     pub date: String,
@@ -378,6 +406,17 @@ impl Client {
             .collect())
     }
 
+    /// Resolves a WordPress user id back to their display name - same
+    /// shape as `get_term_name`, used when importing an existing post
+    /// (`importer.rs`) so its author's name shows immediately in "Artikel-
+    /// Eigenschaften" without waiting on that dialog's own `list_users()`
+    /// fetch.
+    pub fn get_user_name(&self, id: u64) -> Result<String> {
+        let url = format!("{}?_fields=name", self.endpoint(&format!("users/{id}")));
+        let value = self.get_json(&url)?;
+        Ok(value.get("name").and_then(Value::as_str).unwrap_or_default().to_string())
+    }
+
     /// Renames an existing taxonomy term in place.
     pub fn rename_term(&self, taxonomy: &str, id: u64, new_name: &str) -> Result<()> {
         let mut response = self
@@ -447,7 +486,7 @@ impl Client {
     /// Markdown.
     pub fn get_post(&self, id: u64) -> Result<PostDetail> {
         let url = format!(
-            "{}?context=edit&_fields=id,title,content,excerpt,status,slug,categories,tags,featured_media,date,meta,link",
+            "{}?context=edit&_fields=id,title,content,excerpt,status,slug,categories,tags,featured_media,author,date,meta,link",
             self.endpoint(&format!("posts/{id}"))
         );
         let value = self.get_json(&url)?;
@@ -473,9 +512,62 @@ impl Client {
             categories: u64_array("categories"),
             tags: u64_array("tags"),
             featured_media: value.get("featured_media").and_then(Value::as_u64).unwrap_or(0),
+            author: value.get("author").and_then(Value::as_u64).unwrap_or(0),
             date: value.get("date").and_then(Value::as_str).unwrap_or_default().to_string(),
             link: value.get("link").and_then(Value::as_str).unwrap_or_default().to_string(),
         })
+    }
+
+    /// Lists the site's WordPress users, for the "Autor" picker in
+    /// "Artikel-Eigenschaften" - `context=edit` so the response includes
+    /// every user the authenticated Application Password can see, not just
+    /// ones with a published post (the REST API's default, unauthenticated
+    /// behavior for this endpoint).
+    pub fn list_users(&self) -> Result<Vec<WpUser>> {
+        let items = self.get_all_pages("users", "context=edit&orderby=name&_fields=id,name")?;
+        Ok(items
+            .iter()
+            .filter_map(|item| {
+                Some(WpUser {
+                    id: item.get("id")?.as_u64()?,
+                    name: item.get("name").and_then(Value::as_str)?.to_string(),
+                })
+            })
+            .collect())
+    }
+
+    /// Lists existing image attachments in the WordPress media library, most
+    /// recent first, for the "Aus Mediathek wählen…" picker - `search`
+    /// narrows by filename/title (WordPress's own `?search=` on this
+    /// endpoint). Doesn't paginate beyond the first 60, same reasoning as
+    /// `list_posts`: fine for finding a recent/known upload, and a media
+    /// library can run into the thousands where full pagination would be
+    /// slow and mostly pointless for this picker's actual use.
+    pub fn list_media(&self, search: Option<&str>) -> Result<Vec<WpMediaItem>> {
+        let mut url = format!(
+            "{}?per_page=60&orderby=date&order=desc&media_type=image&_fields=id,source_url,title,alt_text",
+            self.endpoint("media")
+        );
+        if let Some(search) = search.filter(|s| !s.trim().is_empty()) {
+            url.push_str(&format!("&search={}", percent_encode(search.trim())));
+        }
+        let value = self.get_json(&url)?;
+        Ok(value
+            .as_array()
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|item| {
+                        Some(WpMediaItem {
+                            id: item.get("id")?.as_u64()?,
+                            source_url: item.get("source_url").and_then(Value::as_str)?.to_string(),
+                            title: post_title(item),
+                            alt_text: item.get("alt_text").and_then(Value::as_str).unwrap_or_default().to_string(),
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default())
     }
 
     fn send_post_payload(&self, url: String, payload: &Value) -> Result<PostResult> {
@@ -589,6 +681,45 @@ mod tests {
         let categories = client.list_term_names("categories").expect("list_term_names(categories) failed");
         assert!(!categories.is_empty(), "expected at least one existing category on the real site");
         assert!(categories.iter().any(|c| c == "Allgemein"), "expected the real site's known 'Allgemein' category, got {categories:?}");
+    }
+
+    /// Backs the "Autor" picker in `properties.rs` - checks the Application
+    /// Password's own user comes back with a real id/name (it's always a
+    /// valid, listable user of the site it belongs to), and that
+    /// `get_user_name` resolves that same id back to the same name.
+    #[test]
+    #[ignore]
+    fn list_users_against_real_site() {
+        let config = wpsite::load();
+        assert!(!config.url.is_empty(), "no WordPress site configured (run the connection dialog first)");
+        let password = futures_lite::future::block_on(secrets::load_app_password(&config.url, &config.username))
+            .expect("keyring lookup failed")
+            .expect("no application password stored for this site/user");
+        let client = Client::new(&config.url, &config.username, &password);
+
+        let users = client.list_users().expect("list_users failed");
+        assert!(!users.is_empty(), "expected at least one WordPress user on the real site");
+        let matching_username = users.iter().find(|u| u.name.eq_ignore_ascii_case(&config.username) || !u.name.is_empty());
+        let user = matching_username.expect("expected at least one user with a non-empty name");
+        let name = client.get_user_name(user.id).expect("get_user_name failed");
+        assert_eq!(name, user.name);
+    }
+
+    /// Backs the "Aus Mediathek wählen…" picker (`medialibrary.rs`) - checks
+    /// it gets real media items back, each with an actual `source_url`.
+    #[test]
+    #[ignore]
+    fn list_media_against_real_site() {
+        let config = wpsite::load();
+        assert!(!config.url.is_empty(), "no WordPress site configured (run the connection dialog first)");
+        let password = futures_lite::future::block_on(secrets::load_app_password(&config.url, &config.username))
+            .expect("keyring lookup failed")
+            .expect("no application password stored for this site/user");
+        let client = Client::new(&config.url, &config.username, &password);
+
+        let items = client.list_media(None).expect("list_media failed");
+        assert!(!items.is_empty(), "expected at least one existing media item on the real site");
+        assert!(items.iter().all(|item| !item.source_url.is_empty()), "expected every media item to have a source_url: {items:?}");
     }
 
     /// Exercises create -> resolve/create term -> media upload -> update ->
