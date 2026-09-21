@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.51.2] - 2026-09-21
+
+### Changed
+
+- The article header's categories and tags now share one row - categories
+  on the left, tags on the right - instead of stacking on two separate
+  lines.
+
 ## [0.51.1] - 2026-09-21
 
 ### Changed

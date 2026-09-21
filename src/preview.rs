@@ -916,20 +916,24 @@ const BADGE_CSS: &str = ".img-wrap { position: relative; display: inline-block; 
 /// styles' light/dark variants. `text-align`/`text-indent` are reset
 /// explicitly on the title/excerpt since Classic's `body { text-align:
 /// justify }` / `p { text-indent: 1.5em }` would otherwise bleed into them.
-/// Categories and tags each get their own `.article-header-taxonomy` flex
-/// row (`gap`, not per-chip margins, so wrapping stays even at any width)
-/// and share `.article-header-chip`'s pill shape - `.article-header-tag`
-/// only swaps the fill for an outline, so tags read as a visually distinct
-/// but equally deliberate group, not unstyled leftover text next to a
-/// "real" filled category chip.
+/// Categories and tags share one `.article-header-taxonomy` row - each its
+/// own `.article-header-categories`/`.article-header-tags` flex group
+/// (`gap`, not per-chip margins, so wrapping stays even at any width),
+/// with `justify-content: space-between` on the shared row pushing
+/// categories to the start and tags to the end when both groups are
+/// present (a lone group just sits at the start - nothing to be "the other
+/// side" of). Both share `.article-header-chip`'s pill shape -
+/// `.article-header-tag` only swaps the fill for an outline, so tags read
+/// as a visually distinct but equally deliberate group, not unstyled
+/// leftover text next to a "real" filled category chip.
 const HEADER_CSS: &str = ".article-header { margin: 0 0 2.5rem 0; padding-bottom: 1.75rem; border-bottom: 1px solid rgba(127, 127, 127, 0.25); }
 .article-header-image { display: block; width: 100%; max-height: 22rem; object-fit: cover; border-radius: 8px; margin: 0 0 1.25rem 0; }
 .article-header-title { font-size: 2rem; font-weight: 700; line-height: 1.25; margin: 0 0 .6rem 0; text-align: left; text-indent: 0; }
 .article-header-excerpt { font-size: 1.1em; opacity: .75; margin: 0 0 1rem 0; text-align: left; text-indent: 0; }
 .article-header-meta { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; font-size: .82em; opacity: .6; margin: 0 0 1rem 0; }
 .article-header-meta a { opacity: 1; overflow-wrap: anywhere; }
-.article-header-taxonomy { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; margin: 0 0 .5rem 0; }
-.article-header-taxonomy:last-child { margin-bottom: 0; }
+.article-header-taxonomy { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: .5rem 1rem; margin: 0; }
+.article-header-categories, .article-header-tags { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; }
 .article-header-chip { display: inline-flex; align-items: center; background: rgba(127, 127, 127, 0.18); border-radius: 999px; padding: .2rem .75rem; font-size: .78em; font-weight: 500; line-height: 1.4; white-space: nowrap; }
 .article-header-tag { background: transparent; border: 1px solid rgba(127, 127, 127, 0.35); }";
 
@@ -966,17 +970,21 @@ fn render_header(frontmatter: &Frontmatter) -> String {
     }
     html.push_str(&format!("<div class=\"article-header-meta\">{}</div>", meta_parts.join(" · ")));
 
-    if !frontmatter.categories.is_empty() {
-        let chips: String = frontmatter.categories.iter().map(|name| format!("<span class=\"article-header-chip\">{}</span>", glib::markup_escape_text(name))).collect();
-        html.push_str(&format!("<div class=\"article-header-taxonomy\">{chips}</div>"));
-    }
-    if !frontmatter.tags.is_empty() {
-        let chips: String = frontmatter
-            .tags
-            .iter()
-            .map(|name| format!("<span class=\"article-header-chip article-header-tag\">#{}</span>", glib::markup_escape_text(name)))
-            .collect();
-        html.push_str(&format!("<div class=\"article-header-taxonomy\">{chips}</div>"));
+    if !frontmatter.categories.is_empty() || !frontmatter.tags.is_empty() {
+        html.push_str("<div class=\"article-header-taxonomy\">");
+        if !frontmatter.categories.is_empty() {
+            let chips: String = frontmatter.categories.iter().map(|name| format!("<span class=\"article-header-chip\">{}</span>", glib::markup_escape_text(name))).collect();
+            html.push_str(&format!("<div class=\"article-header-categories\">{chips}</div>"));
+        }
+        if !frontmatter.tags.is_empty() {
+            let chips: String = frontmatter
+                .tags
+                .iter()
+                .map(|name| format!("<span class=\"article-header-chip article-header-tag\">#{}</span>", glib::markup_escape_text(name)))
+                .collect();
+            html.push_str(&format!("<div class=\"article-header-tags\">{chips}</div>"));
+        }
+        html.push_str("</div>");
     }
 
     html.push_str("</header>");
@@ -1502,6 +1510,21 @@ mod tests {
         assert!(html.contains(">GNU/Linux<"), "{html}");
         assert!(html.contains(">#gnome<"), "{html}");
         assert!(html.contains(">#rust<"), "{html}");
+    }
+
+    #[test]
+    fn render_header_puts_categories_and_tags_in_one_shared_row() {
+        let frontmatter = Frontmatter {
+            title: "Ein Testartikel".to_string(),
+            categories: vec!["GNU/Linux".to_string()],
+            tags: vec!["gnome".to_string()],
+            ..Frontmatter::default()
+        };
+        let html = render_header(&frontmatter);
+        let taxonomy_rows = html.matches("class=\"article-header-taxonomy\"").count();
+        assert_eq!(taxonomy_rows, 1, "categories and tags must share one row, not two separate ones: {html}");
+        assert!(html.contains("<div class=\"article-header-categories\">"), "{html}");
+        assert!(html.contains("<div class=\"article-header-tags\">"), "{html}");
     }
 
     #[test]
