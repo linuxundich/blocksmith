@@ -247,7 +247,7 @@ dependencies = [
 
 [[package]]
 name = "blocksmith"
-version = "0.50.7"
+version = "0.50.8"
 dependencies = [
  "base64",
  "futures-lite",

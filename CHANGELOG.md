@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.50.8] - 2026-09-21
+
+### Changed
+
+- Consolidated "Bildbeschriftung bearbeiten…", "KI-Alternativtext
+  generieren…" and "KI-Bildunterschrift generieren…" into a single dialog.
+  The editor and Vorschau context menus now offer just "Bildbeschriftung
+  bearbeiten…", which gained a "generate with AI" button next to each of
+  the Alt-Text and Bildunterschrift fields (shown only for an actual
+  image, not video/audio) instead of opening a separate dialog.
+
 ## [0.50.7] - 2026-09-21
 
 ### Fixed

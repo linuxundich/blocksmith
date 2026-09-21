@@ -12,9 +12,12 @@
 //! same live-update trick `aimenu.rs` already uses for its custom-prompts
 //! section - so the item only ever appears when it would actually do
 //! something, instead of always showing and popping an explanation dialog
-//! when clicked on a line with nothing to act on. "KI-Alternativtext
-//! generieren…" additionally only appears for an actual image (not
-//! video/audio), since vision-based generation makes no sense for those.
+//! when clicked on a line with nothing to act on. The dialog itself
+//! (`open_dialog_for_index`) also offers "generate with AI" suffix buttons
+//! for both fields, folded in rather than kept as separate menu
+//! items/dialogs (`aialt::generate`/`aicaption::generate`) - each only
+//! shown for an actual image (not video/audio), since vision-based
+//! generation makes no sense for those.
 //! "Where the click landed" comes from the buffer's insertion mark at the
 //! moment the menu item is built/activated - but a plain right-click does
 //! NOT reposition that mark on its own (confirmed live: it stayed wherever
@@ -56,19 +59,16 @@ fn update_alt_length_warning(icon: &gtk4::Image, text: &str) {
 fn rebuild_menu_for_line(menu: &gio::Menu, buffer: &sourceview5::Buffer, line: i32) {
     menu.remove_all();
     let body = buffer.text(&buffer.start_iter(), &buffer.end_iter(), false).to_string();
-    let Some(source) = image_source_on_line(&body, line) else { return };
-    menu.append(Some(&tr("Bildbeschriftung bearbeiten…")), Some("imagealt.set"));
-    if document::media_reference_kind(&source) == document::MediaReferenceKind::Image {
-        menu.append(Some(&tr("KI-Alternativtext generieren…")), Some("imagealt.generate-ai"));
-        menu.append(Some(&tr("KI-Bildunterschrift generieren…")), Some("imagealt.generate-caption"));
+    if image_source_on_line(&body, line).is_none() {
+        return;
     }
+    menu.append(Some(&tr("Bildbeschriftung bearbeiten…")), Some("imagealt.set"));
 }
 
 /// Moves the cursor to wherever a secondary click lands (see the module
 /// docs for why this can't just rely on default `Gtk.TextView` behavior),
 /// rebuilds the returned menu section from that now-accurate position, and
-/// wires the `imagealt.set`/`imagealt.generate-ai` actions the section's
-/// items invoke.
+/// wires the `imagealt.set` action the section's item invokes.
 pub fn install(
     view: &sourceview5::View,
     buffer: &sourceview5::Buffer,
@@ -117,140 +117,9 @@ pub fn install(
     }
     actions.add_action(&set_action);
 
-    let generate_ai_action = gio::SimpleAction::new("generate-ai", None);
-    {
-        let buffer = buffer.clone();
-        let frontmatter = frontmatter.clone();
-        let current_path = current_path.clone();
-        let preview_pane = preview_pane.clone();
-        let view_weak = view.downgrade();
-        generate_ai_action.connect_activate(move |_, _| {
-            let Some(view) = view_weak.upgrade() else { return };
-            let Some(window) = view.root().and_then(|root| root.downcast::<gtk4::Window>().ok()) else {
-                return;
-            };
-            let line = buffer.iter_at_mark(&buffer.get_insert()).line();
-            let doc_dir = current_path.borrow().as_ref().and_then(|p| p.parent().map(|d| d.to_path_buf()));
-            generate_ai_for_line(&window, &buffer, &frontmatter, line, doc_dir, &preview_pane);
-        });
-    }
-    actions.add_action(&generate_ai_action);
-
-    let generate_caption_action = gio::SimpleAction::new("generate-caption", None);
-    {
-        let buffer = buffer.clone();
-        let frontmatter = frontmatter.clone();
-        let current_path = current_path.clone();
-        let preview_pane = preview_pane.clone();
-        let view_weak = view.downgrade();
-        generate_caption_action.connect_activate(move |_, _| {
-            let Some(view) = view_weak.upgrade() else { return };
-            let Some(window) = view.root().and_then(|root| root.downcast::<gtk4::Window>().ok()) else {
-                return;
-            };
-            let line = buffer.iter_at_mark(&buffer.get_insert()).line();
-            let doc_dir = current_path.borrow().as_ref().and_then(|p| p.parent().map(|d| d.to_path_buf()));
-            generate_caption_for_line(&window, &buffer, &frontmatter, line, doc_dir, &preview_pane);
-        });
-    }
-    actions.add_action(&generate_caption_action);
-
     view.insert_action_group("imagealt", Some(&actions));
 
     menu
-}
-
-/// Same image-on-line lookup + reconcile as `open_for_line`, but hands off
-/// to `aialt::open`'s AI-generation review dialog instead of the plain
-/// manual-entry one.
-fn generate_ai_for_line(
-    window: &gtk4::Window,
-    buffer: &sourceview5::Buffer,
-    frontmatter: &Rc<RefCell<Frontmatter>>,
-    line: i32,
-    doc_dir: Option<PathBuf>,
-    preview_pane: &Rc<preview::PreviewPane>,
-) {
-    let body = buffer.text(&buffer.start_iter(), &buffer.end_iter(), false).to_string();
-
-    // AI alt-text generation is vision-model-based and makes no sense for a
-    // video/audio reference - `![]()` syntax is reused for all local media
-    // (see `crates/gutenberg`'s `as_lone_media`), so a right-click here can
-    // land on either.
-    let is_image = |source: &String| document::media_reference_kind(source) == document::MediaReferenceKind::Image;
-    let Some(source) = image_source_on_line(&body, line).filter(is_image) else {
-        let alert = adw::AlertDialog::builder()
-            .heading(tr("Keine Bildreferenz gefunden"))
-            .body(tr("Für den KI-Alternativtext bitte mit der rechten Maustaste auf eine Zeile mit einem Bild (![Beschreibung](bild.png)) klicken."))
-            .build();
-        alert.add_response("ok", &tr("OK"));
-        alert.present(Some(window));
-        return;
-    };
-
-    {
-        let mut fm = frontmatter.borrow_mut();
-        fm.media = media::reconcile(&fm.media, &body);
-    }
-    let Some(index) = frontmatter.borrow().media.iter().position(|item| item.source == source) else {
-        return;
-    };
-    let title = frontmatter.borrow().media[index].filename.clone();
-
-    let frontmatter = frontmatter.clone();
-    let preview_pane = preview_pane.clone();
-    aialt::open(window, title, source, doc_dir, move |text| {
-        if let Some(item) = frontmatter.borrow_mut().media.get_mut(index) {
-            item.alt = if text.is_empty() { AltText::Empty } else { AltText::Text(text) };
-        }
-        preview_pane.refresh_media(&frontmatter.borrow().media);
-    });
-}
-
-/// Same image-on-line lookup + reconcile as `generate_ai_for_line`, but
-/// hands off to `aicaption::open` and writes the result into
-/// `MediaItem.caption` instead of `.alt` - also, unlike alt text, pulls
-/// `surrounding_context` from the body so the caption can be generated
-/// with editorial awareness of the article, not the image in isolation.
-fn generate_caption_for_line(
-    window: &gtk4::Window,
-    buffer: &sourceview5::Buffer,
-    frontmatter: &Rc<RefCell<Frontmatter>>,
-    line: i32,
-    doc_dir: Option<PathBuf>,
-    preview_pane: &Rc<preview::PreviewPane>,
-) {
-    let body = buffer.text(&buffer.start_iter(), &buffer.end_iter(), false).to_string();
-
-    let is_image = |source: &String| document::media_reference_kind(source) == document::MediaReferenceKind::Image;
-    let Some(source) = image_source_on_line(&body, line).filter(is_image) else {
-        let alert = adw::AlertDialog::builder()
-            .heading(tr("Keine Bildreferenz gefunden"))
-            .body(tr("Für die KI-Bildunterschrift bitte mit der rechten Maustaste auf eine Zeile mit einem Bild (![Beschreibung](bild.png)) klicken."))
-            .build();
-        alert.add_response("ok", &tr("OK"));
-        alert.present(Some(window));
-        return;
-    };
-
-    {
-        let mut fm = frontmatter.borrow_mut();
-        fm.media = media::reconcile(&fm.media, &body);
-    }
-    let Some(index) = frontmatter.borrow().media.iter().position(|item| item.source == source) else {
-        return;
-    };
-    let title = frontmatter.borrow().media[index].filename.clone();
-    let context = surrounding_context(&body, &source);
-
-    let frontmatter = frontmatter.clone();
-    let preview_pane = preview_pane.clone();
-    aicaption::open(window, title, source, context, doc_dir, move |text| {
-        if let Some(item) = frontmatter.borrow_mut().media.get_mut(index) {
-            item.caption = (!text.is_empty()).then_some(text);
-        }
-        preview_pane.refresh_media(&frontmatter.borrow().media);
-    });
 }
 
 /// Plain-text context for the AI caption prompt (`aicaption.rs`): the
@@ -401,12 +270,22 @@ fn open_for_line(window: &gtk4::Window, buffer: &sourceview5::Buffer, frontmatte
 /// still resolves to a real file; a remote source (already uploaded, or
 /// opened from WordPress) has nothing to load without a network fetch
 /// this dialog deliberately never makes.
+///
+/// Both fields also get a "generate with AI" suffix button
+/// (`aialt::generate`/`aicaption::generate`) - folded in here rather than
+/// kept as the separate "KI-Alternativtext generieren…"/"KI-Bildunterschrift
+/// generieren…" menu items/dialogs this replaced, by explicit request, so
+/// the whole per-image workflow lives in one place. Only shown for an
+/// actual image (not video/audio), since vision-based generation makes no
+/// sense for those - `![]()` syntax is reused for all local media (see
+/// `crates/gutenberg`'s `as_lone_media`).
 pub fn open_dialog_for_index(window: &gtk4::Window, frontmatter: &Rc<RefCell<Frontmatter>>, index: usize, buffer: &sourceview5::Buffer, doc_dir: Option<PathBuf>, preview_pane: &Rc<preview::PreviewPane>) {
     let Some(item) = frontmatter.borrow().media.get(index).cloned() else {
         return;
     };
     let markdown = buffer.text(&buffer.start_iter(), &buffer.end_iter(), false).to_string();
     let (markdown_caption, markdown_alt) = media::markdown_image_text_for(&markdown, &item.source);
+    let is_image = document::media_reference_kind(&item.source) == document::MediaReferenceKind::Image;
 
     let content = gtk4::Box::builder().orientation(gtk4::Orientation::Vertical).spacing(18).margin_top(18).margin_bottom(18).margin_start(18).margin_end(18).build();
 
@@ -484,6 +363,48 @@ pub fn open_dialog_for_index(window: &gtk4::Window, frontmatter: &Rc<RefCell<Fro
     let alt_entry_row = adw::EntryRow::builder().title(tr("Alternativtext")).text(initial_alt_text.as_str()).build();
     alt_entry_row.set_visible(alt_switch_row.is_active());
 
+    // Shared feedback for either "generate with AI" button below - only
+    // one can run at a time in practice (both disable themselves while
+    // busy), so one label is enough.
+    let ai_status_label = gtk4::Label::builder().wrap(true).xalign(0.0).build();
+    ai_status_label.add_css_class("dim-label");
+    ai_status_label.set_visible(false);
+
+    if is_image {
+        let ai_alt_button = gtk4::Button::from_icon_name("chat-message-new-symbolic");
+        ai_alt_button.set_tooltip_text(Some(&tr("KI-Alternativtext generieren…")));
+        ai_alt_button.set_valign(gtk4::Align::Center);
+        ai_alt_button.add_css_class("flat");
+        alt_entry_row.add_suffix(&ai_alt_button);
+
+        let source = item.source.clone();
+        let doc_dir = doc_dir.clone();
+        let ai_alt_button_for_click = ai_alt_button.clone();
+        let alt_switch_row = alt_switch_row.clone();
+        let alt_entry_row = alt_entry_row.clone();
+        let ai_status_label = ai_status_label.clone();
+        ai_alt_button.connect_clicked(move |_| {
+            ai_alt_button_for_click.set_sensitive(false);
+            ai_status_label.set_label(&tr("Wird generiert …"));
+            ai_status_label.set_visible(true);
+            let ai_alt_button_for_click = ai_alt_button_for_click.clone();
+            let alt_switch_row = alt_switch_row.clone();
+            let alt_entry_row = alt_entry_row.clone();
+            let ai_status_label = ai_status_label.clone();
+            aialt::generate(&source, doc_dir.clone(), move |result| {
+                match result {
+                    Ok(text) => {
+                        alt_switch_row.set_active(true);
+                        alt_entry_row.set_text(&text);
+                        ai_status_label.set_visible(false);
+                    }
+                    Err(err) => ai_status_label.set_label(&tr("Fehler: {err}").replace("{err}", &err)),
+                }
+                ai_alt_button_for_click.set_sensitive(true);
+            });
+        });
+    }
+
     // Non-blocking hint for an unusually long alt text (see
     // `media::alt_text_length_warning`) - only ever a suffix icon with a
     // tooltip, never something that stops the dialog from being closed, since
@@ -553,6 +474,39 @@ pub fn open_dialog_for_index(window: &gtk4::Window, frontmatter: &Rc<RefCell<Fro
         });
     }
 
+    if is_image {
+        let ai_caption_button = gtk4::Button::from_icon_name("chat-message-new-symbolic");
+        ai_caption_button.set_tooltip_text(Some(&tr("KI-Bildunterschrift generieren…")));
+        ai_caption_button.set_valign(gtk4::Align::Center);
+        ai_caption_button.add_css_class("flat");
+        caption_row.add_suffix(&ai_caption_button);
+
+        let source = item.source.clone();
+        let context = surrounding_context(&markdown, &item.source);
+        let doc_dir = doc_dir.clone();
+        let ai_caption_button_for_click = ai_caption_button.clone();
+        let caption_row_for_result = caption_row.clone();
+        let ai_status_label = ai_status_label.clone();
+        ai_caption_button.connect_clicked(move |_| {
+            ai_caption_button_for_click.set_sensitive(false);
+            ai_status_label.set_label(&tr("Wird generiert …"));
+            ai_status_label.set_visible(true);
+            let ai_caption_button_for_click = ai_caption_button_for_click.clone();
+            let caption_row_for_result = caption_row_for_result.clone();
+            let ai_status_label = ai_status_label.clone();
+            aicaption::generate(&source, &context, doc_dir.clone(), move |result| {
+                match result {
+                    Ok(text) => {
+                        caption_row_for_result.set_text(&text);
+                        ai_status_label.set_visible(false);
+                    }
+                    Err(err) => ai_status_label.set_label(&tr("Fehler: {err}").replace("{err}", &err)),
+                }
+                ai_caption_button_for_click.set_sensitive(true);
+            });
+        });
+    }
+
     let caption_group = adw::PreferencesGroup::builder()
         .title(tr("Bildunterschrift"))
         .description(tr("Sichtbarer Text, der im Artikel unter dem Bild angezeigt wird."))
@@ -561,6 +515,7 @@ pub fn open_dialog_for_index(window: &gtk4::Window, frontmatter: &Rc<RefCell<Fro
 
     content.append(&alt_group);
     content.append(&caption_group);
+    content.append(&ai_status_label);
 
     let clamp = adw::Clamp::builder().maximum_size(420).child(&content).build();
     // `propagate_natural_height` lets the scroller size to fit everything

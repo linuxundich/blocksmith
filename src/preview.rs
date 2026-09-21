@@ -38,7 +38,7 @@ use webkit6::prelude::*;
 use crate::document::{self, Frontmatter};
 use crate::fontutil;
 use crate::i18n::tr;
-use crate::media::{self, AltText, MediaItem};
+use crate::media::{self, MediaItem};
 
 /// Name registered on the `WebView`'s `UserContentManager` for the reverse
 /// (preview -> editor) leg of scroll-sync - see `PreviewPane::connect_scroll`.
@@ -266,17 +266,16 @@ impl PreviewPane {
         self.rerender();
     }
 
-    /// Adds "Bildbeschriftung bearbeiten…" and "KI-Alternativtext
-    /// generieren…" items to the context menu when right-clicking directly
-    /// on a rendered image - the preview-side entry points into
-    /// `imagealt::open_dialog_for_index` (the plain manual editor) and
-    /// `aialt::open` (the AI-assisted one); the editor-side equivalents are
-    /// `imagealt.rs`'s own context-menu items, triggered from the image's
-    /// `![alt](src)` line instead. A second `context-menu` handler
-    /// alongside the one `new()` already installs (which only trims the
-    /// default navigation items), since `frontmatter` isn't available yet
-    /// at construction time - both handlers run against the same
-    /// `ContextMenu` on every right-click.
+    /// Adds a "Bildbeschriftung bearbeiten…" item to the context menu when
+    /// right-clicking directly on a rendered image - the preview-side entry
+    /// point into `imagealt::open_dialog_for_index`, the same consolidated
+    /// dialog (manual entry plus AI-generate buttons for both fields) the
+    /// editor-side context menu's own "Bildbeschriftung bearbeiten…" item
+    /// opens (`imagealt.rs`), triggered from the image's `![alt](src)` line
+    /// instead. A second `context-menu` handler alongside the one `new()`
+    /// already installs (which only trims the default navigation items),
+    /// since `frontmatter` isn't available yet at construction time - both
+    /// handlers run against the same `ContextMenu` on every right-click.
     ///
     /// Takes `&Rc<Self>` rather than `&self` - both dialogs need to hold
     /// onto this same pane (as an owned `Rc`) to refresh its badges/caption
@@ -318,58 +317,6 @@ impl PreviewPane {
             }
             let edit_item = webkit6::ContextMenuItem::from_gaction(&edit_action, &tr("Bildbeschriftung bearbeiten…"), None);
             context_menu.append(&edit_item);
-
-            let action = gio::SimpleAction::new("generate-ai-alt-text", None);
-            {
-                let frontmatter = frontmatter.clone();
-                let window = window.clone();
-                let doc_dir_value = doc_dir_value.clone();
-                let preview_pane = preview_pane.clone();
-                action.connect_activate(move |_, _| {
-                    let (title, source) = {
-                        let fm = frontmatter.borrow();
-                        let Some(item) = fm.media.get(index) else { return };
-                        (item.filename.clone(), item.source.clone())
-                    };
-                    let frontmatter = frontmatter.clone();
-                    let preview_pane = preview_pane.clone();
-                    crate::aialt::open(&window, title, source, doc_dir_value.clone(), move |text| {
-                        if let Some(item) = frontmatter.borrow_mut().media.get_mut(index) {
-                            item.alt = if text.is_empty() { AltText::Empty } else { AltText::Text(text) };
-                        }
-                        preview_pane.refresh_media(&frontmatter.borrow().media);
-                    });
-                });
-            }
-            let item = webkit6::ContextMenuItem::from_gaction(&action, &tr("KI-Alternativtext generieren…"), None);
-            context_menu.append(&item);
-
-            let caption_action = gio::SimpleAction::new("generate-ai-caption", None);
-            {
-                let frontmatter = frontmatter.clone();
-                let window = window.clone();
-                let doc_dir_value = doc_dir_value.clone();
-                let last_markdown = last_markdown.clone();
-                let preview_pane = preview_pane.clone();
-                caption_action.connect_activate(move |_, _| {
-                    let (title, source) = {
-                        let fm = frontmatter.borrow();
-                        let Some(item) = fm.media.get(index) else { return };
-                        (item.filename.clone(), item.source.clone())
-                    };
-                    let context = crate::imagealt::surrounding_context(&last_markdown.borrow(), &source);
-                    let frontmatter = frontmatter.clone();
-                    let preview_pane = preview_pane.clone();
-                    crate::aicaption::open(&window, title, source, context, doc_dir_value.clone(), move |text| {
-                        if let Some(item) = frontmatter.borrow_mut().media.get_mut(index) {
-                            item.caption = (!text.is_empty()).then_some(text);
-                        }
-                        preview_pane.refresh_media(&frontmatter.borrow().media);
-                    });
-                });
-            }
-            let caption_item = webkit6::ContextMenuItem::from_gaction(&caption_action, &tr("KI-Bildunterschrift generieren…"), None);
-            context_menu.append(&caption_item);
             false
         });
     }

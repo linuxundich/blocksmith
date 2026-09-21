@@ -194,19 +194,26 @@ pub fn open(window: &gtk4::Window, title: String, source: String, doc_dir: Optio
     {
         let source = source.clone();
         let doc_dir = doc_dir.clone();
-        let level_row = level_row.clone();
         let generate_button_for_click = generate_button.clone();
         let status_label = status_label.clone();
         let text_buffer = text_buffer.clone();
         generate_button.connect_clicked(move |_| {
-            let level = DetailLevel::ALL[level_row.selected() as usize];
-            // `source` doubles as the mime-detection input - it always has
-            // a real file extension (a bare filename for a body image, a
-            // local path for the featured image), and
-            // `export::mime_from_extension` only ever looks at the part
-            // after the last `.` anyway, so a full path works the same as
-            // a bare filename here.
-            run_generation(level, &source, &source, doc_dir.clone(), &generate_button_for_click, &status_label, &text_buffer);
+            generate_button_for_click.set_sensitive(false);
+            status_label.set_label(&tr("Wird generiert …"));
+            status_label.set_visible(true);
+            let generate_button_for_click = generate_button_for_click.clone();
+            let status_label = status_label.clone();
+            let text_buffer = text_buffer.clone();
+            generate(&source, doc_dir.clone(), move |result| {
+                match result {
+                    Ok(text) => {
+                        text_buffer.set_text(&text);
+                        status_label.set_visible(false);
+                    }
+                    Err(err) => status_label.set_label(&tr("Fehler: {err}").replace("{err}", &err)),
+                }
+                generate_button_for_click.set_sensitive(true);
+            });
         });
     }
 
@@ -223,21 +230,21 @@ pub fn open(window: &gtk4::Window, title: String, source: String, doc_dir: Optio
     dialog.present(Some(window));
 }
 
-fn run_generation(
-    level: DetailLevel,
-    source: &str,
-    filename: &str,
-    doc_dir: Option<PathBuf>,
-    generate_button: &gtk4::Button,
-    status_label: &gtk4::Label,
-    text_buffer: &gtk4::TextBuffer,
-) {
-    generate_button.set_sensitive(false);
-    status_label.set_label(&tr("Wird generiert …"));
-    status_label.set_visible(true);
-
+/// Runs the vision-based alt-text generation in a background thread, using
+/// whichever `DetailLevel` was last selected in this module's own dialog
+/// (see `load_detail_level`) - so a caller that wants a specific level
+/// should go through `open` instead, which lets the user pick one. Calls
+/// `on_result` exactly once, back on the GLib main loop, with the trimmed
+/// text or an error message. This is the reusable core both `open` (the
+/// standalone review dialog, still used for the featured image by
+/// `properties.rs`) and the consolidated Bildbeschriftung dialog
+/// (`imagealt.rs`, for a body image) build their own UI feedback around,
+/// instead of each re-implementing the same background-thread-plus-polling
+/// plumbing.
+pub fn generate(source: &str, doc_dir: Option<PathBuf>, on_result: impl Fn(Result<String, String>) + 'static) {
+    let level = load_detail_level();
     let source = source.to_string();
-    let mime_type = export::mime_from_extension(filename);
+    let mime_type = export::mime_from_extension(&source);
     let prompt = level.prompt().to_string();
     let config = chatconfig::load_provider_config();
     let provider = config.active;
@@ -260,25 +267,18 @@ fn run_generation(
         let _ = tx.send(outcome);
     });
 
-    let generate_button = generate_button.clone();
-    let status_label = status_label.clone();
-    let text_buffer = text_buffer.clone();
     glib::timeout_add_local(Duration::from_millis(150), move || match rx.try_recv() {
         Ok(Ok(text)) => {
-            text_buffer.set_text(text.trim());
-            status_label.set_visible(false);
-            generate_button.set_sensitive(true);
+            on_result(Ok(text.trim().to_string()));
             glib::ControlFlow::Break
         }
         Ok(Err(err)) => {
-            status_label.set_label(&tr("Fehler: {err}").replace("{err}", &err));
-            generate_button.set_sensitive(true);
+            on_result(Err(err));
             glib::ControlFlow::Break
         }
         Err(mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
         Err(mpsc::TryRecvError::Disconnected) => {
-            status_label.set_label(&tr("Interner Fehler: Generierungs-Thread hat kein Ergebnis geliefert."));
-            generate_button.set_sensitive(true);
+            on_result(Err(tr("Interner Fehler: Generierungs-Thread hat kein Ergebnis geliefert.")));
             glib::ControlFlow::Break
         }
     });

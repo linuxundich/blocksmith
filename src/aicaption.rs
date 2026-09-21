@@ -1,26 +1,21 @@
-//! AI-generated image captions ("Bildunterschrift"): reachable from the
-//! same "KI-Aktionen" context menus `aialt.rs`'s alt-text generation
-//! already uses (`imagealt.rs`'s editor menu, `preview.rs`'s image
-//! right-click menu) - a deliberately separate flow rather than folded
-//! into `aialt.rs`, since a caption needs a different prompt (an editorial
-//! style with a fixed target length, and - unlike alt text - real article
-//! context, not just the image itself) and has no "Detailgrad" concept to
-//! offer, so its dialog is simpler by one control.
+//! AI-generated image captions ("Bildunterschrift"): reachable inline from
+//! the consolidated Bildbeschriftung dialog (`imagealt.rs`'s
+//! `open_dialog_for_index`) via a "generate" suffix button on the caption
+//! field - a deliberately separate prompt/module from `aialt.rs`'s alt-text
+//! generation, since a caption needs a different prompt (an editorial style
+//! with a fixed target length, and - unlike alt text - real article
+//! context, not just the image itself).
 //!
 //! `context` (the text immediately surrounding the image in the article -
 //! see `imagealt::surrounding_context`) is folded directly into the vision
 //! prompt sent alongside the image, so the caption can describe what the
 //! photo is illustrating *in the article*, not just what's visible in
-//! isolation. Same "review before apply" shape as `aialt.rs`: nothing is
-//! written until the user clicks "Übernehmen", and applying it just calls
-//! the caller's own `on_apply` - so it's the caller's job to decide where
-//! the text actually goes (`MediaItem.caption`, via `imagealt.rs`).
+//! isolation.
 
 use std::path::PathBuf;
 use std::sync::mpsc;
 use std::time::Duration;
 
-use adw::prelude::*;
 use gtk4::glib;
 
 use crate::i18n::tr;
@@ -44,89 +39,12 @@ fn build_prompt(context: &str) -> String {
     prompt
 }
 
-/// Opens the review dialog for one image, identified the same way
-/// `aialt::open` is (`title`/`source`/`doc_dir`) - see that function's doc
-/// comment for the exact meaning of each. `context` is the surrounding
-/// article text (`imagealt::surrounding_context`); passing an empty string
-/// is fine, `build_prompt` just omits that part of the request.
-pub fn open(window: &gtk4::Window, title: String, source: String, context: String, doc_dir: Option<PathBuf>, on_apply: impl Fn(String) + 'static) {
-    let generate_button = gtk4::Button::with_label(&tr("Bildunterschrift generieren"));
-    generate_button.add_css_class("suggested-action");
-
-    let status_label = gtk4::Label::builder().wrap(true).xalign(0.0).build();
-    status_label.set_visible(false);
-
-    let text_view = gtk4::TextView::builder()
-        .wrap_mode(gtk4::WrapMode::WordChar)
-        .top_margin(8)
-        .bottom_margin(8)
-        .left_margin(8)
-        .right_margin(8)
-        .build();
-    let text_buffer = text_view.buffer();
-    text_buffer.set_text(&tr("Noch keine Bildunterschrift generiert - auf „Bildunterschrift generieren“ klicken."));
-
-    let frame = gtk4::Frame::new(None);
-    frame.set_child(Some(&text_view));
-    let text_scroller = gtk4::ScrolledWindow::builder().child(&frame).min_content_height(100).vexpand(true).build();
-
-    let group = adw::PreferencesGroup::builder().title(&title).build();
-
-    let content = gtk4::Box::builder()
-        .orientation(gtk4::Orientation::Vertical)
-        .spacing(12)
-        .margin_top(18)
-        .margin_bottom(18)
-        .margin_start(18)
-        .margin_end(18)
-        .build();
-    content.append(&group);
-    content.append(&generate_button);
-    content.append(&status_label);
-    content.append(&text_scroller);
-
-    let apply_button = gtk4::Button::with_label(&tr("Übernehmen"));
-    apply_button.add_css_class("suggested-action");
-
-    let header = adw::HeaderBar::new();
-    header.pack_end(&apply_button);
-
-    let toolbar_view = adw::ToolbarView::new();
-    toolbar_view.add_top_bar(&header);
-    toolbar_view.set_content(Some(&content));
-
-    let dialog = adw::Dialog::builder().title(tr("KI-Bildunterschrift")).content_width(460).content_height(360).child(&toolbar_view).build();
-
-    {
-        let source = source.clone();
-        let context = context.clone();
-        let doc_dir = doc_dir.clone();
-        let generate_button_for_click = generate_button.clone();
-        let status_label = status_label.clone();
-        let text_buffer = text_buffer.clone();
-        generate_button.connect_clicked(move |_| {
-            run_generation(&source, &context, doc_dir.clone(), &generate_button_for_click, &status_label, &text_buffer);
-        });
-    }
-
-    {
-        let text_buffer = text_buffer.clone();
-        let dialog = dialog.clone();
-        apply_button.connect_clicked(move |_| {
-            let text = text_buffer.text(&text_buffer.start_iter(), &text_buffer.end_iter(), false).to_string();
-            on_apply(text.trim().to_string());
-            dialog.close();
-        });
-    }
-
-    dialog.present(Some(window));
-}
-
-fn run_generation(source: &str, context: &str, doc_dir: Option<PathBuf>, generate_button: &gtk4::Button, status_label: &gtk4::Label, text_buffer: &gtk4::TextBuffer) {
-    generate_button.set_sensitive(false);
-    status_label.set_label(&tr("Wird generiert …"));
-    status_label.set_visible(true);
-
+/// Runs the vision-based caption generation in a background thread. Calls
+/// `on_result` exactly once, back on the GLib main loop, with the trimmed
+/// text or an error message. `context` is the surrounding article text
+/// (`imagealt::surrounding_context`); passing an empty string is fine,
+/// `build_prompt` just omits that part of the request.
+pub fn generate(source: &str, context: &str, doc_dir: Option<PathBuf>, on_result: impl Fn(Result<String, String>) + 'static) {
     let source = source.to_string();
     let mime_type = export::mime_from_extension(&source);
     let prompt = build_prompt(context);
@@ -151,25 +69,18 @@ fn run_generation(source: &str, context: &str, doc_dir: Option<PathBuf>, generat
         let _ = tx.send(outcome);
     });
 
-    let generate_button = generate_button.clone();
-    let status_label = status_label.clone();
-    let text_buffer = text_buffer.clone();
     glib::timeout_add_local(Duration::from_millis(150), move || match rx.try_recv() {
         Ok(Ok(text)) => {
-            text_buffer.set_text(text.trim());
-            status_label.set_visible(false);
-            generate_button.set_sensitive(true);
+            on_result(Ok(text.trim().to_string()));
             glib::ControlFlow::Break
         }
         Ok(Err(err)) => {
-            status_label.set_label(&tr("Fehler: {err}").replace("{err}", &err));
-            generate_button.set_sensitive(true);
+            on_result(Err(err));
             glib::ControlFlow::Break
         }
         Err(mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
         Err(mpsc::TryRecvError::Disconnected) => {
-            status_label.set_label(&tr("Interner Fehler: Generierungs-Thread hat kein Ergebnis geliefert."));
-            generate_button.set_sensitive(true);
+            on_result(Err(tr("Interner Fehler: Generierungs-Thread hat kein Ergebnis geliefert.")));
             glib::ControlFlow::Break
         }
     });
