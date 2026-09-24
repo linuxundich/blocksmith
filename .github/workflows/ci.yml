@@ -40,7 +40,19 @@ jobs:
       # which the base Arch image doesn't include.
       - name: Install build dependencies
         run: |
+          # The archlinux Docker image's own pacman.conf excludes locale
+          # source files (`NoExtract = usr/share/i18n/locales/* ...`) to
+          # keep the image small - `locale-gen` below would otherwise fail
+          # with "cannot open locale definition file `de_DE`" since that
+          # source file was never actually extracted to disk. Dropping
+          # `--needed` on the glibc reinstall (unlike the rest of this
+          # step) is required too: glibc is already "installed" as far as
+          # pacman's local package database is concerned, so it would
+          # otherwise skip re-extracting anything even after NoExtract is
+          # gone, since nothing about the package's *version* changed.
+          sed -i '/^NoExtract/d' /etc/pacman.conf
           pacman -Syu --noconfirm
+          pacman -S --noconfirm glibc
           pacman -S --noconfirm --needed \
             base-devel git rust \
             gtk4 libadwaita gtksourceview5 webkitgtk-6.0 libspelling \
