@@ -332,6 +332,31 @@ pub fn open(
         });
     }
 
+    // "Nicht ändern" (index 0) leaves `comment_status` unset, so the post
+    // keeps whatever comment status it already has on export (see
+    // `export.rs`'s own "only sent when set" comment) - no fetch needed
+    // here, unlike the Autor picker above, since these three options are
+    // fixed rather than coming from the site.
+    let comment_status_row = adw::ComboRow::builder()
+        .title(tr("Kommentare"))
+        .model(&gtk4::StringList::new(&[&tr("Nicht ändern"), &tr("Offen"), &tr("Geschlossen")]))
+        .selected(match current.comment_status {
+            None => 0,
+            Some(true) => 1,
+            Some(false) => 2,
+        })
+        .build();
+    {
+        let frontmatter = frontmatter.clone();
+        comment_status_row.connect_selected_notify(move |row| {
+            frontmatter.borrow_mut().comment_status = match row.selected() {
+                1 => Some(true),
+                2 => Some(false),
+                _ => None,
+            };
+        });
+    }
+
     let refresh_button = gtk4::Button::from_icon_name("view-refresh-symbolic");
     refresh_button.set_tooltip_text(Some(&tr("Kategorien & Tags von WordPress aktualisieren")));
     refresh_button.add_css_class("flat");
@@ -372,6 +397,7 @@ pub fn open(
     group.add(&scheduled_row);
     group.add(&author_row);
     group.add(&vgwort_row);
+    group.add(&comment_status_row);
     group.add(&categories_row);
     group.add(&tags_row);
     group.add(&featured_image_row);

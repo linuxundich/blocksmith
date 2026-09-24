@@ -760,6 +760,13 @@ fn run_export(
     // registering this field) isn't installed on the target site, the same
     // way an unrecognized `meta` key is - see `Frontmatter::vgwort_ignored`.
     payload["wp-worthy-pixel"] = serde_json::json!({ "ignored": frontmatter.vgwort_ignored });
+    // Only sent when explicitly set (same "only when set" reasoning as
+    // `author_id` above) - an unset comment status leaves the post's
+    // existing one untouched rather than resetting it to WordPress's own
+    // site-wide default on every export.
+    if let Some(open) = frontmatter.comment_status {
+        payload["comment_status"] = serde_json::Value::String(if open { "open" } else { "closed" }.to_string());
+    }
 
     let result = match frontmatter.wp_post_id {
         Some(id) => client.update_post(id, &payload),
@@ -1121,6 +1128,7 @@ mod tests {
             author_id: None,
             author_name: None,
             vgwort_ignored: false,
+            comment_status: None,
             media: Vec::new(),
         };
 
@@ -1171,6 +1179,7 @@ mod tests {
             author_id: None,
             author_name: None,
             vgwort_ignored: false,
+            comment_status: None,
             media: Vec::new(),
         };
 
@@ -1220,6 +1229,7 @@ mod tests {
             author_id: None,
             author_name: None,
             vgwort_ignored: true,
+            comment_status: None,
             media: Vec::new(),
         };
 
@@ -1230,6 +1240,55 @@ mod tests {
         frontmatter.vgwort_ignored = false;
         run_export(&site, &password, &mut frontmatter, None, body, None).expect("update failed");
         assert!(!client.get_post(created.id).expect("get_post failed").vgwort_ignored, "expected the post to come back no longer VG-Wort-ignored");
+
+        client.delete_post(created.id).expect("cleanup delete_post failed");
+    }
+
+    /// Confirms `comment_status` actually reaches the real site and reads
+    /// back correctly - both directions (closing comments, then reopening
+    /// them on the same post) - against WordPress's own `comment_status`
+    /// field, not just that the local payload construction looks right.
+    #[test]
+    #[ignore]
+    fn run_export_round_trips_comment_status() {
+        let site = wpsite::load();
+        assert!(!site.url.is_empty(), "no WordPress site configured (run the connection dialog first)");
+        let password = futures_lite::future::block_on(secrets::load_app_password(&site.url, &site.username))
+            .expect("keyring lookup failed")
+            .expect("no application password stored for this site/user");
+        let client = wpclient::Client::new(&site.url, &site.username, &password);
+
+        let body = "Ein Testartikel für den Kommentar-Status-Toggle.\n";
+        let mut frontmatter = Frontmatter {
+            title: "Blocksmith comment_status round-trip test".to_string(),
+            slug: String::new(),
+            status: crate::document::PostStatus::Draft,
+            scheduled_at: None,
+            categories: Vec::new(),
+            tags: Vec::new(),
+            excerpt: None,
+            rank_math_title: None,
+            rank_math_description: None,
+            rank_math_focus_keyword: None,
+            featured_image: None,
+            featured_image_alt: None,
+            wp_post_id: None,
+            wp_content_hash: None,
+            featured_media_id: None,
+            author_id: None,
+            author_name: None,
+            vgwort_ignored: false,
+            comment_status: Some(false),
+            media: Vec::new(),
+        };
+
+        let created = run_export(&site, &password, &mut frontmatter, Some(crate::document::PostStatus::Draft), body, None).expect("draft export failed");
+        assert_eq!(client.get_post(created.id).expect("get_post failed").comment_status, "closed");
+
+        frontmatter.wp_post_id = Some(created.id);
+        frontmatter.comment_status = Some(true);
+        run_export(&site, &password, &mut frontmatter, None, body, None).expect("update failed");
+        assert_eq!(client.get_post(created.id).expect("get_post failed").comment_status, "open");
 
         client.delete_post(created.id).expect("cleanup delete_post failed");
     }
@@ -1271,6 +1330,7 @@ mod tests {
             author_id: None,
             author_name: None,
             vgwort_ignored: false,
+            comment_status: None,
             media: Vec::new(),
         };
 
@@ -1327,6 +1387,7 @@ mod tests {
             author_id: None,
             author_name: None,
             vgwort_ignored: false,
+            comment_status: None,
             media: Vec::new(),
         };
 

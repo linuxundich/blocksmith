@@ -331,6 +331,7 @@ fn fetch_and_convert(site: &wpsite::SiteConfig, password: &str, post_id: u64) ->
         author_id: (detail.author != 0).then_some(detail.author),
         author_name,
         vgwort_ignored: detail.vgwort_ignored,
+        comment_status: Some(detail.comment_status == "open"),
         media: crate::media::reconcile(&[], &body),
     };
 

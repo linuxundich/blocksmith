@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.54.0] - 2026-09-24
+
+### Added
+
+- Category hierarchy: "Kategorien & Tags verwalten" now shows each
+  category as an expandable row with an "Übergeordnete Kategorie"
+  picker (applies immediately, reverts itself on a server error) and a
+  "Neue Kategorie erstellen…" row to create a new one directly as a
+  child of an existing category. Deliberately not expressed in the
+  article's own "Kategorien" field - hierarchy is a property of the
+  category term itself, so typing a child category's plain name there
+  still works exactly as before. Cycle-proof: a category is never
+  offered as its own parent, nor one of its own descendants'.
+- Comment status: a new "Kommentare" dropdown in "Artikel-
+  Eigenschaften" ("Nicht ändern"/"Offen"/"Geschlossen") lets a post's
+  comments be explicitly opened or closed on export - only sent when
+  set, so an untouched article keeps whatever it already had. Read
+  back on import.
+
 ## [0.53.0] - 2026-09-21
 
 ### Added

@@ -164,6 +164,13 @@ pub struct Frontmatter {
     /// lives in "Artikel-Eigenschaften" as a publish-affecting setting,
     /// not in the Statistik tab.
     pub vgwort_ignored: bool,
+    /// Whether comments are open on this post - `None` leaves it unsent
+    /// (same "only sent when set" reasoning as `author_id`: a new post
+    /// keeps whatever WordPress's own default comment status is, an
+    /// existing one keeps whatever it already had), `Some(true)`/
+    /// `Some(false)` send WordPress's own `comment_status` field as
+    /// `"open"`/`"closed"`.
+    pub comment_status: Option<bool>,
     /// Per-image alt text/caption/WordPress-upload metadata (`media.rs`) -
     /// rebuilt from the current body on every properties/media-panel open
     /// via `media::reconcile`, so this only needs to persist what a plain
@@ -260,6 +267,13 @@ pub fn parse(input: &str) -> Document {
                 frontmatter.author_name = (!value.is_empty()).then(|| unquote(value));
             }
             "vgwort_ignored" => frontmatter.vgwort_ignored = value.trim() == "true",
+            "comment_status" => {
+                frontmatter.comment_status = match value.trim() {
+                    "open" => Some(true),
+                    "closed" => Some(false),
+                    _ => None,
+                }
+            }
             "media_json" => frontmatter.media = crate::media::from_json_str(value),
             _ => {}
         }
@@ -327,6 +341,9 @@ pub fn serialize(doc: &Document) -> String {
     }
     if fm.vgwort_ignored {
         out.push_str("vgwort_ignored: true\n");
+    }
+    if let Some(open) = fm.comment_status {
+        out.push_str(&format!("comment_status: {}\n", if open { "open" } else { "closed" }));
     }
     if !fm.media.is_empty() {
         out.push_str(&format!("media_json: {}\n", crate::media::to_json_string(&fm.media)));
@@ -660,6 +677,7 @@ mod tests {
                      author_id: 3\n\
                      author_name: \"Jane Editor\"\n\
                      vgwort_ignored: true\n\
+                     comment_status: closed\n\
                      ---\n\
                      \n\
                      Body text here.\n";
@@ -681,6 +699,7 @@ mod tests {
         assert_eq!(doc.frontmatter.author_id, Some(3));
         assert_eq!(doc.frontmatter.author_name.as_deref(), Some("Jane Editor"));
         assert!(doc.frontmatter.vgwort_ignored);
+        assert_eq!(doc.frontmatter.comment_status, Some(false));
         assert_eq!(doc.body, "Body text here.\n");
     }
 
@@ -715,6 +734,7 @@ mod tests {
                 author_id: Some(3),
                 author_name: Some("Jane Editor".to_string()),
                 vgwort_ignored: true,
+                comment_status: Some(false),
                 media: vec![MediaItem {
                     id: "media-001".to_string(),
                     filename: "cat.png".to_string(),
@@ -742,6 +762,26 @@ mod tests {
     #[test]
     fn private_status_round_trips_through_as_str_and_from_str() {
         assert_eq!(PostStatus::from_str(PostStatus::Private.as_str()), PostStatus::Private);
+    }
+
+    #[test]
+    fn comment_status_open_parses_as_some_true() {
+        let doc = parse("---\ntitle: \"x\"\ncomment_status: open\n---\n\nBody.\n");
+        assert_eq!(doc.frontmatter.comment_status, Some(true));
+    }
+
+    #[test]
+    fn comment_status_garbage_parses_as_none() {
+        let doc = parse("---\ntitle: \"x\"\ncomment_status: garbage\n---\n\nBody.\n");
+        assert_eq!(doc.frontmatter.comment_status, None);
+    }
+
+    #[test]
+    fn comment_status_open_serializes_and_round_trips() {
+        let doc = Document { frontmatter: Frontmatter { title: "x".to_string(), comment_status: Some(true), ..Frontmatter::default() }, body: "Body.\n".to_string() };
+        let serialized = serialize(&doc);
+        assert!(serialized.contains("comment_status: open"), "{serialized}");
+        assert_eq!(parse(&serialized), doc);
     }
 
     #[test]

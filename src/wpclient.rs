@@ -71,6 +71,10 @@ pub struct Term {
     pub id: u64,
     pub name: String,
     pub slug: String,
+    /// The parent term's id, or `0` for a top-level term - only meaningful
+    /// for a hierarchical taxonomy (`categories`; WordPress's built-in
+    /// `tags` taxonomy is *not* hierarchical, so this is always `0` there).
+    pub parent: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -146,6 +150,9 @@ pub struct PostDetail {
     /// installed, so this is a safe default rather than needing an
     /// `Option` to represent "plugin not present".
     pub vgwort_ignored: bool,
+    /// WordPress's own `comment_status` field, verbatim (`"open"` or
+    /// `"closed"`) - see `Frontmatter::comment_status`.
+    pub comment_status: String,
     /// Site-local `"YYYY-MM-DDTHH:MM:SS"` - the post's publish date, or for
     /// a `status == "future"` post, its scheduled publish date/time.
     pub date: String,
@@ -401,7 +408,7 @@ impl Client {
     /// for caching a category's real slug (`termcache.rs`), which can
     /// differ from what `document::slugify` would derive from its name.
     pub fn list_terms(&self, taxonomy: &str) -> Result<Vec<Term>> {
-        let items = self.get_all_pages(taxonomy, "orderby=name&_fields=id,name,slug")?;
+        let items = self.get_all_pages(taxonomy, "orderby=name&_fields=id,name,slug,parent")?;
         Ok(items
             .iter()
             .filter_map(|item| {
@@ -409,6 +416,7 @@ impl Client {
                     id: item.get("id")?.as_u64()?,
                     name: item.get("name").and_then(Value::as_str)?.to_string(),
                     slug: item.get("slug").and_then(Value::as_str).unwrap_or_default().to_string(),
+                    parent: item.get("parent").and_then(Value::as_u64).unwrap_or(0),
                 })
             })
             .collect())
@@ -439,6 +447,50 @@ impl Client {
             return Err(error_from_body(status, &body_text));
         }
         Ok(())
+    }
+
+    /// Re-parents an existing taxonomy term - `parent: 0` moves it back to
+    /// the top level. Only meaningful for a hierarchical taxonomy
+    /// (`categories`); sending it for `tags` is simply ignored by
+    /// WordPress rather than erroring, since `post_tag` doesn't register a
+    /// `parent` REST field at all, but the "Kategorien & Tags verwalten"
+    /// dialog only ever calls this for categories.
+    pub fn update_term_parent(&self, taxonomy: &str, id: u64, parent: u64) -> Result<()> {
+        let mut response = self
+            .agent
+            .post(self.endpoint(&format!("{taxonomy}/{id}")))
+            .header("Authorization", self.auth_header.as_str())
+            .send_json(serde_json::json!({ "parent": parent }))
+            .map_err(network_error)?;
+        let status = response.status().as_u16();
+        if !(200..300).contains(&status) {
+            let body_text = response.body_mut().read_to_string().unwrap_or_default();
+            return Err(error_from_body(status, &body_text));
+        }
+        Ok(())
+    }
+
+    /// Creates a brand new taxonomy term, optionally as a child of `parent`
+    /// (`0` for a top-level term) - unlike `resolve_or_create_term`, which
+    /// silently reuses an existing term of the same name and always
+    /// creates a new one as top-level, this is for the "Kategorien & Tags
+    /// verwalten" dialog's explicit "Neue Kategorie erstellen" flow, where
+    /// creating a *specific*, possibly-nested category is the whole point,
+    /// not an implicit side effect of typing a name into an article.
+    pub fn create_term(&self, taxonomy: &str, name: &str, parent: u64) -> Result<u64> {
+        let mut response = self
+            .agent
+            .post(self.endpoint(taxonomy))
+            .header("Authorization", self.auth_header.as_str())
+            .send_json(serde_json::json!({ "name": name, "parent": parent }))
+            .map_err(network_error)?;
+        let status = response.status().as_u16();
+        let body_text = response.body_mut().read_to_string().unwrap_or_default();
+        if !(200..300).contains(&status) {
+            return Err(error_from_body(status, &body_text));
+        }
+        let value: Value = serde_json::from_str(&body_text).map_err(|err| unreadable_response(status, err))?;
+        value.get("id").and_then(Value::as_u64).ok_or_else(|| ApiError { status, message: tr("Keine Term-ID in der Antwort") })
     }
 
     /// Permanently deletes a taxonomy term (categories/tags have no trash,
@@ -494,7 +546,7 @@ impl Client {
     /// Markdown.
     pub fn get_post(&self, id: u64) -> Result<PostDetail> {
         let url = format!(
-            "{}?context=edit&_fields=id,title,content,excerpt,status,slug,categories,tags,featured_media,author,wp-worthy-pixel,date,meta,link",
+            "{}?context=edit&_fields=id,title,content,excerpt,status,slug,categories,tags,featured_media,author,wp-worthy-pixel,comment_status,date,meta,link",
             self.endpoint(&format!("posts/{id}"))
         );
         let value = self.get_json(&url)?;
@@ -522,6 +574,7 @@ impl Client {
             featured_media: value.get("featured_media").and_then(Value::as_u64).unwrap_or(0),
             author: value.get("author").and_then(Value::as_u64).unwrap_or(0),
             vgwort_ignored: value.get("wp-worthy-pixel").and_then(|p| p.get("ignored")).and_then(Value::as_bool).unwrap_or(false),
+            comment_status: value.get("comment_status").and_then(Value::as_str).unwrap_or("open").to_string(),
             date: value.get("date").and_then(Value::as_str).unwrap_or_default().to_string(),
             link: value.get("link").and_then(Value::as_str).unwrap_or_default().to_string(),
         })
@@ -712,6 +765,36 @@ mod tests {
         let user = matching_username.expect("expected at least one user with a non-empty name");
         let name = client.get_user_name(user.id).expect("get_user_name failed");
         assert_eq!(name, user.name);
+    }
+
+    /// Backs "Kategorien & Tags verwalten"'s category-hierarchy feature -
+    /// creates a child category under a real existing one ("Allgemein"),
+    /// confirms `list_terms` reports the right `parent`, re-parents it back
+    /// to top-level and confirms that too, then cleans up.
+    #[test]
+    #[ignore]
+    fn category_hierarchy_round_trips_against_real_site() {
+        let config = wpsite::load();
+        assert!(!config.url.is_empty(), "no WordPress site configured (run the connection dialog first)");
+        let password = futures_lite::future::block_on(secrets::load_app_password(&config.url, &config.username))
+            .expect("keyring lookup failed")
+            .expect("no application password stored for this site/user");
+        let client = Client::new(&config.url, &config.username, &password);
+
+        let categories = client.list_terms("categories").expect("list_terms failed");
+        let parent = categories.iter().find(|c| c.name == "Allgemein").expect("expected the real site's known 'Allgemein' category");
+
+        let child_id = client.create_term("categories", "Blocksmith Hierarchy Test", parent.id).expect("create_term failed");
+        let refetched = client.list_terms("categories").expect("list_terms failed");
+        let child = refetched.iter().find(|c| c.id == child_id).expect("expected the just-created category to come back from list_terms");
+        assert_eq!(child.parent, parent.id, "expected the new category to be parented under 'Allgemein'");
+
+        client.update_term_parent("categories", child_id, 0).expect("update_term_parent failed");
+        let refetched_again = client.list_terms("categories").expect("list_terms failed");
+        let child_again = refetched_again.iter().find(|c| c.id == child_id).expect("expected the category to still be there");
+        assert_eq!(child_again.parent, 0, "expected the category to be back at the top level");
+
+        client.delete_term("categories", child_id).expect("cleanup delete_term failed");
     }
 
     /// Backs the "Aus Mediathek wählen…" picker (`medialibrary.rs`) - checks
