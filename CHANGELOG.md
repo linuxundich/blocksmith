@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.54.1] - 2026-09-25
+
+### Fixed
+
+- The app icon showed as a blank placeholder tile everywhere in GNOME
+  Shell (app grid and search), even though it was correctly found and
+  registered - some systems (confirmed on the maintainer's own: librsvg
+  2.62 no longer ships the classic gdk-pixbuf-loader plugin, and
+  nothing else provides one) have no working gdk-pixbuf SVG loader at
+  all, so `GdkPixbuf.Pixbuf.new_from_file_at_size` on the SVG icon
+  fails outright and GNOME Shell's own icon texture comes back 0×0.
+  Now ships pre-rendered PNGs (48/64/128/256px) alongside the scalable
+  SVG, the same way a Flatpak's own build/export step already does for
+  its icon - independent of whether the system can rasterize SVG at
+  all at runtime.
+
 ## [0.54.0] - 2026-09-24
 
 ### Added
