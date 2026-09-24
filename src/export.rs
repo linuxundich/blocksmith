@@ -16,45 +16,81 @@ use std::time::Duration;
 
 use adw::prelude::*;
 use gtk4::glib;
+use webkit6::prelude::*;
 
 use crate::document::{self, Frontmatter, PostStatus};
 use crate::i18n::tr;
 use crate::{browser, linkcheck, media, mediapanel, notify, preview, secrets, wpclient, wpsite};
 
-/// One step of the "Artikel exportieren" wizard - `content` in its own
-/// `Adw.ToolbarView`/`Adw.HeaderBar` (so `Adw.NavigationView` can show a
-/// back button and this step's own title automatically, the same
-/// convention every libadwaita wizard-style dialog uses), plus a right-
-/// aligned "Weiter" button pinned to the bottom when there's a next step -
-/// the last step (`next_button: None`) has none, since it holds the actual
-/// export actions instead of a "continue" affordance.
-fn wizard_step(title: &str, content: &impl IsA<gtk4::Widget>, next_button: Option<&gtk4::Button>) -> adw::NavigationPage {
-    content.set_vexpand(true);
+/// Builds the "Artikel exportieren" wizard's shared bottom navigation bar -
+/// an `Adw.CarouselIndicatorDots` centered between "Zurück"/"Weiter"
+/// buttons, the same shape GNOME's own welcome/tour dialogs (GNOME Tour,
+/// first-run screens, ...) use for a linear step flow, rather than the
+/// header-bar-back-button convention `Adw.NavigationView` gives a settings-
+/// style drill-down dialog. `pages` is every step's top-level widget, in
+/// order - needed to resolve "the widget at position N" for `scroll_to`,
+/// since `Adw.Carousel` (unlike `Adw.ViewStack`) has no such lookup of its
+/// own. "Zurück" hides on the first page; "Weiter" hides on the last (the
+/// export actions live in that page's own content instead of behind a
+/// "continue" button).
+fn wizard_nav_bar(carousel: &adw::Carousel, pages: Vec<gtk4::Widget>) -> gtk4::Widget {
+    let indicator = adw::CarouselIndicatorDots::builder().carousel(carousel).build();
+    let indicator_box = gtk4::Box::builder().hexpand(true).halign(gtk4::Align::Center).build();
+    indicator_box.append(&indicator);
 
-    let header = adw::HeaderBar::new();
-    let toolbar_view = adw::ToolbarView::new();
-    toolbar_view.add_top_bar(&header);
+    let back_button = gtk4::Button::with_label(&tr("Zurück"));
+    back_button.set_visible(false);
+    let next_button = gtk4::Button::with_label(&tr("Weiter"));
+    next_button.add_css_class("suggested-action");
 
-    match next_button {
-        Some(next_button) => {
-            let footer = gtk4::Box::builder()
-                .orientation(gtk4::Orientation::Horizontal)
-                .halign(gtk4::Align::End)
-                .margin_top(6)
-                .margin_bottom(18)
-                .margin_start(18)
-                .margin_end(18)
-                .build();
-            footer.append(next_button);
-            let wrapper = gtk4::Box::builder().orientation(gtk4::Orientation::Vertical).build();
-            wrapper.append(content);
-            wrapper.append(&footer);
-            toolbar_view.set_content(Some(&wrapper));
-        }
-        None => toolbar_view.set_content(Some(content)),
+    {
+        let carousel = carousel.clone();
+        let pages = pages.clone();
+        back_button.connect_clicked(move |_| {
+            let pos = carousel.position().round() as usize;
+            if pos > 0 {
+                // Not animated: each step's content is a real, dense
+                // functional page (a link list, Medienverwaltung, the
+                // Gutenberg HTML preview), not a decorative onboarding
+                // slide - a sliding transition would show both pages
+                // overlapping mid-swipe, whereas exactly one step should
+                // ever be visible at a time.
+                carousel.scroll_to(&pages[pos - 1], false);
+            }
+        });
+    }
+    {
+        let carousel = carousel.clone();
+        let pages = pages.clone();
+        next_button.connect_clicked(move |_| {
+            let pos = carousel.position().round() as usize;
+            if pos + 1 < pages.len() {
+                carousel.scroll_to(&pages[pos + 1], false);
+            }
+        });
+    }
+    {
+        let back_button = back_button.clone();
+        let next_button = next_button.clone();
+        let last_index = pages.len().saturating_sub(1) as u32;
+        carousel.connect_page_changed(move |_carousel, index| {
+            back_button.set_visible(index > 0);
+            next_button.set_visible(index < last_index);
+        });
     }
 
-    adw::NavigationPage::builder().title(title).child(&toolbar_view).build()
+    let bar = gtk4::Box::builder()
+        .orientation(gtk4::Orientation::Horizontal)
+        .spacing(12)
+        .margin_top(6)
+        .margin_bottom(18)
+        .margin_start(18)
+        .margin_end(18)
+        .build();
+    bar.append(&back_button);
+    bar.append(&indicator_box);
+    bar.append(&next_button);
+    bar.upcast()
 }
 
 pub fn open(
@@ -105,6 +141,7 @@ pub fn open(
         .margin_start(18)
         .margin_end(18)
         .vexpand(true)
+        .hexpand(true)
         .build();
     preview_page.append(&preview_label);
     preview_page.append(&preview_scroller);
@@ -115,10 +152,12 @@ pub fn open(
     // does its own `media::reconcile`, so this tab is always in sync with
     // the current body even if Medienverwaltung was never opened before.
     let media_page = mediapanel::build_content(frontmatter.clone(), &body, doc_dir.clone(), preview_pane.clone());
+    media_page.set_hexpand(true);
 
     // Same one-shot-scan-at-open-time approach as the media tab above: a
     // pre-publish sanity pass, not a live watcher.
-    let links_page = linkcheck::build_content(&body);
+    let links_page = linkcheck::build_content(&body, app_view_stack, browser_view);
+    links_page.set_hexpand(true);
 
     let status_label = gtk4::Label::new(None);
     status_label.set_wrap(true);
@@ -200,54 +239,90 @@ pub fn open(
         private_button.set_sensitive(false);
     }
 
-    // A step-by-step wizard (`Adw.NavigationView`), not the free-roaming
-    // tabs this dialog used to have - Links, then Medien, then Vorschau,
-    // then the actual export actions, each its own step with a "Weiter"
-    // button (except the last, which has the real publish/draft/etc.
-    // buttons instead) and an automatic back button courtesy of
-    // `NavigationView`/`HeaderBar`'s own built-in integration, so
-    // reviewing an earlier step again is still one click away, not lost.
-    let links_next_button = gtk4::Button::with_label(&tr("Weiter"));
-    links_next_button.add_css_class("suggested-action");
-    let links_step = wizard_step(&tr("Links"), &links_page, Some(&links_next_button));
+    // Shows the article as it actually looks on the live site right after
+    // a draft/update/publish succeeds (`wire_publish_button`/`start_export`
+    // load it in here on success) - without this, the last wizard step used
+    // to be just the status line and button row sitting above a lot of dead
+    // space, especially before anything's been sent yet. A plain embedded
+    // `WebKit.WebView`, not the fuller `browser::BrowserView` (no address
+    // bar/adblock/back-forward needed for a one-shot "did this actually
+    // work" check), and `Adw.StatusPage` as a placeholder until there's
+    // something to show.
+    let export_preview_web_view = webkit6::WebView::builder().vexpand(true).hexpand(true).build();
+    let export_preview_placeholder = adw::StatusPage::builder()
+        .icon_name("web-browser-symbolic")
+        .title(tr("Noch keine Vorschau"))
+        .description(tr(
+            "Sobald der Artikel als Entwurf hochgeladen, aktualisiert oder veröffentlicht wurde, erscheint hier eine Vorschau der Live-Seite.",
+        ))
+        .vexpand(true)
+        .build();
+    let export_preview_stack = gtk4::Stack::new();
+    export_preview_stack.add_named(&export_preview_placeholder, Some("placeholder"));
+    export_preview_stack.add_named(&export_preview_web_view, Some("browser"));
+    export_preview_stack.set_vexpand(true);
+    export_preview_stack.set_hexpand(true);
 
-    let media_next_button = gtk4::Button::with_label(&tr("Weiter"));
-    media_next_button.add_css_class("suggested-action");
-    let media_step = wizard_step(&tr("Medien"), &media_page, Some(&media_next_button));
+    // A step-by-step wizard, not the free-roaming tabs this dialog used to
+    // have - Links, then Medien, then Vorschau, then the actual export
+    // actions. `Adw.Carousel` + `Adw.CarouselIndicatorDots`, the same
+    // welcome/tour-dialog shape GNOME apps use for a linear flow like this
+    // one, rather than `Adw.NavigationView`'s settings-style drill-down
+    // (small header back-button) - see `wizard_nav_bar`.
+    let export_actions = gtk4::Box::builder()
+        .orientation(gtk4::Orientation::Vertical)
+        .spacing(12)
+        .margin_top(18)
+        .margin_bottom(12)
+        .margin_start(18)
+        .margin_end(18)
+        .build();
+    export_actions.append(&status_label);
+    export_actions.append(&link_button);
+    export_actions.append(&button_row);
 
-    let preview_next_button = gtk4::Button::with_label(&tr("Weiter"));
-    preview_next_button.add_css_class("suggested-action");
-    let preview_step = wizard_step(&tr("Vorschau"), &preview_page, Some(&preview_next_button));
+    let export_content = gtk4::Box::builder().orientation(gtk4::Orientation::Vertical).hexpand(true).vexpand(true).build();
+    export_content.append(&export_actions);
+    export_content.append(&gtk4::Separator::new(gtk4::Orientation::Horizontal));
+    export_content.append(&export_preview_stack);
 
-    let export_content = gtk4::Box::builder().orientation(gtk4::Orientation::Vertical).spacing(12).build();
-    export_content.append(&status_label);
-    export_content.append(&link_button);
-    export_content.append(&button_row);
-    let export_step = wizard_step(&tr("Exportieren"), &export_content, None);
+    let pages: Vec<gtk4::Widget> = vec![links_page.clone(), media_page.clone(), preview_page.clone().upcast(), export_content.clone().upcast()];
 
-    let nav_view = adw::NavigationView::new();
-    {
-        let nav_view = nav_view.clone();
-        let media_step = media_step.clone();
-        links_next_button.connect_clicked(move |_| nav_view.push(&media_step));
+    // `interactive(false)`: navigation is deliberately button-only (the
+    // "Zurück"/"Weiter" pair in `wizard_nav_bar`), not swipe/scroll-wheel -
+    // a manual drag would otherwise reveal a sliver of the neighboring
+    // page mid-swipe, same reasoning as the non-animated `scroll_to` calls
+    // there for why only one step should ever be on screen at once.
+    // Each page above also needs its own `hexpand(true)` (not just the
+    // carousel's) - confirmed live: `Adw.Carousel` sizes every page to its
+    // own natural width unless the page itself expands to fill, so a
+    // narrower page (e.g. Medien with no images yet) left empty space in
+    // the carousel's viewport that the *neighboring* pages' content bled
+    // into on both sides, even with `interactive(false)` and a
+    // non-animated `scroll_to`.
+    let carousel = adw::Carousel::builder().vexpand(true).hexpand(true).interactive(false).build();
+    for page in &pages {
+        carousel.append(page);
     }
-    {
-        let nav_view = nav_view.clone();
-        let preview_step = preview_step.clone();
-        media_next_button.connect_clicked(move |_| nav_view.push(&preview_step));
-    }
-    {
-        let nav_view = nav_view.clone();
-        let export_step = export_step.clone();
-        preview_next_button.connect_clicked(move |_| nav_view.push(&export_step));
-    }
-    nav_view.push(&links_step);
 
+    let nav_bar = wizard_nav_bar(&carousel, pages);
+
+    let content_box = gtk4::Box::builder().orientation(gtk4::Orientation::Vertical).build();
+    content_box.append(&carousel);
+    content_box.append(&nav_bar);
+
+    let header = adw::HeaderBar::new();
+    let toolbar_view = adw::ToolbarView::new();
+    toolbar_view.add_top_bar(&header);
+    toolbar_view.set_content(Some(&content_box));
+
+    // Taller than the other three steps' 640px need - the embedded preview
+    // browser on the last step only earns its keep with real vertical room.
     let dialog = adw::Dialog::builder()
         .title(tr("Artikel exportieren"))
         .content_width(680)
-        .content_height(640)
-        .child(&nav_view)
+        .content_height(760)
+        .child(&toolbar_view)
         .build();
 
     {
@@ -332,8 +407,8 @@ pub fn open(
         let status_label = status_label.clone();
         let link_button = link_button.clone();
         let preview_button_for_click = preview_button.clone();
-        let app_view_stack = app_view_stack.clone();
-        let browser_view = browser_view.clone();
+        let export_preview_stack = export_preview_stack.clone();
+        let export_preview_web_view = export_preview_web_view.clone();
         preview_button.connect_clicked(move |_| {
             let Some(post_id) = frontmatter.borrow().wp_post_id else { return };
             preview_button_for_click.set_sensitive(false);
@@ -360,14 +435,14 @@ pub fn open(
 
             let status_label = status_label.clone();
             let preview_button = preview_button_for_click.clone();
-            let app_view_stack = app_view_stack.clone();
-            let browser_view = browser_view.clone();
+            let export_preview_stack = export_preview_stack.clone();
+            let export_preview_web_view = export_preview_web_view.clone();
             glib::timeout_add_local(Duration::from_millis(150), move || match rx.try_recv() {
                 Ok(Ok(preview_url)) => {
-                    browser_view.load_uri(&preview_url);
-                    app_view_stack.set_visible_child_name("browser");
+                    export_preview_web_view.load_uri(&preview_url);
+                    export_preview_stack.set_visible_child_name("browser");
                     status_label.set_label(&tr(
-                        "Vorschau im Browser-Tab geöffnet - dort ist ggf. eine Anmeldung bei wp-admin nötig, falls noch keine angemeldete Sitzung besteht.",
+                        "Vorschau unten geladen - dort ist ggf. eine Anmeldung bei wp-admin nötig, falls noch keine angemeldete Sitzung besteht.",
                     ));
                     preview_button.set_sensitive(true);
                     glib::ControlFlow::Break
@@ -387,7 +462,12 @@ pub fn open(
         });
     }
 
-    let status = StatusWidgets { label: status_label.clone(), link: link_button.clone() };
+    let status = StatusWidgets {
+        label: status_label.clone(),
+        link: link_button.clone(),
+        preview_stack: export_preview_stack.clone(),
+        preview_web_view: export_preview_web_view.clone(),
+    };
     // `None` here means "leave whatever status the post already has on
     // WordPress alone" (the `status` field is omitted from the payload
     // entirely - see `run_export`) - this button is only ever labelled
@@ -407,16 +487,19 @@ pub fn open(
     dialog.present(Some(parent));
 }
 
-/// The status line + its accompanying permalink `LinkButton` - bundled
-/// purely to keep `wire_publish_button`'s parameter count down
-/// (clippy::too_many_arguments), the same fix already used for
-/// `DocContext`/`RecentFilesWidgets` in `window.rs`. Always shown/updated
-/// together: a status message about what just happened, and (only once a
-/// publish actually succeeds) a link to see it.
+/// The status line, its accompanying permalink `LinkButton`, and the
+/// embedded preview browser - bundled purely to keep `wire_publish_button`'s
+/// parameter count down (clippy::too_many_arguments), the same fix already
+/// used for `DocContext`/`RecentFilesWidgets` in `window.rs`. Always shown/
+/// updated together: a status message about what just happened, a link to
+/// see it, and (once a publish actually succeeds) the live site loaded into
+/// `preview_web_view`.
 #[derive(Clone)]
 struct StatusWidgets {
     label: gtk4::Label,
     link: gtk4::LinkButton,
+    preview_stack: gtk4::Stack,
+    preview_web_view: webkit6::WebView,
 }
 
 /// Appends WordPress's `preview=true` query parameter to a post's
@@ -483,8 +566,7 @@ fn wire_publish_button(
     let frontmatter = frontmatter.clone();
     let body = body.to_string();
     let doc_dir = doc_dir.clone();
-    let status_label = status.label.clone();
-    let link_button = status.link.clone();
+    let status = status.clone();
     let dialog_parent = dialog_parent.clone();
 
     let button_for_click = button.clone();
@@ -494,7 +576,7 @@ fn wire_publish_button(
             (fm.wp_post_id, fm.wp_content_hash.clone())
         };
         let Some(post_id) = post_id.filter(|_| local_hash.is_some()) else {
-            start_export(target_status, &frontmatter, &body, &doc_dir, &status_label, &link_button, &button_for_click, &other_buttons);
+            start_export(target_status, &frontmatter, &body, &doc_dir, &status, &button_for_click, &other_buttons);
             return;
         };
 
@@ -502,8 +584,8 @@ fn wire_publish_button(
         for b in &other_buttons {
             b.set_sensitive(false);
         }
-        status_label.set_label(&tr("Prüfe auf Änderungen auf WordPress …"));
-        link_button.set_visible(false);
+        status.label.set_label(&tr("Prüfe auf Änderungen auf WordPress …"));
+        status.link.set_visible(false);
 
         let site = wpsite::load();
         let (tx, rx) = mpsc::channel::<Result<String, String>>();
@@ -526,14 +608,13 @@ fn wire_publish_button(
         let frontmatter = frontmatter.clone();
         let body = body.clone();
         let doc_dir = doc_dir.clone();
-        let status_label = status_label.clone();
-        let link_button = link_button.clone();
+        let status = status.clone();
         let button = button_for_click.clone();
         let other_buttons = other_buttons.clone();
         let dialog_parent = dialog_parent.clone();
         glib::timeout_add_local(Duration::from_millis(150), move || {
-            let proceed_directly = |status_label: &gtk4::Label| {
-                start_export(target_status, &frontmatter, &body, &doc_dir, status_label, &link_button, &button, &other_buttons);
+            let proceed_directly = |status: &StatusWidgets| {
+                start_export(target_status, &frontmatter, &body, &doc_dir, status, &button, &other_buttons);
             };
             match rx.try_recv() {
                 Ok(Ok(server_hash)) => {
@@ -554,15 +635,14 @@ fn wire_publish_button(
                         let frontmatter = frontmatter.clone();
                         let body = body.clone();
                         let doc_dir = doc_dir.clone();
-                        let status_label = status_label.clone();
-                        let link_button = link_button.clone();
+                        let status = status.clone();
                         let button = button.clone();
                         let other_buttons = other_buttons.clone();
                         confirm.connect_response(None, move |_, response| {
                             if response == "overwrite" {
-                                start_export(target_status, &frontmatter, &body, &doc_dir, &status_label, &link_button, &button, &other_buttons);
+                                start_export(target_status, &frontmatter, &body, &doc_dir, &status, &button, &other_buttons);
                             } else {
-                                status_label.set_label(&tr("Abgebrochen - lokale Änderungen wurden nicht gesendet."));
+                                status.label.set_label(&tr("Abgebrochen - lokale Änderungen wurden nicht gesendet."));
                                 button.set_sensitive(true);
                                 for b in &other_buttons {
                                     b.set_sensitive(true);
@@ -571,7 +651,7 @@ fn wire_publish_button(
                         });
                         confirm.present(Some(&dialog_parent));
                     } else {
-                        proceed_directly(&status_label);
+                        proceed_directly(&status);
                     }
                     glib::ControlFlow::Break
                 }
@@ -584,7 +664,7 @@ fn wire_publish_button(
                     // Refusing to publish at all just because this extra
                     // check failed would trade a rare conflict risk for a
                     // much more common "can't publish edits at all" one.
-                    proceed_directly(&status_label);
+                    proceed_directly(&status);
                     glib::ControlFlow::Break
                 }
                 Err(mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
@@ -603,8 +683,7 @@ fn start_export(
     frontmatter: &Rc<RefCell<Frontmatter>>,
     body: &str,
     doc_dir: &Option<PathBuf>,
-    status_label: &gtk4::Label,
-    link_button: &gtk4::LinkButton,
+    status: &StatusWidgets,
     button: &gtk4::Button,
     other_buttons: &[gtk4::Button],
 ) {
@@ -612,8 +691,8 @@ fn start_export(
     for b in other_buttons {
         b.set_sensitive(false);
     }
-    status_label.set_label(&tr("Wird gesendet …"));
-    link_button.set_visible(false);
+    status.label.set_label(&tr("Wird gesendet …"));
+    status.link.set_visible(false);
 
     let site = wpsite::load();
     let mut current_fm = frontmatter.borrow().clone();
@@ -636,13 +715,12 @@ fn start_export(
     });
 
     let frontmatter = frontmatter.clone();
-    let status_label = status_label.clone();
-    let link_button = link_button.clone();
+    let status = status.clone();
     let button = button.clone();
     let other_buttons: Vec<gtk4::Button> = other_buttons.to_vec();
     glib::timeout_add_local(Duration::from_millis(150), move || match rx.try_recv() {
         Ok(Ok((post, media, content_hash))) => {
-            let title = {
+            let (title, final_status) = {
                 let mut fm = frontmatter.borrow_mut();
                 fm.wp_post_id = Some(post.id);
                 fm.media = media;
@@ -650,12 +728,21 @@ fn start_export(
                     fm.status = target_status;
                 }
                 fm.wp_content_hash = content_hash;
-                fm.title.clone()
+                (fm.title.clone(), fm.status)
             };
-            status_label.set_label(&tr("Erfolgreich gesendet:"));
-            link_button.set_uri(&post.link);
-            link_button.set_label(&post.link);
-            link_button.set_visible(true);
+            status.label.set_label(&tr("Erfolgreich gesendet:"));
+            status.link.set_uri(&post.link);
+            status.link.set_label(&post.link);
+            status.link.set_visible(true);
+            // A live `Publish`ed post is reachable at its plain permalink;
+            // anything else (Entwurf/Terminiert/Privat) needs WordPress's
+            // `?preview=true` convention instead (see `preview_url_for`) to
+            // show an unpublished post's content to a logged-in session -
+            // without it the embedded browser would just show a 404/login,
+            // not the article.
+            let preview_url = if final_status == PostStatus::Publish { post.link.clone() } else { preview_url_for(&post.link) };
+            status.preview_web_view.load_uri(&preview_url);
+            status.preview_stack.set_visible_child_name("browser");
             // Reflects what actually happened rather than always claiming
             // "Veröffentlicht" - `target_status` being `None` means the
             // status was deliberately left untouched (see `wire_publish_button`'s
@@ -670,7 +757,7 @@ fn start_export(
             glib::ControlFlow::Break
         }
         Ok(Err(err)) => {
-            status_label.set_label(&tr("Fehler: {err}").replace("{err}", &err));
+            status.label.set_label(&tr("Fehler: {err}").replace("{err}", &err));
             notify::send("export", &tr("Veröffentlichen fehlgeschlagen"), &err);
             button.set_sensitive(true);
             for b in &other_buttons {
@@ -680,7 +767,7 @@ fn start_export(
         }
         Err(mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
         Err(mpsc::TryRecvError::Disconnected) => {
-            status_label.set_label(&tr("Interner Fehler: Export-Thread hat kein Ergebnis geliefert."));
+            status.label.set_label(&tr("Interner Fehler: Export-Thread hat kein Ergebnis geliefert."));
             button.set_sensitive(true);
             for b in &other_buttons {
                 b.set_sensitive(true);

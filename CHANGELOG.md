@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.56.0] - 2026-09-25
+
+### Changed
+
+- "Artikel exportieren"'s wizard now uses `Adw.Carousel` +
+  `Adw.CarouselIndicatorDots` instead of `Adw.NavigationView` - the same
+  welcome/tour-dialog shape GNOME's own first-run screens use for a
+  linear step flow, rather than a settings-style drill-down with a
+  small header back-button. Navigation is button-only ("Zurück"/
+  "Weiter"), not swipe, so exactly one step is ever visible at once.
+
+### Added
+
+- Each link in the "Links" step now has an "im Browser-Tab öffnen"
+  icon button, so checking a link that looks broken doesn't mean
+  leaving Blocksmith to look at it.
+- The wizard's final "Exportieren" step now has an embedded preview
+  browser: once a draft/update/publish succeeds, it automatically
+  loads the article as it actually looks on the live site (or, for a
+  not-yet-public post, WordPress's `?preview=true` view) - replacing
+  what used to be a lot of empty space below the action buttons. The
+  existing "Vorschau öffnen" button now targets this same embedded
+  preview instead of the separate Browser tab.
+
 ## [0.55.0] - 2026-09-25
 
 ### Changed

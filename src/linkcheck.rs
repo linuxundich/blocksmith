@@ -8,6 +8,7 @@
 //! - or a network error/timeout - as broken.
 
 use std::collections::HashSet;
+use std::rc::Rc;
 use std::sync::mpsc;
 use std::time::Duration;
 
@@ -16,7 +17,7 @@ use gtk4::glib;
 use pulldown_cmark::{Event, Options, Parser, Tag};
 
 use crate::i18n::tr;
-use crate::notify;
+use crate::{browser, notify};
 
 /// Finds every unique `http(s)://` URL referenced in `markdown` - Markdown
 /// link and image/media destinations (`[text](url)`, `![alt](url)`, and the
@@ -121,7 +122,13 @@ fn all_ok_text(total: usize) -> String {
 /// `mediapanel::build_content`'s one-shot `media::reconcile` - if links are
 /// added/removed after this dialog is already open, re-opening the export
 /// dialog picks them up, matching how the rest of this dialog behaves.
-pub fn build_content(body: &str) -> gtk4::Widget {
+///
+/// Each row's own "im Browser-Tab öffnen" suffix button opens it in the
+/// app's own Browser tab (`app_view_stack`/`browser_view`) rather than an
+/// external browser - the same "stay inside the app" convention
+/// `export.rs`'s own "Vorschau öffnen" button already uses, so checking a
+/// link that looks broken doesn't mean leaving Blocksmith to look at it.
+pub fn build_content(body: &str, app_view_stack: &adw::ViewStack, browser_view: &Rc<browser::BrowserView>) -> gtk4::Widget {
     let links = scan_links(body);
 
     let content_box = gtk4::Box::builder()
@@ -148,6 +155,22 @@ pub fn build_content(body: &str) -> gtk4::Widget {
         .iter()
         .map(|url| {
             let row = adw::ActionRow::builder().title(url.as_str()).subtitle(tr("Noch nicht geprüft")).use_markup(false).build();
+
+            let open_button = gtk4::Button::from_icon_name("web-browser-symbolic");
+            open_button.set_tooltip_text(Some(&tr("Im Browser-Tab öffnen")));
+            open_button.set_valign(gtk4::Align::Center);
+            open_button.add_css_class("flat");
+            {
+                let url = url.clone();
+                let app_view_stack = app_view_stack.clone();
+                let browser_view = browser_view.clone();
+                open_button.connect_clicked(move |_| {
+                    browser_view.load_uri(&url);
+                    app_view_stack.set_visible_child_name("browser");
+                });
+            }
+            row.add_suffix(&open_button);
+
             list_box.append(&row);
             row
         })
