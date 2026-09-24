@@ -94,6 +94,24 @@ fn refresh_url_length_row(
     }
 }
 
+/// Wraps `group` in the same margin/clamp/scroller shell every tab of this
+/// dialog uses - a `ScrolledWindow` so an unusually tall tab (a long list
+/// of autocomplete suggestions, a narrow window) still degrades to
+/// scrolling instead of clipping, even though the whole point of splitting
+/// into tabs is that this normally isn't needed.
+fn tab_page(group: &adw::PreferencesGroup) -> gtk4::Widget {
+    let content = gtk4::Box::builder()
+        .orientation(gtk4::Orientation::Vertical)
+        .margin_top(18)
+        .margin_bottom(18)
+        .margin_start(18)
+        .margin_end(18)
+        .build();
+    content.append(group);
+    let clamp = adw::Clamp::builder().maximum_size(480).child(&content).build();
+    gtk4::ScrolledWindow::builder().child(&clamp).vexpand(true).build().upcast()
+}
+
 pub fn open(
     parent: &adw::ApplicationWindow,
     body: String,
@@ -383,55 +401,70 @@ pub fn open(
         });
     }
 
-    let header_suffix_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
-    header_suffix_box.append(&manage_terms_button);
-    header_suffix_box.append(&refresh_button);
+    // Split into four tabs, the same `Adw.InlineViewSwitcher` pattern
+    // `export.rs`'s own dialog already uses (Vorschau/Medien/Links) - this
+    // dialog grew to 16 fields across incremental additions (Autor,
+    // VG-Wort, Kommentare, ...), which meant one long scrolling list even
+    // though most edits only ever touch a handful of fields at once.
+    // Grouped by how often they're actually used together: the everyday
+    // publishing metadata stays on the first tab; category/tag management,
+    // the featured image, and RankMath SEO - each meaningfully optional or
+    // used in its own separate moment - get their own tab instead of
+    // permanently taking up scroll space.
+    let general_group = adw::PreferencesGroup::builder().title(tr("Allgemein")).build();
+    general_group.add(&title_row);
+    general_group.add(&slug_row);
+    general_group.add(&excerpt_row);
+    general_group.add(&status_row);
+    general_group.add(&scheduled_row);
+    general_group.add(&author_row);
+    general_group.add(&comment_status_row);
+    general_group.add(&vgwort_row);
 
-    let group = adw::PreferencesGroup::builder().title(tr("Artikel-Eigenschaften")).build();
-    group.set_header_suffix(Some(&header_suffix_box));
-    group.add(&title_row);
-    group.add(&slug_row);
-    group.add(&url_length_row);
-    group.add(&excerpt_row);
-    group.add(&status_row);
-    group.add(&scheduled_row);
-    group.add(&author_row);
-    group.add(&vgwort_row);
-    group.add(&comment_status_row);
-    group.add(&categories_row);
-    group.add(&tags_row);
-    group.add(&featured_image_row);
-    group.add(&featured_image_alt_row);
+    let taxonomy_header_suffix = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
+    taxonomy_header_suffix.append(&manage_terms_button);
+    taxonomy_header_suffix.append(&refresh_button);
+    let taxonomy_group = adw::PreferencesGroup::builder().title(tr("Kategorien & Tags")).build();
+    taxonomy_group.set_header_suffix(Some(&taxonomy_header_suffix));
+    taxonomy_group.add(&categories_row);
+    taxonomy_group.add(&tags_row);
 
     autocomplete::attach(&categories_row, category_terms);
     autocomplete::attach(&tags_row, tag_terms.clone());
 
-    // A separate group, not just more rows in "Artikel-Eigenschaften": these
-    // three only matter on a site that actually has RankMath active (see
-    // `Frontmatter::rank_math_title`'s doc comment), so keeping them
-    // visually distinct signals that up front rather than implying they're
-    // as universally applicable as the fields above.
+    let image_group = adw::PreferencesGroup::builder().title(tr("Aufmacherbild")).build();
+    image_group.add(&featured_image_row);
+    image_group.add(&featured_image_alt_row);
+
+    // Same "only matters on a site with RankMath active" reasoning as
+    // before for keeping these visually/organizationally distinct - now
+    // additionally covers the URL-length hint, which is SEO-flavored
+    // regardless of RankMath specifically.
     let seo_group = adw::PreferencesGroup::builder().title(tr("RankMath SEO")).build();
+    seo_group.add(&url_length_row);
     seo_group.add(&seo_title_row);
     seo_group.add(&seo_description_row);
     seo_group.add(&focus_keyword_row);
 
-    let groups_box = gtk4::Box::builder().orientation(gtk4::Orientation::Vertical).spacing(24).build();
-    groups_box.append(&group);
-    groups_box.append(&seo_group);
+    let view_stack = adw::ViewStack::new();
+    view_stack.add_titled_with_icon(&tab_page(&general_group), Some("general"), &tr("Allgemein"), "document-properties-symbolic");
+    view_stack.add_titled_with_icon(&tab_page(&taxonomy_group), Some("taxonomy"), &tr("Kategorien & Tags"), "tag-symbolic");
+    view_stack.add_titled_with_icon(&tab_page(&image_group), Some("image"), &tr("Bild"), "image-x-generic-symbolic");
+    view_stack.add_titled_with_icon(&tab_page(&seo_group), Some("seo"), &tr("SEO"), "edit-find-symbolic");
+    view_stack.set_vexpand(true);
 
-    let clamp = adw::Clamp::builder().maximum_size(480).child(&groups_box).build();
-    let scroller = gtk4::ScrolledWindow::builder().child(&clamp).vexpand(true).build();
+    let view_switcher = adw::InlineViewSwitcher::builder().stack(&view_stack).build();
 
     let header = adw::HeaderBar::new();
+    header.set_title_widget(Some(&view_switcher));
     let toolbar_view = adw::ToolbarView::new();
     toolbar_view.add_top_bar(&header);
-    toolbar_view.set_content(Some(&scroller));
+    toolbar_view.set_content(Some(&view_stack));
 
     let dialog = adw::Dialog::builder()
         .title(tr("Artikel-Eigenschaften"))
         .content_width(480)
-        .content_height(520)
+        .content_height(560)
         .child(&toolbar_view)
         .build();
 

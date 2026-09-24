@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.55.0] - 2026-09-25
+
+### Changed
+
+- "Artikel-Eigenschaften" is now split into four tabs (Allgemein/
+  Kategorien & Tags/Bild/SEO) instead of one long scrolling list of
+  16 fields, the same `Adw.InlineViewSwitcher` pattern the export
+  dialog already used.
+- "Artikel exportieren" is now a step-by-step wizard (`Adw.NavigationView`)
+  instead of free-roaming tabs: Links → Medien → Vorschau →
+  Exportieren, each step with a "Weiter" button and an automatic
+  back button to revisit an earlier step before actually publishing.
+
 ## [0.54.1] - 2026-09-25
 
 ### Fixed

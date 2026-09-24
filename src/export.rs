@@ -21,6 +21,42 @@ use crate::document::{self, Frontmatter, PostStatus};
 use crate::i18n::tr;
 use crate::{browser, linkcheck, media, mediapanel, notify, preview, secrets, wpclient, wpsite};
 
+/// One step of the "Artikel exportieren" wizard - `content` in its own
+/// `Adw.ToolbarView`/`Adw.HeaderBar` (so `Adw.NavigationView` can show a
+/// back button and this step's own title automatically, the same
+/// convention every libadwaita wizard-style dialog uses), plus a right-
+/// aligned "Weiter" button pinned to the bottom when there's a next step -
+/// the last step (`next_button: None`) has none, since it holds the actual
+/// export actions instead of a "continue" affordance.
+fn wizard_step(title: &str, content: &impl IsA<gtk4::Widget>, next_button: Option<&gtk4::Button>) -> adw::NavigationPage {
+    content.set_vexpand(true);
+
+    let header = adw::HeaderBar::new();
+    let toolbar_view = adw::ToolbarView::new();
+    toolbar_view.add_top_bar(&header);
+
+    match next_button {
+        Some(next_button) => {
+            let footer = gtk4::Box::builder()
+                .orientation(gtk4::Orientation::Horizontal)
+                .halign(gtk4::Align::End)
+                .margin_top(6)
+                .margin_bottom(18)
+                .margin_start(18)
+                .margin_end(18)
+                .build();
+            footer.append(next_button);
+            let wrapper = gtk4::Box::builder().orientation(gtk4::Orientation::Vertical).build();
+            wrapper.append(content);
+            wrapper.append(&footer);
+            toolbar_view.set_content(Some(&wrapper));
+        }
+        None => toolbar_view.set_content(Some(content)),
+    }
+
+    adw::NavigationPage::builder().title(title).child(&toolbar_view).build()
+}
+
 pub fn open(
     parent: &adw::ApplicationWindow,
     body: String,
@@ -83,28 +119,6 @@ pub fn open(
     // Same one-shot-scan-at-open-time approach as the media tab above: a
     // pre-publish sanity pass, not a live watcher.
     let links_page = linkcheck::build_content(&body);
-
-    let view_stack = adw::ViewStack::new();
-    view_stack.add_titled_with_icon(&preview_page, Some("preview"), &tr("Vorschau"), "view-reveal-symbolic");
-    view_stack.add_titled_with_icon(&media_page, Some("media"), &tr("Medien"), "image-x-generic-symbolic");
-    view_stack.add_titled_with_icon(&links_page, Some("links"), &tr("Links"), "insert-link-symbolic");
-    view_stack.set_vexpand(true);
-
-    let view_switcher = adw::InlineViewSwitcher::builder().stack(&view_stack).build();
-
-    let header = adw::HeaderBar::new();
-    header.set_title_widget(Some(&view_switcher));
-    let toolbar_view = adw::ToolbarView::new();
-    toolbar_view.add_top_bar(&header);
-
-    let content_box = gtk4::Box::builder()
-        .orientation(gtk4::Orientation::Vertical)
-        .spacing(12)
-        .margin_top(18)
-        .margin_bottom(18)
-        .margin_start(18)
-        .margin_end(18)
-        .build();
 
     let status_label = gtk4::Label::new(None);
     status_label.set_wrap(true);
@@ -186,17 +200,54 @@ pub fn open(
         private_button.set_sensitive(false);
     }
 
-    content_box.append(&view_stack);
-    content_box.append(&status_label);
-    content_box.append(&link_button);
-    content_box.append(&button_row);
-    toolbar_view.set_content(Some(&content_box));
+    // A step-by-step wizard (`Adw.NavigationView`), not the free-roaming
+    // tabs this dialog used to have - Links, then Medien, then Vorschau,
+    // then the actual export actions, each its own step with a "Weiter"
+    // button (except the last, which has the real publish/draft/etc.
+    // buttons instead) and an automatic back button courtesy of
+    // `NavigationView`/`HeaderBar`'s own built-in integration, so
+    // reviewing an earlier step again is still one click away, not lost.
+    let links_next_button = gtk4::Button::with_label(&tr("Weiter"));
+    links_next_button.add_css_class("suggested-action");
+    let links_step = wizard_step(&tr("Links"), &links_page, Some(&links_next_button));
+
+    let media_next_button = gtk4::Button::with_label(&tr("Weiter"));
+    media_next_button.add_css_class("suggested-action");
+    let media_step = wizard_step(&tr("Medien"), &media_page, Some(&media_next_button));
+
+    let preview_next_button = gtk4::Button::with_label(&tr("Weiter"));
+    preview_next_button.add_css_class("suggested-action");
+    let preview_step = wizard_step(&tr("Vorschau"), &preview_page, Some(&preview_next_button));
+
+    let export_content = gtk4::Box::builder().orientation(gtk4::Orientation::Vertical).spacing(12).build();
+    export_content.append(&status_label);
+    export_content.append(&link_button);
+    export_content.append(&button_row);
+    let export_step = wizard_step(&tr("Exportieren"), &export_content, None);
+
+    let nav_view = adw::NavigationView::new();
+    {
+        let nav_view = nav_view.clone();
+        let media_step = media_step.clone();
+        links_next_button.connect_clicked(move |_| nav_view.push(&media_step));
+    }
+    {
+        let nav_view = nav_view.clone();
+        let preview_step = preview_step.clone();
+        media_next_button.connect_clicked(move |_| nav_view.push(&preview_step));
+    }
+    {
+        let nav_view = nav_view.clone();
+        let export_step = export_step.clone();
+        preview_next_button.connect_clicked(move |_| nav_view.push(&export_step));
+    }
+    nav_view.push(&links_step);
 
     let dialog = adw::Dialog::builder()
         .title(tr("Artikel exportieren"))
         .content_width(680)
         .content_height(640)
-        .child(&toolbar_view)
+        .child(&nav_view)
         .build();
 
     {
