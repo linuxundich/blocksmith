@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.57.0] - 2026-09-25
+
+### Added
+
+- "Kategorien & Tags" and "KI-Tags vorschlagen…" now show which of the
+  typed/suggested tags already exist as a WordPress tag (green) versus
+  which would create a brand new one on publish (red), as small colored
+  pills - catching a near-duplicate (e.g. "KI" typed against an
+  existing "Ki") before it turns into an unwanted new tag.
+- Each link in the export wizard's "Links" step now also has a "URL
+  kopieren" button, next to the existing "im Browser-Tab öffnen" one.
+
+### Changed
+
+- "Artikel-Eigenschaften" is now five tabs instead of four:
+  "Veröffentlichung" (Status/Geplant/Autor/Kommentare/VG-Wort) split out
+  of "Allgemein" (now just Titel/Slug/Auszug), which no longer fit this
+  dialog's height without scrolling once "Auszug" became a real
+  multi-line text box. "Auszug"/"SEO-Beschreibung" are genuine wrapping
+  text areas now, not a single-line field that just scrolled sideways
+  past its own width - and grow to use a tab's free vertical space
+  instead of leaving it blank. The tab bar itself moved out of the
+  header bar into its own row below it (a `Adw.HeaderBar`'s title
+  widget doesn't center a segmented `Adw.InlineViewSwitcher` the way it
+  centers `Adw.ViewSwitcher`), and the dialog is a bit wider so all
+  five tab labels fit without truncating.
+
 ## [0.56.0] - 2026-09-25
 
 ### Changed

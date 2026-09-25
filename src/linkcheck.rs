@@ -123,11 +123,12 @@ fn all_ok_text(total: usize) -> String {
 /// added/removed after this dialog is already open, re-opening the export
 /// dialog picks them up, matching how the rest of this dialog behaves.
 ///
-/// Each row's own "im Browser-Tab öffnen" suffix button opens it in the
-/// app's own Browser tab (`app_view_stack`/`browser_view`) rather than an
-/// external browser - the same "stay inside the app" convention
-/// `export.rs`'s own "Vorschau öffnen" button already uses, so checking a
-/// link that looks broken doesn't mean leaving Blocksmith to look at it.
+/// Each row has two suffix buttons: "URL kopieren" copies the plain URL to
+/// the clipboard, and "im Browser-Tab öffnen" opens it in the app's own
+/// Browser tab (`app_view_stack`/`browser_view`) rather than an external
+/// browser - the same "stay inside the app" convention `export.rs`'s own
+/// "Vorschau öffnen" button already uses, so checking a link that looks
+/// broken doesn't mean leaving Blocksmith to look at it.
 pub fn build_content(body: &str, app_view_stack: &adw::ViewStack, browser_view: &Rc<browser::BrowserView>) -> gtk4::Widget {
     let links = scan_links(body);
 
@@ -155,6 +156,18 @@ pub fn build_content(body: &str, app_view_stack: &adw::ViewStack, browser_view: 
         .iter()
         .map(|url| {
             let row = adw::ActionRow::builder().title(url.as_str()).subtitle(tr("Noch nicht geprüft")).use_markup(false).build();
+
+            let copy_button = gtk4::Button::from_icon_name("edit-copy-symbolic");
+            copy_button.set_tooltip_text(Some(&tr("URL kopieren")));
+            copy_button.set_valign(gtk4::Align::Center);
+            copy_button.add_css_class("flat");
+            {
+                let url = url.clone();
+                copy_button.connect_clicked(move |button| {
+                    button.clipboard().set_text(&url);
+                });
+            }
+            row.add_suffix(&copy_button);
 
             let open_button = gtk4::Button::from_icon_name("web-browser-symbolic");
             open_button.set_tooltip_text(Some(&tr("Im Browser-Tab öffnen")));

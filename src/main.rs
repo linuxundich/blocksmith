@@ -130,9 +130,16 @@ fn main() -> glib::ExitCode {
     app.run()
 }
 
-/// Chat bubble colors use libadwaita's named theme colors so they adapt to
-/// light/dark mode automatically, rather than hardcoding colors that would
-/// only look right in one theme.
+/// Chat bubble and tag-pill colors use libadwaita's named theme colors so
+/// they adapt to light/dark mode automatically, rather than hardcoding
+/// colors that would only look right in one theme. The `.tag-pill-*`
+/// classes are `properties.rs`'s "which tags already exist on WordPress"
+/// hint (a row of small colored badges, not just tinted text - tinted
+/// text alone read as too small/subtle to notice at a glance) and
+/// `success`/`error` are libadwaita's own semantic names for exactly that
+/// positive/negative distinction, the same one this app's "success"/
+/// "error" CSS classes already give an icon elsewhere (e.g. the URL-length
+/// check in `properties.rs`).
 fn load_chat_bubble_css() {
     let Some(display) = gtk4::gdk::Display::default() else {
         return;
@@ -143,6 +150,9 @@ fn load_chat_bubble_css() {
         .chat-bubble { padding: 8px 12px; border-radius: 12px; }
         .chat-bubble-user { background-color: @accent_bg_color; color: @accent_fg_color; }
         .chat-bubble-model { background-color: alpha(currentColor, 0.08); }
+        .tag-pill { padding: 2px 10px; border-radius: 999px; }
+        .tag-pill-existing { background-color: @success_bg_color; color: @success_fg_color; }
+        .tag-pill-new { background-color: @error_bg_color; color: @error_fg_color; }
         ",
     );
     gtk4::style_context_add_provider_for_display(&display, &provider, gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION);

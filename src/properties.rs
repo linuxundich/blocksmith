@@ -94,6 +94,47 @@ fn refresh_url_length_row(
     }
 }
 
+/// Splits `tags_text`'s comma-separated tags into `(tag, already_exists)`
+/// pairs (`termcache::term_exists` - case-insensitive, matching how
+/// WordPress itself treats tag names, and `run_export`'s
+/// `resolve_or_create_term`, which is what would actually create a new
+/// one on publish), in their original order - so a near-duplicate (e.g.
+/// "KI" typed against an existing "Ki") is caught here instead of only
+/// discovered as an unwanted new tag after publishing. Depends on
+/// `known_tags` (`termcache`) already being populated - before its first
+/// successful refresh, every typed tag shows as "new" even if it already
+/// exists remotely.
+fn tags_status_entries(tags_text: &str, known_tags: &[String]) -> Vec<(String, bool)> {
+    parse_list(tags_text).into_iter().map(|tag| { let exists = termcache::term_exists(&tag, known_tags); (tag, exists) }).collect()
+}
+
+/// Rebuilds `flow_box` as a row of small colored pills, one per tag
+/// (`tags_status_entries`) - green ("tag-pill-existing") for a tag that
+/// already exists as a WordPress tag, red ("tag-pill-new") for one that
+/// would create a brand new one on publish (the `.tag-pill*` classes are
+/// declared once in `main.rs`'s `load_chat_bubble_css`, using libadwaita's
+/// named `success`/`error` colors so they still adapt to light/dark mode).
+/// A colored badge reads at a glance far better than the plain small
+/// caption text this used to be. `row` (the `Adw.PreferencesRow` wrapping
+/// `flow_box` - see its construction in `open`) is hidden entirely once
+/// nothing's typed, not just `flow_box` itself - otherwise an empty row
+/// would still show in the boxed list (a stray blank slot, or an
+/// orphaned separator line above the Kategorien row below it).
+fn refresh_tags_status(row: &adw::PreferencesRow, flow_box: &gtk4::FlowBox, tags_text: &str, known_tags: &[String]) {
+    while let Some(child) = flow_box.first_child() {
+        flow_box.remove(&child);
+    }
+    let entries = tags_status_entries(tags_text, known_tags);
+    row.set_visible(!entries.is_empty());
+    for (tag, exists) in entries {
+        let pill = gtk4::Label::new(Some(&tag));
+        pill.add_css_class("tag-pill");
+        pill.add_css_class("caption");
+        pill.add_css_class(if exists { "tag-pill-existing" } else { "tag-pill-new" });
+        flow_box.append(&pill);
+    }
+}
+
 /// Wraps `group` in the same margin/clamp/scroller shell every tab of this
 /// dialog uses - a `ScrolledWindow` so an unusually tall tab (a long list
 /// of autocomplete suggestions, a narrow window) still degrades to
@@ -108,8 +149,68 @@ fn tab_page(group: &adw::PreferencesGroup) -> gtk4::Widget {
         .margin_end(18)
         .build();
     content.append(group);
-    let clamp = adw::Clamp::builder().maximum_size(480).child(&content).build();
+    // Matches `dialog`'s own `content_width` below - widened together with
+    // it from the original 480 once five tabs' full labels ("Veröffentlichung",
+    // "Kategorien & Tags", ...) no longer fit the switcher at that width and
+    // started truncating with an ellipsis (a GNOME HIG violation on its
+    // own: a tab whose label you can't actually read).
+    let clamp = adw::Clamp::builder().maximum_size(600).child(&content).build();
     gtk4::ScrolledWindow::builder().child(&clamp).vexpand(true).build().upcast()
+}
+
+/// A genuine multi-line text box for a field that regularly holds a full
+/// sentence rather than a couple of words ("Auszug / Meta-Beschreibung",
+/// "SEO-Beschreibung") - `Adw.EntryRow` is strictly single-line and just
+/// scrolls sideways past its own width, which a wider dialog only ever
+/// partially fixes; wrapping text is the actual fix. `gtk4::TextView` in a
+/// `gtk4::Frame` (the same "real textbox" look `aialt.rs`'s generated-alt-
+/// text editor already uses), wrapped in an `Adw.PreferencesRow` - like
+/// `refresh_tags_status`'s pill row - so it still renders as a proper
+/// boxed-list row (matching padding/rounded card) instead of the
+/// disconnected footer-content look a plain widget gets from
+/// `Adw.PreferencesGroup::add`. Its own small caption label stands in for
+/// `Adw.EntryRow`'s floating title, since `Adw.PreferencesRow` has no
+/// title chrome of its own.
+///
+/// `vexpand(true)` on the row/box/scroller all the way down: without it,
+/// splitting "Veröffentlichung" out of "Allgemein" (see `open`'s own
+/// comment on that) just left the freed vertical space as dead white
+/// space below a fixed-height `min_content_height(72)` box instead of
+/// actually using it - the caller also needs to set `vexpand(true)` on
+/// the `Adw.PreferencesGroup` this row is added to, or a plain
+/// `Gtk.Box`/`Gtk.ListBox` parent won't hand this row the extra room to
+/// begin with. `min_content_height` stays as a floor (~3 lines), not a
+/// fixed size, for a tab where nothing else pushes this row that tall.
+fn build_textarea_row(title: &str, initial_text: &str) -> (adw::PreferencesRow, gtk4::TextView) {
+    let text_view = gtk4::TextView::builder().wrap_mode(gtk4::WrapMode::WordChar).top_margin(6).bottom_margin(6).left_margin(6).right_margin(6).build();
+    text_view.buffer().set_text(initial_text);
+
+    let frame = gtk4::Frame::new(None);
+    frame.set_child(Some(&text_view));
+    let scroller = gtk4::ScrolledWindow::builder().child(&frame).min_content_height(72).vexpand(true).build();
+
+    let title_label = gtk4::Label::builder().label(title).xalign(0.0).build();
+    title_label.add_css_class("caption");
+    title_label.add_css_class("dim-label");
+
+    let content = gtk4::Box::builder()
+        .orientation(gtk4::Orientation::Vertical)
+        .spacing(6)
+        .margin_start(12)
+        .margin_end(12)
+        .margin_top(8)
+        .margin_bottom(8)
+        .vexpand(true)
+        .build();
+    content.append(&title_label);
+    content.append(&scroller);
+
+    let row = adw::PreferencesRow::new();
+    row.set_vexpand(true);
+    row.set_activatable(false);
+    row.set_selectable(false);
+    row.set_child(Some(&content));
+    (row, text_view)
 }
 
 pub fn open(
@@ -143,18 +244,12 @@ pub fn open(
     url_length_icon.set_valign(gtk4::Align::Center);
     url_length_row.add_suffix(&url_length_icon);
 
-    let excerpt_row = adw::EntryRow::builder()
-        .title(tr("Auszug / Meta-Beschreibung"))
-        .text(current.excerpt.clone().unwrap_or_default().as_str())
-        .build();
+    let (excerpt_row, excerpt_view) = build_textarea_row(&tr("Auszug / Meta-Beschreibung"), &current.excerpt.clone().unwrap_or_default());
     let seo_title_row = adw::EntryRow::builder()
         .title(tr("SEO-Titel"))
         .text(current.rank_math_title.clone().unwrap_or_default().as_str())
         .build();
-    let seo_description_row = adw::EntryRow::builder()
-        .title(tr("SEO-Beschreibung"))
-        .text(current.rank_math_description.clone().unwrap_or_default().as_str())
-        .build();
+    let (seo_description_row, seo_description_view) = build_textarea_row(&tr("SEO-Beschreibung"), &current.rank_math_description.clone().unwrap_or_default());
     let focus_keyword_row = adw::EntryRow::builder()
         .title(tr("Fokus-Keyword"))
         .text(current.rank_math_focus_keyword.clone().unwrap_or_default().as_str())
@@ -174,6 +269,40 @@ pub fn open(
     tags_suggest_button.set_valign(gtk4::Align::Center);
     tags_suggest_button.add_css_class("flat");
     tags_row.add_suffix(&tags_suggest_button);
+    // Shows which of the currently-typed tags already exist as a WordPress
+    // tag (`tag_terms`, from `termcache`) vs which would create a brand
+    // new one on publish (`run_export`'s `resolve_or_create_term`) - so a
+    // near-duplicate ("KI" vs "Ki") is caught here instead of only
+    // discovered as an unwanted new tag after publishing. A wrapping row
+    // of small colored pills (see `refresh_tags_status`).
+    //
+    // Wrapped in a real `Adw.PreferencesRow` rather than adding the
+    // `FlowBox` to `taxonomy_group` directly - a plain `gtk4::Widget`
+    // added to a `PreferencesGroup` (the same pattern `connection.rs`'s
+    // `status_label` uses) renders *outside* the boxed-list card entirely,
+    // as separate footer content below it, with none of the list's own
+    // padding - fine for a one-line hint, but visually disconnected for
+    // something that reads as belonging to the Tags row right above it.
+    // `Adw.PreferencesRow` (the plain base row type - `Adw.ActionRow`/
+    // `Adw.EntryRow` etc. all build on it) instead makes this a genuine
+    // list row: same rounded/bordered card, same row separator, and its
+    // `child` gets the FlowBox's own margins below to match every other
+    // row's internal padding. Not selectable/activatable - it's static
+    // content, not something to click.
+    let tags_status_flow = gtk4::FlowBox::builder()
+        .halign(gtk4::Align::Start)
+        .selection_mode(gtk4::SelectionMode::None)
+        .row_spacing(6)
+        .column_spacing(6)
+        .margin_start(12)
+        .margin_end(12)
+        .margin_top(8)
+        .margin_bottom(8)
+        .build();
+    let tags_status_row = adw::PreferencesRow::new();
+    tags_status_row.set_activatable(false);
+    tags_status_row.set_selectable(false);
+    tags_status_row.set_child(Some(&tags_status_flow));
     let featured_image_row = adw::EntryRow::builder()
         .title(tr("Featured Image (Pfad)"))
         .text(current.featured_image.clone().unwrap_or_default().as_str())
@@ -401,25 +530,42 @@ pub fn open(
         });
     }
 
-    // Split into four tabs, the same `Adw.InlineViewSwitcher` pattern
+    // Split into five tabs, the same `Adw.InlineViewSwitcher` pattern
     // `export.rs`'s own dialog already uses (Vorschau/Medien/Links) - this
     // dialog grew to 16 fields across incremental additions (Autor,
     // VG-Wort, Kommentare, ...), which meant one long scrolling list even
     // though most edits only ever touch a handful of fields at once.
-    // Grouped by how often they're actually used together: the everyday
-    // publishing metadata stays on the first tab; category/tag management,
-    // the featured image, and RankMath SEO - each meaningfully optional or
-    // used in its own separate moment - get their own tab instead of
-    // permanently taking up scroll space.
-    let general_group = adw::PreferencesGroup::builder().title(tr("Allgemein")).build();
+    // Grouped by how often they're actually used together: article content
+    // (title/slug/excerpt) and publishing workflow (status/schedule/
+    // author/comments/VG-Wort) are each their own tab rather than one
+    // combined "Allgemein" - category/tag management, the featured image,
+    // and RankMath SEO - each meaningfully optional or used in its own
+    // separate moment - get their own tab too, instead of permanently
+    // taking up scroll space.
+    // "Allgemein" now holds only what's actually written for this
+    // specific article - title/slug/excerpt. Status, scheduling, author,
+    // comments and VG-Wort are workflow/publishing settings, not article
+    // content, and used to all sit crammed into this one tab together -
+    // fine as single-line rows, but once "Auszug" became a real multi-
+    // line textarea (see `build_textarea_row`), that no longer fit this
+    // dialog's height without scrolling. Split into its own
+    // "Veröffentlichung" tab below instead of just enlarging the dialog
+    // again.
+    // `vexpand(true)` so the group (and, through it, `excerpt_row`'s own
+    // `vexpand(true)` - see `build_textarea_row`) actually gets handed the
+    // tab page's leftover vertical space instead of leaving it as dead
+    // white space below a short, fixed-height boxed list.
+    let general_group = adw::PreferencesGroup::builder().title(tr("Allgemein")).vexpand(true).build();
     general_group.add(&title_row);
     general_group.add(&slug_row);
     general_group.add(&excerpt_row);
-    general_group.add(&status_row);
-    general_group.add(&scheduled_row);
-    general_group.add(&author_row);
-    general_group.add(&comment_status_row);
-    general_group.add(&vgwort_row);
+
+    let publishing_group = adw::PreferencesGroup::builder().title(tr("Veröffentlichung")).build();
+    publishing_group.add(&status_row);
+    publishing_group.add(&scheduled_row);
+    publishing_group.add(&author_row);
+    publishing_group.add(&comment_status_row);
+    publishing_group.add(&vgwort_row);
 
     let taxonomy_header_suffix = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
     taxonomy_header_suffix.append(&manage_terms_button);
@@ -428,9 +574,11 @@ pub fn open(
     taxonomy_group.set_header_suffix(Some(&taxonomy_header_suffix));
     taxonomy_group.add(&categories_row);
     taxonomy_group.add(&tags_row);
+    taxonomy_group.add(&tags_status_row);
 
     autocomplete::attach(&categories_row, category_terms);
     autocomplete::attach(&tags_row, tag_terms.clone());
+    refresh_tags_status(&tags_status_row, &tags_status_flow, &tags_row.text(), &tag_terms.borrow());
 
     let image_group = adw::PreferencesGroup::builder().title(tr("Aufmacherbild")).build();
     image_group.add(&featured_image_row);
@@ -440,7 +588,9 @@ pub fn open(
     // before for keeping these visually/organizationally distinct - now
     // additionally covers the URL-length hint, which is SEO-flavored
     // regardless of RankMath specifically.
-    let seo_group = adw::PreferencesGroup::builder().title(tr("RankMath SEO")).build();
+    // Same `vexpand(true)` reasoning as `general_group` above, for
+    // `seo_description_row`.
+    let seo_group = adw::PreferencesGroup::builder().title(tr("RankMath SEO")).vexpand(true).build();
     seo_group.add(&url_length_row);
     seo_group.add(&seo_title_row);
     seo_group.add(&seo_description_row);
@@ -448,22 +598,44 @@ pub fn open(
 
     let view_stack = adw::ViewStack::new();
     view_stack.add_titled_with_icon(&tab_page(&general_group), Some("general"), &tr("Allgemein"), "document-properties-symbolic");
+    view_stack.add_titled_with_icon(&tab_page(&publishing_group), Some("publishing"), &tr("Veröffentlichung"), "send-symbolic");
     view_stack.add_titled_with_icon(&tab_page(&taxonomy_group), Some("taxonomy"), &tr("Kategorien & Tags"), "tag-symbolic");
     view_stack.add_titled_with_icon(&tab_page(&image_group), Some("image"), &tr("Bild"), "image-x-generic-symbolic");
     view_stack.add_titled_with_icon(&tab_page(&seo_group), Some("seo"), &tr("SEO"), "edit-find-symbolic");
     view_stack.set_vexpand(true);
 
+    // A plain `Gtk.Box` row below the header bar, not `header`'s own
+    // title widget - the same reasoning `window.rs`'s own
+    // `Adw.InlineViewSwitcher` already follows: it's a seamless linked
+    // pill, not the loose per-tab buttons `Adw.HeaderBar` centers via
+    // `Adw.ViewSwitcher`, so nesting it as the header's title widget left
+    // it flush against the header's own start edge instead of properly
+    // centered - it needs its own row to center itself in. `header` is
+    // left with no custom title widget, so it shows the dialog's own
+    // `.title()` centered instead, same as `export.rs`'s wizard dialog.
     let view_switcher = adw::InlineViewSwitcher::builder().stack(&view_stack).build();
+    let switcher_bar = gtk4::Box::builder()
+        .orientation(gtk4::Orientation::Horizontal)
+        .halign(gtk4::Align::Center)
+        .margin_top(6)
+        .margin_bottom(6)
+        .build();
+    switcher_bar.append(&view_switcher);
 
+    // No extra `Gtk.Separator` below `switcher_bar` - `Adw.ToolbarView`
+    // already draws its own border under the top-bar stack once the
+    // content below can scroll, so adding one here just doubled it up
+    // into two thin lines stacked right on top of each other.
     let header = adw::HeaderBar::new();
-    header.set_title_widget(Some(&view_switcher));
     let toolbar_view = adw::ToolbarView::new();
     toolbar_view.add_top_bar(&header);
+    toolbar_view.add_top_bar(&switcher_bar);
     toolbar_view.set_content(Some(&view_stack));
 
+    // 600, not the original 480 - see `tab_page`'s own comment on why.
     let dialog = adw::Dialog::builder()
         .title(tr("Artikel-Eigenschaften"))
-        .content_width(480)
+        .content_width(600)
         .content_height(560)
         .child(&toolbar_view)
         .build();
@@ -495,8 +667,8 @@ pub fn open(
     }
     {
         let frontmatter = frontmatter.clone();
-        excerpt_row.connect_changed(move |row| {
-            let text = row.text().to_string();
+        excerpt_view.buffer().connect_changed(move |buffer| {
+            let text = buffer.text(&buffer.start_iter(), &buffer.end_iter(), false).to_string();
             frontmatter.borrow_mut().excerpt = (!text.is_empty()).then_some(text);
         });
     }
@@ -509,8 +681,8 @@ pub fn open(
     }
     {
         let frontmatter = frontmatter.clone();
-        seo_description_row.connect_changed(move |row| {
-            let text = row.text().to_string();
+        seo_description_view.buffer().connect_changed(move |buffer| {
+            let text = buffer.text(&buffer.start_iter(), &buffer.end_iter(), false).to_string();
             frontmatter.borrow_mut().rank_math_description = (!text.is_empty()).then_some(text);
         });
     }
@@ -534,8 +706,13 @@ pub fn open(
     }
     {
         let frontmatter = frontmatter.clone();
+        let tags_status_row = tags_status_row.clone();
+        let tags_status_flow = tags_status_flow.clone();
+        let tag_terms = tag_terms.clone();
         tags_row.connect_changed(move |row| {
-            frontmatter.borrow_mut().tags = parse_list(&row.text());
+            let text = row.text();
+            frontmatter.borrow_mut().tags = parse_list(&text);
+            refresh_tags_status(&tags_status_row, &tags_status_flow, &text, &tag_terms.borrow());
         });
     }
     {
@@ -677,5 +854,24 @@ mod tests {
     fn seo_url_preview_strips_a_trailing_slash_from_the_domain() {
         let (url, _) = seo_url_preview("https://linuxundich.de/", Some("news"), "post");
         assert_eq!(url, "https://linuxundich.de/news/post/");
+    }
+
+    #[test]
+    fn tags_status_entries_is_empty_when_nothing_is_typed() {
+        assert_eq!(tags_status_entries("", &["KI".to_string()]), vec![]);
+        assert_eq!(tags_status_entries("   ", &["KI".to_string()]), vec![]);
+    }
+
+    #[test]
+    fn tags_status_entries_flags_each_tag_as_existing_or_new() {
+        let known = vec!["KI".to_string(), "Hardware".to_string()];
+        let entries = tags_status_entries("KI, Terminal", &known);
+        assert_eq!(entries, vec![("KI".to_string(), true), ("Terminal".to_string(), false)]);
+    }
+
+    #[test]
+    fn tags_status_entries_matches_known_tags_case_insensitively() {
+        let known = vec!["Ki".to_string()];
+        assert_eq!(tags_status_entries("KI", &known), vec![("KI".to_string(), true)]);
     }
 }

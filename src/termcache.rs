@@ -42,6 +42,35 @@ pub struct TermCacheHandles {
     pub category_slugs: Rc<RefCell<HashMap<String, String>>>,
 }
 
+/// Adwaita's standard green_5 - used wherever a category/tag is shown as
+/// already existing on WordPress (`term_exists`), the same positive
+/// semantics `properties.rs`'s URL-length icon already gives its "success"
+/// CSS class, just as an inline Pango color instead (a `gtk4::Label`
+/// mixing colors per-substring has no CSS-class equivalent).
+pub const EXISTING_TERM_COLOR: &str = "#26a269";
+/// Adwaita's standard red_4 ("destructive-action" semantics) - used
+/// wherever a category/tag would create a brand new WordPress term on
+/// publish.
+pub const NEW_TERM_COLOR: &str = "#e01b24";
+
+/// True when `term` already exists in `known_terms` (case-insensitive,
+/// matching how WordPress itself treats category/tag names, and
+/// `export.rs`'s `resolve_or_create_term`, which is what would actually
+/// create a new one on publish).
+pub fn term_exists(term: &str, known_terms: &[String]) -> bool {
+    known_terms.iter().any(|known| known.eq_ignore_ascii_case(term))
+}
+
+/// Pango markup for one term, colored `EXISTING_TERM_COLOR` if it already
+/// exists (`term_exists`) or `NEW_TERM_COLOR` if publishing it would
+/// create a brand new one. Escapes `term` first (`glib::markup_escape_text`)
+/// so a name containing `&`/`<`/`>` can't break the markup or be
+/// misparsed as a tag.
+pub fn term_markup(term: &str, known_terms: &[String]) -> String {
+    let color = if term_exists(term, known_terms) { EXISTING_TERM_COLOR } else { NEW_TERM_COLOR };
+    format!(r#"<span foreground="{color}">{}</span>"#, glib::markup_escape_text(term))
+}
+
 fn cache_path() -> PathBuf {
     let mut dir = glib::user_cache_dir();
     dir.push("blocksmith");
@@ -154,5 +183,24 @@ mod tests {
     fn missing_or_corrupt_file_yields_default() {
         assert_eq!(parse(""), TermCache::default());
         assert_eq!(parse("not json"), TermCache::default());
+    }
+
+    #[test]
+    fn term_exists_matches_case_insensitively() {
+        let known = vec!["KI".to_string(), "Hardware".to_string()];
+        assert!(term_exists("ki", &known));
+        assert!(!term_exists("Terminal", &known));
+    }
+
+    #[test]
+    fn term_markup_colors_an_existing_term_green_and_a_new_one_red() {
+        let known = vec!["KI".to_string()];
+        assert_eq!(term_markup("KI", &known), format!(r#"<span foreground="{EXISTING_TERM_COLOR}">KI</span>"#));
+        assert_eq!(term_markup("Terminal", &known), format!(r#"<span foreground="{NEW_TERM_COLOR}">Terminal</span>"#));
+    }
+
+    #[test]
+    fn term_markup_escapes_special_characters() {
+        assert_eq!(term_markup("R&D", &[]), format!(r#"<span foreground="{NEW_TERM_COLOR}">R&amp;D</span>"#));
     }
 }

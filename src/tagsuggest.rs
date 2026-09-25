@@ -21,7 +21,7 @@ use gtk4::glib;
 
 use crate::document;
 use crate::i18n::tr;
-use crate::{chatconfig, llm, secrets};
+use crate::{chatconfig, llm, secrets, termcache};
 
 const SYSTEM_PROMPT: &str = "Du schlägst passende Tags (Schlagwörter) für einen Blogartikel vor. \
      Analysiere Titel und Text und nenne 5 bis 8 treffende Tags. Bereits existierende Tags der \
@@ -125,17 +125,19 @@ pub fn open(window: &gtk4::Window, article_title: String, body: String, existing
 
 /// Every row `populate_suggestions` adds is a `Gtk.CheckButton` directly
 /// inside the `ListBox` (auto-wrapped in a plain `Gtk.ListBoxRow` by GTK),
-/// its label holding the tag text - reading it back this way avoids
-/// needing a parallel `Vec<(String, CheckButton)>` just to know which ones
-/// ended up checked.
+/// its `child` holding a colored `Gtk.Label` (see `populate_suggestions`) -
+/// `Gtk.Label::text()` strips that label's Pango markup back down to the
+/// plain tag text, so reading it back this way still avoids needing a
+/// parallel `Vec<(String, CheckButton)>` just to know which ones ended up
+/// checked.
 fn checked_suggestions(list: &gtk4::ListBox) -> Vec<String> {
     let mut checked = Vec::new();
     let mut child = list.first_child();
     while let Some(row) = child {
         if let Some(check) = row.first_child().and_then(|w| w.downcast::<gtk4::CheckButton>().ok()) {
             if check.is_active() {
-                if let Some(label) = check.label() {
-                    checked.push(label.to_string());
+                if let Some(label) = check.child().and_then(|w| w.downcast::<gtk4::Label>().ok()) {
+                    checked.push(label.text().to_string());
                 }
             }
         }
@@ -144,12 +146,18 @@ fn checked_suggestions(list: &gtk4::ListBox) -> Vec<String> {
     checked
 }
 
-fn populate_suggestions(list: &gtk4::ListBox, tags: &[String]) {
+/// `existing_tags` colors each row green if the model suggested a tag the
+/// site already has (`termcache::term_markup`) or red if accepting it
+/// would create a brand new WordPress tag - the same distinction
+/// `properties.rs`'s own tags-field status line shows, so it's visible
+/// right here too, before a suggestion is even applied.
+fn populate_suggestions(list: &gtk4::ListBox, tags: &[String], existing_tags: &[String]) {
     while let Some(child) = list.first_child() {
         list.remove(&child);
     }
     for tag in tags {
-        let check = gtk4::CheckButton::builder().label(tag).active(true).build();
+        let label = gtk4::Label::builder().use_markup(true).label(termcache::term_markup(tag, existing_tags)).xalign(0.0).build();
+        let check = gtk4::CheckButton::builder().active(true).child(&label).build();
         list.append(&check);
     }
 }
@@ -176,6 +184,7 @@ fn run_generation(
     let model = config.model_for(provider).to_string();
     let base_url = config.ollama_base_url.clone();
     let current_tags = current_tags.to_vec();
+    let existing_tags = existing_tags.to_vec();
 
     let (tx, rx) = mpsc::channel::<Result<String, String>>();
     std::thread::spawn(move || {
@@ -205,7 +214,7 @@ fn run_generation(
             } else {
                 status_label.set_visible(false);
             }
-            populate_suggestions(&suggestions_list, &suggestions);
+            populate_suggestions(&suggestions_list, &suggestions, &existing_tags);
             apply_button.set_sensitive(!suggestions.is_empty());
             generate_button.set_sensitive(true);
             glib::ControlFlow::Break
