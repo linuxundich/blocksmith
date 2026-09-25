@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.58.0] - 2026-09-25
+
+### Changed
+
+- "Erscheinungsbild"'s color-scheme grid now shows GtkSourceView's own
+  real, canonical bundled schemes (`Adwaita`/`-dark`, `classic`/`-dark`,
+  `cobalt`/`-light`, `kate`/`-dark`, `oblivion`, `solarized-light`/
+  `-dark`, `tango` - six per light/dark mode) instead of separate
+  hand-authored copies this app used to ship - the same set GNOME
+  Builder and GNOME Text Editor themselves offer.
+- Whichever color scheme is picked there now also colors the live
+  Markdown preview's code blocks to match, not just the source editor.
+
 ## [0.57.0] - 2026-09-25
 
 ### Added

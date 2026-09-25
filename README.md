@@ -234,14 +234,15 @@ blocks. Implemented so far:
   preview illustrations, and an editor color-scheme grid using
   GtkSourceView's `StyleSchemePreview` widget filtered to schemes matching
   the current light/dark mode, the same widget and filtering Builder uses,
-  plus the article preview's own typographic style picker). Beyond
-  whatever the installed GtkSourceView bundles itself, ten more schemes
-  ship with the app and show up in that same grid - five dark (Dracula,
-  Nord, Gruvbox Dark, Monokai, Catppuccin Mocha) and five light (Gruvbox
-  Light, One Light, GitHub Light, Catppuccin Latte, Rosé Pine Dawn), each
-  a real, hand-authored GtkSourceView scheme covering the full standard
-  style set, not just a token color swap. Independent
-  font pickers for the editor and the preview (family/size/weight/style,
+  plus the article preview's own typographic style picker). The grid
+  shows GtkSourceView's own real, canonical bundled schemes (six per
+  mode: `Adwaita`/`-dark`, `classic`/`-dark`, `cobalt`/`-light`,
+  `kate`/`-dark`, `oblivion`, `solarized-light`/`-dark`, `tango`) rather
+  than the app shipping its own copies - the same set GNOME Builder and
+  GNOME Text Editor themselves offer. Whichever scheme is picked also
+  colors the live Markdown preview's code blocks to match, not just the
+  editor. Independent font pickers for the editor and the preview
+  (family/size/weight/style,
   each with a live sample and a reset-to-default button), a WordPress-connection page (site
   URL/username in a small config file, the Application Password in the
   Secret Service via [`oo7`](https://crates.io/crates/oo7), never written

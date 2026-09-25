@@ -35,6 +35,7 @@ use gtk4::{gio, glib, pango};
 use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 use webkit6::prelude::*;
 
+use crate::appearance;
 use crate::document::{self, Frontmatter};
 use crate::fontutil;
 use crate::i18n::tr;
@@ -236,6 +237,7 @@ impl PreviewPane {
                     0.0,
                     &last_frontmatter.borrow(),
                     show_header.get(),
+                    appearance::current_scheme_colors(),
                 );
                 web_view.load_html(&html, base_uri(doc_dir.borrow().as_deref()).as_deref());
             });
@@ -543,6 +545,15 @@ impl PreviewPane {
         self.rerender();
     }
 
+    /// Called from "Erscheinungsbild"'s scheme grid whenever the user picks
+    /// a different editor color scheme - re-renders with that scheme's own
+    /// colors immediately, the same way `set_style` applies a typography
+    /// change live. Public (unlike `rerender`) since the scheme itself is
+    /// owned by `appearance.rs`, not this pane.
+    pub fn refresh(&self) {
+        self.rerender();
+    }
+
     fn rerender(&self) {
         let dark = adw::StyleManager::default().is_dark();
         let html = render_html(
@@ -553,6 +564,7 @@ impl PreviewPane {
             0.0,
             &self.last_frontmatter.borrow(),
             self.show_header.get(),
+            appearance::current_scheme_colors(),
         );
         self.web_view.load_html(&html, base_uri(self.doc_dir.borrow().as_deref()).as_deref());
     }
@@ -576,7 +588,7 @@ impl PreviewPane {
         self.web_view.evaluate_javascript("window.scrollY", None, None, gio::Cancellable::NONE, move |result| {
             let scroll_y = result.map(|value| value.to_double()).unwrap_or(0.0);
             let dark = adw::StyleManager::default().is_dark();
-            let html = render_html(&last_markdown.borrow(), style, dark, &last_media.borrow(), scroll_y, &last_frontmatter.borrow(), show_header);
+            let html = render_html(&last_markdown.borrow(), style, dark, &last_media.borrow(), scroll_y, &last_frontmatter.borrow(), show_header, appearance::current_scheme_colors());
             web_view.load_html(&html, base_uri(doc_dir.as_deref()).as_deref());
         });
     }
@@ -674,11 +686,30 @@ fn style_css(style: PreviewStyle, dark: bool) -> &'static str {
     }
 }
 
+/// Overrides `style_css`'s own hardcoded `pre`/`code` colors with
+/// `code_colors` (the active editor scheme's "text" style, see
+/// `appearance::current_scheme_colors`) via plain CSS cascade - appended
+/// after `style_css`'s own block, so a later same-specificity rule simply
+/// wins, rather than rewriting each of the six `style_css` variants by
+/// hand. Only the two color properties are overridden; each style's own
+/// padding/border-radius/etc. for `pre`/`code` is untouched. `None` (no
+/// resolvable scheme) leaves every style's own hardcoded fallback colors
+/// exactly as they were before this existed.
+fn code_block_css(code_colors: Option<(&str, &str)>) -> String {
+    let Some((background, foreground)) = code_colors else { return String::new() };
+    format!(
+        "pre {{ background: {background}; color: {foreground}; }}
+         code {{ background: {background}; color: {foreground}; }}
+         pre code {{ background: none; color: inherit; }}"
+    )
+}
+
 #[allow(clippy::too_many_arguments)]
-pub fn render_html(markdown: &str, style: PreviewStyle, dark: bool, media: &[MediaItem], scroll_y: f64, frontmatter: &Frontmatter, show_header: bool) -> String {
+pub fn render_html(markdown: &str, style: PreviewStyle, dark: bool, media: &[MediaItem], scroll_y: f64, frontmatter: &Frontmatter, show_header: bool, code_colors: Option<(String, String)>) -> String {
     let body = render_body_with_line_anchors(markdown, media);
     let header = if show_header { render_header(frontmatter) } else { String::new() };
     let css = style_css(style, dark);
+    let code_css = code_block_css(code_colors.as_ref().map(|(background, foreground)| (background.as_str(), foreground.as_str())));
     // A user-picked font (if any) overrides just the two font properties,
     // applied after the style's own block so the cascade lets it win
     // while everything else the style defines (colors, indentation,
@@ -691,6 +722,7 @@ pub fn render_html(markdown: &str, style: PreviewStyle, dark: bool, media: &[Med
         r#"<!doctype html>
 <html><head><meta charset="utf-8"><style>
 {css}
+{code_css}
 {font_override_css}
 img {{ max-width: 100%; }}
 table {{ border-collapse: collapse; }}
@@ -1263,7 +1295,7 @@ mod tests {
 
     #[test]
     fn full_html_embeds_the_reverse_scroll_sync_script() {
-        let html = render_html("Hello", PreviewStyle::Modern, false, &[], 0.0, &Frontmatter::default(), false);
+        let html = render_html("Hello", PreviewStyle::Modern, false, &[], 0.0, &Frontmatter::default(), false, None);
         assert!(html.contains("window.currentTopLine = function()"));
         assert!(html.contains("messageHandlers.scrollSync"));
         assert!(html.contains("__suppressScrollEcho"));
@@ -1271,7 +1303,7 @@ mod tests {
 
     #[test]
     fn full_html_embeds_the_scroll_to_edge_script_and_its_sentinels() {
-        let html = render_html("Hello", PreviewStyle::Modern, false, &[], 0.0, &Frontmatter::default(), false);
+        let html = render_html("Hello", PreviewStyle::Modern, false, &[], 0.0, &Frontmatter::default(), false, None);
         assert!(html.contains("window.scrollToEdge = function(edge)"), "{html}");
         assert!(html.contains("document.body.scrollHeight"), "{html}");
         assert!(html.contains("atBottom ? -2"), "{html}");
@@ -1279,9 +1311,39 @@ mod tests {
 
     #[test]
     fn scroll_to_line_and_scroll_to_edge_both_glide_smoothly() {
-        let html = render_html("Hello", PreviewStyle::Modern, false, &[], 0.0, &Frontmatter::default(), false);
+        let html = render_html("Hello", PreviewStyle::Modern, false, &[], 0.0, &Frontmatter::default(), false, None);
         assert!(html.contains("behavior: 'smooth'"), "{html}");
         assert!(html.contains("scrollend"), "{html}");
+    }
+
+    #[test]
+    fn code_block_css_is_empty_without_a_resolvable_scheme() {
+        assert_eq!(code_block_css(None), "");
+    }
+
+    #[test]
+    fn code_block_css_overrides_pre_and_code_colors() {
+        let css = code_block_css(Some(("#282a36", "#f8f8f2")));
+        assert!(css.contains("pre { background: #282a36; color: #f8f8f2; }"), "{css}");
+        assert!(css.contains("code { background: #282a36; color: #f8f8f2; }"), "{css}");
+    }
+
+    #[test]
+    fn full_html_prefers_the_active_scheme_colors_over_the_style_defaults() {
+        let html = render_html("Hello", PreviewStyle::Modern, true, &[], 0.0, &Frontmatter::default(), false, Some(("#282a36".to_string(), "#f8f8f2".to_string())));
+        // The style's own hardcoded dark-mode `pre` background (see
+        // `style_css`) must lose the cascade to the scheme's, which is
+        // appended after it - not just be present somewhere in the page.
+        let scheme_rule_pos = html.find("pre { background: #282a36;").expect("scheme override present");
+        let style_rule_pos = html.find("pre { background: #2d2d2d;").expect("style default present");
+        assert!(scheme_rule_pos > style_rule_pos, "{html}");
+    }
+
+    #[test]
+    fn full_html_keeps_the_style_default_code_colors_without_a_scheme() {
+        let html = render_html("Hello", PreviewStyle::Modern, true, &[], 0.0, &Frontmatter::default(), false, None);
+        assert!(html.contains("pre { background: #2d2d2d;"), "{html}");
+        assert!(!html.contains("pre { background: none"), "{html}");
     }
 
     fn media_item(source: &str, filename: &str, alt: crate::media::AltText, uploaded: bool) -> MediaItem {
@@ -1419,20 +1481,20 @@ mod tests {
 
     #[test]
     fn full_html_embeds_the_scroll_to_line_script() {
-        let html = render_html("Hello", PreviewStyle::Modern, false, &[], 0.0, &Frontmatter::default(), false);
+        let html = render_html("Hello", PreviewStyle::Modern, false, &[], 0.0, &Frontmatter::default(), false, None);
         assert!(html.contains("window.scrollToLine = function(line)"));
         assert!(html.contains("data-line=\"1\""));
     }
 
     #[test]
     fn full_html_restores_a_positive_scroll_position() {
-        let html = render_html("Hello", PreviewStyle::Modern, false, &[], 240.0, &Frontmatter::default(), false);
+        let html = render_html("Hello", PreviewStyle::Modern, false, &[], 240.0, &Frontmatter::default(), false, None);
         assert!(html.contains("window.scrollTo(0, 240)"), "{html}");
     }
 
     #[test]
     fn full_html_guards_the_scroll_restore_for_zero() {
-        let html = render_html("Hello", PreviewStyle::Modern, false, &[], 0.0, &Frontmatter::default(), false);
+        let html = render_html("Hello", PreviewStyle::Modern, false, &[], 0.0, &Frontmatter::default(), false, None);
         assert!(html.contains("if (0 > 0) { window.__suppressScrollEcho = true; window.scrollTo(0, 0);"), "{html}");
     }
 
@@ -1590,8 +1652,8 @@ mod tests {
         // below checks for the actual rendered element, not the class name
         // alone, which would find a false positive in the CSS either way.
         let frontmatter = Frontmatter { title: "Ein Testartikel".to_string(), ..Frontmatter::default() };
-        let shown = render_html("Hello", PreviewStyle::Modern, false, &[], 0.0, &frontmatter, true);
-        let hidden = render_html("Hello", PreviewStyle::Modern, false, &[], 0.0, &frontmatter, false);
+        let shown = render_html("Hello", PreviewStyle::Modern, false, &[], 0.0, &frontmatter, true, None);
+        let hidden = render_html("Hello", PreviewStyle::Modern, false, &[], 0.0, &frontmatter, false, None);
         assert!(shown.contains("<h1 class=\"article-header-title\">"), "{shown}");
         assert!(!hidden.contains("<h1 class=\"article-header-title\">"), "{hidden}");
     }

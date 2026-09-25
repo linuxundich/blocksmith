@@ -14,7 +14,6 @@
 //!   ported to Rust below) rather than showing every scheme at once.
 
 use std::cell::Cell;
-use std::fs;
 use std::path::PathBuf;
 use std::rc::Rc;
 
@@ -28,6 +27,9 @@ use crate::fontutil;
 use crate::i18n::tr;
 use crate::preview::{self, PreviewStyle};
 
+// GNOME's own default GtkSourceView scheme - real (not bundled by this
+// app), always present, and light, matching this app's own default
+// interface theme reasoning.
 const DEFAULT_SOURCE_SCHEME_ID: &str = "Adwaita";
 // Fontconfig's generic aliases ("Sans"/"Monospace") always resolve to
 // *some* installed font, unlike a specific family name (e.g. "Cantarell")
@@ -40,35 +42,6 @@ const DEFAULT_MONOSPACE_FONT_DISPLAY: &str = "Monospace 11";
 const PREVIEW_LIGHT_SVG: &[u8] = include_bytes!("../data/icons/appearance-preview/preview-light.svg");
 const PREVIEW_DARK_SVG: &[u8] = include_bytes!("../data/icons/appearance-preview/preview-dark.svg");
 const PREVIEW_SYSTEM_SVG: &[u8] = include_bytes!("../data/icons/appearance-preview/preview-system.svg");
-
-/// Extra `GtkSourceStyleScheme` XML files (`data/gtksourceview-schemes/`)
-/// this app ships on top of whatever the installed GtkSourceView bundles
-/// itself - five common dark ones and five common light ones, so the
-/// "Erscheinungsbild" scheme grid (`populate_scheme_flow_box`) has a real
-/// choice in both modes rather than whatever the system happens to
-/// include (on at least one dev system, most of GtkSourceView 5's own
-/// schemes are compiled into its GResource with nothing installed as
-/// loose files - Solarized Light/Dark being the one confirmed exception,
-/// which is why this list doesn't also include a Solarized entry: it
-/// would just be a same-named duplicate of that one). Each is hand-
-/// authored against the well-known palette its name references (Dracula,
-/// Nord, Gruvbox, Monokai, Catppuccin, One Light, GitHub, Rosé Pine) - not
-/// copied from another GtkSourceView scheme file - and validates against
-/// GtkSourceView's own `styles.rng`. See `install_bundled_style_schemes`
-/// for how these reach `StyleSchemeManager` (which only ever scans real
-/// files, never in-memory strings).
-const BUNDLED_SCHEMES: &[(&str, &str)] = &[
-    ("blocksmith-dracula", include_str!("../data/gtksourceview-schemes/dracula.xml")),
-    ("blocksmith-nord", include_str!("../data/gtksourceview-schemes/nord.xml")),
-    ("blocksmith-gruvbox-dark", include_str!("../data/gtksourceview-schemes/gruvbox-dark.xml")),
-    ("blocksmith-monokai", include_str!("../data/gtksourceview-schemes/monokai.xml")),
-    ("blocksmith-catppuccin-mocha", include_str!("../data/gtksourceview-schemes/catppuccin-mocha.xml")),
-    ("blocksmith-rose-pine-dawn", include_str!("../data/gtksourceview-schemes/rose-pine-dawn.xml")),
-    ("blocksmith-gruvbox-light", include_str!("../data/gtksourceview-schemes/gruvbox-light.xml")),
-    ("blocksmith-one-light", include_str!("../data/gtksourceview-schemes/one-light.xml")),
-    ("blocksmith-github-light", include_str!("../data/gtksourceview-schemes/github-light.xml")),
-    ("blocksmith-catppuccin-latte", include_str!("../data/gtksourceview-schemes/catppuccin-latte.xml")),
-];
 
 fn config_dir() -> PathBuf {
     let mut dir = glib::user_config_dir();
@@ -86,48 +59,6 @@ fn source_scheme_path() -> PathBuf {
     let mut path = config_dir();
     path.push("source_scheme.txt");
     path
-}
-
-/// Writes every `BUNDLED_SCHEMES` entry to a real file and registers that
-/// directory as an extra `StyleSchemeManager` search path, so they're
-/// found by `populate_scheme_flow_box`'s scan and resolvable by id for a
-/// buffer's style scheme (`editor.rs`, this module's `apply_saved_*`
-/// below). Must run once, early - before anything else touches
-/// `StyleSchemeManager::default()`, since `append_search_path` on that
-/// shared singleton is what makes the new schemes visible at all - see
-/// `main()`. Rewriting the files on every launch (rather than only if
-/// missing) means an app update always ships whatever the current
-/// `BUNDLED_SCHEMES` content is, the same reasoning `build.rs` already
-/// uses for compiling `po/*.po` on every build - and also means a scheme
-/// renamed or dropped from `BUNDLED_SCHEMES` between versions doesn't
-/// linger as a stray file forever (an already-installed id that's no
-/// longer current is deleted before the current set is written out).
-/// Best-effort throughout: a write/delete failure here just means the
-/// scheme grid is missing or has an extra stale entry, not a reason to
-/// fail startup.
-pub fn install_bundled_style_schemes() {
-    let mut dir = config_dir();
-    dir.push("style-schemes");
-    if fs::create_dir_all(&dir).is_err() {
-        return;
-    }
-    let current_ids: std::collections::HashSet<&str> = BUNDLED_SCHEMES.iter().map(|(id, _)| *id).collect();
-    if let Ok(entries) = fs::read_dir(&dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            let is_stale = path.extension().and_then(|e| e.to_str()) == Some("xml")
-                && path.file_stem().and_then(|s| s.to_str()).is_some_and(|stem| !current_ids.contains(stem));
-            if is_stale {
-                let _ = fs::remove_file(&path);
-            }
-        }
-    }
-    for (id, xml) in BUNDLED_SCHEMES {
-        let _ = fs::write(dir.join(format!("{id}.xml")), xml);
-    }
-    if let Some(dir) = dir.to_str() {
-        sourceview5::StyleSchemeManager::default().append_search_path(dir);
-    }
 }
 
 pub fn load_color_scheme() -> adw::ColorScheme {
@@ -154,6 +85,24 @@ pub fn load_source_scheme_id() -> String {
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| DEFAULT_SOURCE_SCHEME_ID.to_string())
+}
+
+/// The currently selected editor scheme's own "text" style colors, as CSS
+/// color strings - threaded into `preview::render_html` so the live
+/// Markdown preview's code blocks visually match whichever scheme is
+/// active, not just the editor. Re-resolved on every call rather than
+/// cached, since the default "Adwaita" scheme's own colors track the
+/// current light/dark mode without its id ever changing (the same reason
+/// `scheme_is_dark` re-reads the style on every call instead of caching a
+/// verdict per id). `None` if the saved id doesn't resolve to an
+/// installed scheme, or that scheme's "text" style doesn't set both
+/// colors - callers fall back to their own hardcoded defaults.
+pub fn current_scheme_colors() -> Option<(String, String)> {
+    let scheme = sourceview5::StyleSchemeManager::default().scheme(&load_source_scheme_id())?;
+    let style = scheme.style("text")?;
+    let background = style.is_background_set().then(|| style.background()).flatten()?;
+    let foreground = style.is_foreground_set().then(|| style.foreground()).flatten()?;
+    Some((background.to_string(), foreground.to_string()))
 }
 
 fn save_source_scheme_id(id: &str) {
@@ -326,13 +275,27 @@ fn build_theme_card(label_text: &str, svg_bytes: &'static [u8], group: Option<&g
     button
 }
 
-/// Rebuilds the scheme `flow_box`'s children from the schemes matching
-/// `is_dark` - Builder's `update_style_schemes()`, minus the light/dark
-/// "alternate variant" bookkeeping (Blocksmith doesn't offer per-scheme
-/// variant swapping, just the filtered list itself). `buffers` are every
-/// buffer that should switch to the picked scheme immediately - the real
-/// editor buffer, plus this page's own font-sample buffer.
-fn populate_scheme_flow_box(flow_box: &gtk4::FlowBox, buffers: &[sourceview5::Buffer]) {
+/// Rebuilds the scheme `flow_box`'s children from every real, installed
+/// `GtkSourceStyleScheme` matching `is_dark` - Builder's
+/// `update_style_schemes()`, minus the light/dark "alternate variant"
+/// bookkeeping (Blocksmith doesn't offer per-scheme variant swapping,
+/// just the filtered list itself). Deliberately every scheme
+/// `StyleSchemeManager` actually knows about, not a curated subset this
+/// app ships its own copies of - GtkSourceView's own bundled set (real,
+/// canonical files: `Adwaita`/`-dark`, `classic`/`-dark`,
+/// `cobalt`/`-light`, `kate`/`-dark`, `oblivion`, `solarized-light`/
+/// `-dark`, `tango`) is exactly what GNOME Builder and GNOME Text Editor
+/// themselves offer too - confirmed against their own upstream sources,
+/// neither ships anything beyond it - so there's no reason to hand-author
+/// separate reproductions of the same handful of well-known themes.
+/// `buffers` are every buffer that should switch to the picked scheme
+/// immediately - the real editor buffer, plus this page's own font-
+/// sample buffer. `on_activate` fires after that (in addition, not
+/// instead) whenever a swatch is picked - the live Markdown preview (both
+/// the real one and this page's own preview swatch) isn't a
+/// `sourceview5::Buffer` at all, so it can't be driven the same way
+/// `buffers` are and needs its own callback.
+fn populate_scheme_flow_box(flow_box: &gtk4::FlowBox, buffers: &[sourceview5::Buffer], on_activate: Rc<dyn Fn()>) {
     while let Some(child) = flow_box.first_child() {
         flow_box.remove(&child);
     }
@@ -341,16 +304,12 @@ fn populate_scheme_flow_box(flow_box: &gtk4::FlowBox, buffers: &[sourceview5::Bu
     let is_dark = adw::StyleManager::default().is_dark();
     let current_id = load_source_scheme_id();
 
-    let mut schemes: Vec<sourceview5::StyleScheme> = manager
-        .scheme_ids()
-        .iter()
-        .filter(|id| id.as_str() != "printing")
-        .filter_map(|id| manager.scheme(id))
-        .collect();
+    let mut schemes: Vec<sourceview5::StyleScheme> =
+        manager.scheme_ids().iter().filter(|id| id.as_str() != "printing").filter_map(|id| manager.scheme(id)).collect();
     schemes.sort_by_key(|s| s.name().to_string());
 
     for scheme in schemes {
-        if scheme_is_dark(&scheme) != is_dark && scheme.id() != current_id {
+        if scheme_is_dark(&scheme) != is_dark {
             continue;
         }
 
@@ -359,6 +318,7 @@ fn populate_scheme_flow_box(flow_box: &gtk4::FlowBox, buffers: &[sourceview5::Bu
 
         let buffers: Vec<sourceview5::Buffer> = buffers.to_vec();
         let flow_box_weak = flow_box.downgrade();
+        let on_activate = on_activate.clone();
         preview.connect_activate(move |activated| {
             let scheme = activated.scheme();
             save_source_scheme_id(&scheme.id());
@@ -376,6 +336,7 @@ fn populate_scheme_flow_box(flow_box: &gtk4::FlowBox, buffers: &[sourceview5::Bu
                     child = c.next_sibling();
                 }
             }
+            on_activate();
         });
 
         flow_box.insert(&preview, -1);
@@ -425,16 +386,32 @@ pub fn build_page(buffer: &sourceview5::Buffer, preview_pane: Rc<preview::Previe
 
     let color_group = adw::PreferencesGroup::builder().title(tr("Farbe")).build();
 
-    let flow_box = gtk4::FlowBox::builder().column_spacing(12).row_spacing(12).max_children_per_line(4).selection_mode(gtk4::SelectionMode::None).homogeneous(true).build();
+    // 3 columns - GtkSourceView's own bundled set is six schemes per mode
+    // (see `populate_scheme_flow_box`'s doc comment), so this renders as a
+    // clean 3x2 rectangle.
+    let flow_box = gtk4::FlowBox::builder().column_spacing(12).row_spacing(12).max_children_per_line(3).selection_mode(gtk4::SelectionMode::None).homogeneous(true).build();
     flow_box.add_css_class("style-schemes");
     // Populated below by `build_editor_font_group`, which also owns this
     // page's font-sample buffer and needs it kept in sync with whichever
     // scheme gets picked here.
     color_group.add(&flow_box);
 
-    let editor_font_group = build_editor_font_group(buffer, &flow_box);
+    // Built before `build_editor_font_group` (even though it's added to the
+    // page after it, further down) so its own `refresh_sample` closure
+    // exists to fold into `on_scheme_changed` below - the scheme grid lives
+    // in `build_editor_font_group`, but a swatch pick needs to reach both
+    // the real live preview *and* this page's own preview swatch, not just
+    // the editor buffers `build_editor_font_group` already updates itself.
+    let (preview_group, refresh_preview_sample) = build_preview_group(preview_pane.clone());
 
-    let preview_group = build_preview_group(preview_pane);
+    let on_scheme_changed: Rc<dyn Fn()> = {
+        let preview_pane = preview_pane.clone();
+        Rc::new(move || {
+            preview_pane.refresh();
+            refresh_preview_sample();
+        })
+    };
+    let editor_font_group = build_editor_font_group(buffer, &flow_box, on_scheme_changed);
 
     let page = adw::PreferencesPage::builder().title(tr("Erscheinungsbild")).icon_name("preferences-desktop-appearance-symbolic").build();
     page.add(&interface_group);
@@ -448,7 +425,9 @@ pub fn build_page(buffer: &sourceview5::Buffer, preview_pane: Rc<preview::Previe
 /// `GbpEditoruiPreview` pattern - a small read-only source view reflecting
 /// the current scheme *and* font, not just a static swatch) plus a
 /// `Gtk.FontDialogButton`/Reset pair for the custom-font override.
-fn build_editor_font_group(buffer: &sourceview5::Buffer, scheme_flow_box: &gtk4::FlowBox) -> adw::PreferencesGroup {
+/// `on_scheme_changed` is threaded straight into `populate_scheme_flow_box` -
+/// see that function's doc comment.
+fn build_editor_font_group(buffer: &sourceview5::Buffer, scheme_flow_box: &gtk4::FlowBox, on_scheme_changed: Rc<dyn Fn()>) -> adw::PreferencesGroup {
     let group = adw::PreferencesGroup::builder().title(tr("Editor-Schriftart")).build();
 
     let sample_buffer = sourceview5::Buffer::new(None::<&gtk4::TextTagTable>);
@@ -480,13 +459,20 @@ fn build_editor_font_group(buffer: &sourceview5::Buffer, scheme_flow_box: &gtk4:
 
     // Keep this sample in sync with whichever scheme the "Farbe" swatches
     // pick, in addition to the real editor buffer.
-    populate_scheme_flow_box(scheme_flow_box, &[buffer.clone(), sample_buffer.clone()]);
+    populate_scheme_flow_box(scheme_flow_box, &[buffer.clone(), sample_buffer.clone()], on_scheme_changed.clone());
     {
         let scheme_flow_box = scheme_flow_box.clone();
         let buffer = buffer.clone();
         let sample_buffer = sample_buffer.clone();
         adw::StyleManager::default().connect_dark_notify(move |_| {
-            populate_scheme_flow_box(&scheme_flow_box, &[buffer.clone(), sample_buffer.clone()]);
+            populate_scheme_flow_box(&scheme_flow_box, &[buffer.clone(), sample_buffer.clone()], on_scheme_changed.clone());
+            // A dark/light toggle can leave the resolved colors of the
+            // *current* scheme stale even when its id doesn't change (the
+            // default "Adwaita" scheme's own colors track light/dark - see
+            // `current_scheme_colors`'s doc comment) - re-run the same
+            // callback a swatch pick uses so the live preview and this
+            // page's own preview swatch pick that up immediately too.
+            on_scheme_changed();
         });
     }
 
@@ -537,8 +523,12 @@ fn build_editor_font_group(buffer: &sourceview5::Buffer, scheme_flow_box: &gtk4:
 
 /// The "Vorschau" group: style picker, custom-font override, and a live
 /// rendered-Markdown sample so a font or style choice's effect is visible
-/// immediately, the same way the editor's own font sample works.
-fn build_preview_group(preview_pane: Rc<preview::PreviewPane>) -> adw::PreferencesGroup {
+/// immediately, the same way the editor's own font sample works. Returns
+/// the group alongside its own `refresh_sample` closure, so `build_page`
+/// can fold it into the scheme grid's own activation callback (the
+/// swatch's code-block colors need to follow a newly picked scheme too,
+/// not just the interface light/dark toggle already wired below).
+fn build_preview_group(preview_pane: Rc<preview::PreviewPane>) -> (adw::PreferencesGroup, Rc<dyn Fn()>) {
     let group = adw::PreferencesGroup::builder().title(tr("Vorschau")).build();
 
     let sample_view = webkit6::WebView::new();
@@ -554,7 +544,7 @@ fn build_preview_group(preview_pane: Rc<preview::PreviewPane>) -> adw::Preferenc
         Rc::new(move || {
             let dark = adw::StyleManager::default().is_dark();
             let sample_markdown = tr("# Beispielartikel\n\nDies ist ein **Beispieltext**, der zeigt, wie der gewählte *Stil* und die Schrift wirken.\n\n> Ein Zitat zur Veranschaulichung.\n");
-            sample_view.load_html(&preview::render_html(&sample_markdown, preview_pane.style(), dark, &[], 0.0, &Frontmatter::default(), false), None);
+            sample_view.load_html(&preview::render_html(&sample_markdown, preview_pane.style(), dark, &[], 0.0, &Frontmatter::default(), false, current_scheme_colors()), None);
         })
     };
     refresh_sample();
@@ -627,5 +617,5 @@ fn build_preview_group(preview_pane: Rc<preview::PreviewPane>) -> adw::Preferenc
     font_row.add_suffix(&reset_button);
     group.add(&font_row);
 
-    group
+    (group, refresh_sample)
 }
